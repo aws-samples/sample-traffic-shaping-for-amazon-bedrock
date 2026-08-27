@@ -1,0 +1,739 @@
+schema_version: 1
+
+# Account-effective quota snapshot used to seed and review model configuration.
+# Refresh deliberately; load tests should not fetch quota state implicitly.
+snapshot:
+  captured_on: "2026-08-04"
+  aws_profile: your-profile
+  aws_region: us-east-1
+  sources:
+    - bedrock:list-foundation-models
+    - bedrock:list-inference-profiles
+    - service-quotas:list-service-quotas
+  notes:
+    - Quotas are account- and region-specific and can change after quota approvals.
+    - Runtime TPM combines input and output after applying output-token burndown.
+    - Mantle enforces separate input and output TPM quotas and has no RPM quota.
+
+defaults:
+  duration_seconds: 60
+  pattern: at_quota
+  route: runtime-us
+  aws_region: us-east-1
+
+models:
+  nova-2-lite:
+    display_name: Amazon Nova 2 Lite
+    provider: amazon
+    lifecycle: active
+    retained_for: historical-baseline
+    default_route: runtime-us
+    estimation:
+      bytes_per_input_token: 4.0
+      output_token_burndown: 1.0
+    routes:
+      runtime-us:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: us.amazon.nova-2-lite-v1:0
+        base_model_id: amazon.nova-2-lite-v1:0
+        inference_scope: us-cross-region
+        quotas:
+          combined_tpm: 8000000
+          rpm: 2000
+        quota_codes:
+          combined_tpm: L-C6F5908D
+          rpm: L-F06F1187
+      runtime-global:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: global.amazon.nova-2-lite-v1:0
+        base_model_id: amazon.nova-2-lite-v1:0
+        inference_scope: global-cross-region
+        quotas:
+          combined_tpm: 8000000
+          rpm: 2000
+        quota_codes:
+          combined_tpm: L-71C69B70
+          rpm: L-D5F39C2F
+
+  sonnet-5:
+    display_name: Anthropic Claude Sonnet 5
+    provider: anthropic
+    lifecycle: active
+    default_route: runtime-us
+    estimation:
+      bytes_per_input_token: 3.5
+    request:
+      adaptive_thinking: always-on
+      strip_sampling_params: true
+    routes:
+      runtime-us:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: us.anthropic.claude-sonnet-5
+        base_model_id: anthropic.claude-sonnet-5
+        inference_scope: us-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 6000000
+          rpm: null
+        quota_codes:
+          combined_tpm: L-D4FBCF4E
+      runtime-global:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: global.anthropic.claude-sonnet-5
+        base_model_id: anthropic.claude-sonnet-5
+        inference_scope: global-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 6000000
+          rpm: null
+        quota_codes:
+          combined_tpm: L-DD84E5CA
+      mantle:
+        enabled: true
+        client_supported: true
+        backend: mantle
+        api_style: messages
+        model_id: anthropic.claude-sonnet-5
+        inference_scope: in-region
+        quotas:
+          input_tpm: 3000000
+          output_tpm: 300000
+          rpm: null
+        quota_codes:
+          input_tpm: L-38EB0A61
+          output_tpm: L-15830237
+
+  opus-5:
+    display_name: Anthropic Claude Opus 5
+    provider: anthropic
+    lifecycle: active
+    default_route: runtime-us
+    estimation:
+      bytes_per_input_token: 3.5
+    request:
+      adaptive_thinking: supported
+      strip_sampling_params: true
+    routes:
+      runtime-us:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: us.anthropic.claude-opus-5
+        base_model_id: anthropic.claude-opus-5
+        inference_scope: us-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 30000000
+          rpm: null
+        quota_codes:
+          combined_tpm: L-99296DCD
+      runtime-global:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: global.anthropic.claude-opus-5
+        base_model_id: anthropic.claude-opus-5
+        inference_scope: global-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 30000000
+          rpm: null
+        quota_codes:
+          combined_tpm: L-D73B1244
+      mantle:
+        enabled: true
+        client_supported: true
+        backend: mantle
+        api_style: messages
+        model_id: anthropic.claude-opus-5
+        inference_scope: in-region
+        quotas:
+          input_tpm: 20000000
+          output_tpm: 2000000
+          rpm: null
+        quota_codes:
+          input_tpm: L-DF09248F
+          output_tpm: L-EDC225D2
+
+  gpt-5.6-sol:
+    display_name: OpenAI GPT-5.6 Sol
+    provider: openai
+    lifecycle: active
+    default_route: mantle
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: openai.gpt-5.6-sol
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: 10000000
+          output_tpm: 1000000
+          rpm: null
+        quota_codes:
+          input_tpm: L-137DD3C2
+          output_tpm: L-C2E494BA
+
+  gpt-5.6-terra:
+    display_name: OpenAI GPT-5.6 Terra
+    provider: openai
+    lifecycle: active
+    default_route: mantle
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: openai.gpt-5.6-terra
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: 20000000
+          output_tpm: 2000000
+          rpm: null
+        quota_codes:
+          input_tpm: L-87594EB7
+          output_tpm: L-574688BD
+
+  gpt-5.6-luna:
+    display_name: OpenAI GPT-5.6 Luna
+    provider: openai
+    lifecycle: active
+    default_route: mantle
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: openai.gpt-5.6-luna
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: 20000000
+          output_tpm: 2000000
+          rpm: null
+        quota_codes:
+          input_tpm: L-31615887
+          output_tpm: L-D44E1D4E
+
+  # ---------------------------------------------------------------------------
+  # New models (added 2026-08-21). Quotas are ABSENT from the official model
+  # cards for every entry below EXCEPT opus-4-8 / opus-4-7 (verified). Unknown
+  # quota values are null with a quota_status placeholder; quota_codes are
+  # deliberately omitted (never invented). launch_date is the model-card date.
+  # ---------------------------------------------------------------------------
+
+  grok-4-6:
+    display_name: xAI Grok 4.6
+    provider: xai
+    lifecycle: active
+    launch_date: "2026-08-18"
+    default_route: runtime-us
+    estimation:
+      bytes_per_input_token: 4.0
+    notes:
+      - "Runtime Converse is cross-region only (us./global.); not offered in-region on runtime."
+    routes:
+      runtime-us:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: us.xai.grok-4.6
+        base_model_id: xai.grok-4.6
+        inference_scope: us-cross-region
+        quotas:
+          combined_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+      runtime-global:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: global.xai.grok-4.6
+        base_model_id: xai.grok-4.6
+        inference_scope: global-cross-region
+        quotas:
+          combined_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: xai.grok-4.6
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  gpt-5.6-cyber:
+    display_name: "OpenAI Daybreak Red: GPT-5.6 Cyber"
+    provider: openai
+    lifecycle: active
+    launch_date: "2026-08-12"
+    default_route: mantle
+    context_window: 272000
+    access_gated: "Trusted Access for Cyber; us-east-2 in-region only"
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: openai.gpt-5.6-cyber
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  gpt-5.6-daybreak-blue-sol:
+    display_name: "OpenAI Daybreak Blue: GPT-5.6 Sol"
+    provider: openai
+    lifecycle: active
+    launch_date: "2026-08-12"
+    default_route: mantle
+    access_gated: "Trusted Access for Cyber; us-east-2 in-region only"
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: openai.gpt-daybreak-blue-5.6-sol
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  grok-4-3:
+    display_name: xAI Grok 4.3
+    provider: xai
+    lifecycle: active
+    launch_date: "2026-06-15"
+    default_route: mantle
+    context_window: 1000000
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: xai.grok-4.3
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  mythos-5:
+    display_name: Anthropic Claude Mythos 5
+    provider: anthropic
+    lifecycle: active
+    launch_date: "2026-06-09"
+    default_route: mantle
+    data_retention: "provider_data_share required"
+    estimation:
+      bytes_per_input_token: 3.5
+    notes:
+      - "Preview/Beta; us-east-1 in-region only."
+    routes:
+      mantle:
+        enabled: true
+        client_supported: true
+        backend: mantle
+        api_style: messages
+        model_id: anthropic.claude-mythos-5
+        inference_scope: in-region
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  fable-5:
+    display_name: Anthropic Claude Fable 5
+    provider: anthropic
+    lifecycle: active
+    launch_date: "2026-06-09"
+    default_route: runtime-us
+    data_retention: "provider_data_share required"
+    estimation:
+      bytes_per_input_token: 3.5
+    routes:
+      runtime-us:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: us.anthropic.claude-fable-5
+        base_model_id: anthropic.claude-fable-5
+        inference_scope: us-cross-region
+        quotas:
+          combined_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+      runtime-global:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: global.anthropic.claude-fable-5
+        base_model_id: anthropic.claude-fable-5
+        inference_scope: global-cross-region
+        quotas:
+          combined_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+      mantle:
+        enabled: true
+        client_supported: true
+        backend: mantle
+        api_style: messages
+        model_id: anthropic.claude-fable-5
+        inference_scope: in-region
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  gpt-5.5:
+    display_name: OpenAI GPT-5.5
+    provider: openai
+    lifecycle: active
+    launch_date: "2026-06-01"
+    default_route: mantle
+    context_window: 272000
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: openai.gpt-5.5
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  gpt-5.4:
+    display_name: OpenAI GPT-5.4
+    provider: openai
+    lifecycle: active
+    launch_date: "2026-06-01"
+    default_route: mantle
+    context_window: 272000
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: openai.gpt-5.4
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  opus-4-8:
+    display_name: Anthropic Claude Opus 4.8
+    provider: anthropic
+    lifecycle: active
+    launch_date: "2026-05-28"
+    default_route: runtime-us
+    estimation:
+      bytes_per_input_token: 3.5
+    request:
+      strip_sampling_params: true
+    routes:
+      runtime-us:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: us.anthropic.claude-opus-4-8
+        base_model_id: anthropic.claude-opus-4-8
+        inference_scope: us-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 30000000
+          rpm: null
+      runtime-global:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: global.anthropic.claude-opus-4-8
+        base_model_id: anthropic.claude-opus-4-8
+        inference_scope: global-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 30000000
+          rpm: null
+      mantle:
+        enabled: true
+        client_supported: true
+        backend: mantle
+        api_style: messages
+        model_id: anthropic.claude-opus-4-8
+        inference_scope: in-region
+        quotas:
+          input_tpm: 20000000
+          output_tpm: 4000000
+          rpm: null
+
+  opus-4-7:
+    display_name: Anthropic Claude Opus 4.7
+    provider: anthropic
+    lifecycle: active
+    launch_date: "2026-04-16"
+    default_route: runtime-us
+    estimation:
+      bytes_per_input_token: 3.5
+    request:
+      strip_sampling_params: true
+    routes:
+      runtime-us:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: us.anthropic.claude-opus-4-7
+        base_model_id: anthropic.claude-opus-4-7
+        inference_scope: us-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 30000000
+          rpm: null
+      runtime-global:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: global.anthropic.claude-opus-4-7
+        base_model_id: anthropic.claude-opus-4-7
+        inference_scope: global-cross-region
+        output_token_burndown: 10.0
+        quotas:
+          combined_tpm: 30000000
+          rpm: null
+      mantle:
+        enabled: true
+        client_supported: true
+        backend: mantle
+        api_style: messages
+        model_id: anthropic.claude-opus-4-7
+        inference_scope: in-region
+        quotas:
+          input_tpm: 20000000
+          output_tpm: 4000000
+          rpm: null
+
+  gemma-4-31b:
+    display_name: Google Gemma 4 31B
+    provider: google
+    lifecycle: active
+    launch_date: "2026-03-31"
+    default_route: mantle
+    context_window: 256000
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: google.gemma-4-31b
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  gemma-4-26b-a4b:
+    display_name: Google Gemma 4 26B A4B
+    provider: google
+    lifecycle: active
+    launch_date: "2026-03-31"
+    default_route: mantle
+    context_window: 256000
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: google.gemma-4-26b-a4b
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  gemma-4-e2b:
+    display_name: Google Gemma 4 E2B
+    provider: google
+    lifecycle: active
+    launch_date: "2026-03-31"
+    default_route: mantle
+    context_window: 128000
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-responses-client-not-implemented
+        backend: mantle
+        api_style: responses
+        model_id: google.gemma-4-e2b
+        inference_scope: in-region
+        path: /openai/v1/responses
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  nemotron-3-super-120b:
+    display_name: NVIDIA Nemotron 3 Super 120B
+    provider: nvidia
+    lifecycle: active
+    launch_date: "2026-03-11"
+    default_route: runtime
+    estimation:
+      bytes_per_input_token: 4.0
+    notes:
+      - "Gov CRIS geo variant: us-gov.nvidia.nemotron-super-3-120b."
+    routes:
+      runtime:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: nvidia.nemotron-super-3-120b
+        inference_scope: in-region
+        quotas:
+          combined_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-chat-completions-client-not-implemented
+        backend: mantle
+        api_style: chat_completions
+        model_id: nvidia.nemotron-super-3-120b
+        inference_scope: in-region
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+
+  minimax-m2-5:
+    display_name: MiniMax M2.5
+    provider: minimax
+    lifecycle: active
+    launch_date: "2026-02-12"
+    default_route: runtime
+    estimation:
+      bytes_per_input_token: 4.0
+    routes:
+      runtime:
+        enabled: true
+        client_supported: true
+        backend: runtime
+        api_style: converse
+        model_id: minimax.minimax-m2.5
+        inference_scope: in-region
+        quotas:
+          combined_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
+      mantle:
+        enabled: false
+        client_supported: false
+        blocked_reason: mantle-chat-completions-client-not-implemented
+        backend: mantle
+        api_style: chat_completions
+        model_id: minimax.minimax-m2.5
+        inference_scope: in-region
+        quotas:
+          input_tpm: null
+          output_tpm: null
+          rpm: null
+          quota_status: "placeholder — no numeric default on model card; refresh from account Service Quotas before load use"
