@@ -1,0 +1,44 @@
+# Bandit (Python SAST) configuration for bedrock-traffic-shaper.
+# Run with:  bandit -r . -c pyproject.toml
+#
+# Scope of suppressions is deliberate and narrow:
+#   - B101 (assert_used) is skipped ONLY in test/sim files, where asserts are the
+#     test mechanism itself. Production code still gets B101 enforcement.
+#   - B311 (non-crypto random) is skipped repo-wide because every use of `random`
+#     in this project is non-security: backoff/admission jitter, load-test traffic
+#     sampling, and DynamoDB counter-shard selection. There is no cryptographic or
+#     token-generation use of `random` anywhere in the tree.
+# All MEDIUM findings are addressed at the call site (fix or justified `# nosec`),
+# not here.
+
+[tool.bandit]
+# Vendored / generated trees are not first-party source and must not be scanned:
+#   .venv/venv           - Python virtualenvs
+#   node_modules         - CDK/JS deps
+#   cdk.out              - synthesized CloudFormation + copied Lambda asset bundles
+#                          (duplicates of infrastructure/ sources -> double-counts)
+#   .ash                 - ASH scanner output/workspace
+#   .git / dist / build  - VCS + build artifacts
+exclude_dirs = [
+  "./.venv",
+  "./venv",
+  "./node_modules",
+  "./cdk.out",
+  "./infrastructure/cdk.out",
+  "./.ash",
+  "./.git",
+  "./dist",
+  "./build",
+]
+
+# Non-crypto random usage only (jitter / load-sim / shard selection). See header note.
+skips = ["B311"]
+
+[tool.bandit.assert_used]
+# Asserts are legitimate as the assertion mechanism in tests and simulation drivers.
+skips = [
+  "*/tests/*",
+  "*/test_*.py",
+  "*_sim.py",
+  "*/sim/*",
+]

@@ -1,0 +1,136 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Virtual environments
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Node (CDK tooling may pull JS deps)
+node_modules/
+package-lock.json
+
+# AWS CDK
+cdk.out/
+.cdk.staging/
+cdk.context.json
+cdk-outputs.json
+
+# AWS credentials and config
+.aws/
+aws-exports.js
+
+# Environment variables
+.env.local
+.env.development
+.env.test
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Temporary files
+tmp/
+temp/
+
+# Kiro archive (local historical files)
+.kiro/archive/
+
+# Config files
+config.env
+
+# Soak test artifacts
+.soak_pid
+soak_*_output.log
+soak_test_output.log
+soak_results_*.json
+reports/soak_results_*.json
+
+# Other
+MEMORY*
+# stray dir from a misfired ${HOME} expansion (PAI cache files only)
+${HOME}/
+# MCP config (contains bearer token)
+.mcp.json
+
+# Agent/IDE steering (local maintainer context — not for publication)
+CLAUDE.md
+
+# ASH / detect-secrets scan output (never ship scan artifacts)
+.ash/
+
+# Security scan outputs (attach to PCSR ticket; do not commit)
+.security-scans/
+
+# Raw benchmark logs (internal artifacts — not for publication; keep charts + docs/testing)
+reports/*.txt

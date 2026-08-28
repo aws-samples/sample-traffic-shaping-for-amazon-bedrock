@@ -1,0 +1,26 @@
+# Direct dependencies, pinned to exact tested versions for reproducibility.
+# For the full transitively-pinned set (recommended for reproducible installs), use:
+#     pip install -r requirements.lock
+#
+# Core dependencies
+boto3==1.43.78
+aws-cdk-lib==2.266.0
+constructs==10.8.1
+apscheduler==3.11.3
+# Explicit security floor for a transitive dependency (pulled in via moto/AWS libs).
+# CVE-2026-69247 / GHSA-g6cj-pr64-35w5 affects cryptography 49.0.0; 50.0.0 is the fix.
+cryptography==50.0.0
+# Pinned to the v2 line: v3 removed the NagSuppressions API in favor of
+# CDK-native Validations.of().acknowledge(), which requires a newer CDK than
+# this stack targets (aws-cdk-lib 2.x). See infrastructure/semaphore_stack.py.
+cdk-nag==2.38.2
+
+# Testing dependencies
+pytest==9.1.1
+hypothesis==6.165.10
+pytest-asyncio==1.4.0
+moto==5.2.2
+
+# Development dependencies
+black==26.5.1
+mypy==2.3.1
