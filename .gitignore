@@ -139,10 +139,6 @@ prompts*
 .beads/proxieddb/
 .beads*
 
-# Local review scratchpads (self-labeled "delete rather than ship"; reference
-# real account/environment details, so they must never enter a published sample)
-proposed-edits.md
-
 # ASH / detect-secrets scan output (never ship scan artifacts)
 .ash/
 
@@ -151,3 +147,6 @@ proposed-edits.md
 
 # Raw benchmark logs (internal artifacts — not for publication; keep charts + docs/testing)
 reports/*.txt
+
+# Intent working documents
+intents/
