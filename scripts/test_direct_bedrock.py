@@ -21,15 +21,11 @@ sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
 
-# Model ID aliases for common testing models
-MODEL_ALIASES = {
-    'opus-5': 'us.anthropic.claude-opus-5',
-    'sonnet-5': 'us.anthropic.claude-sonnet-5',
-    'nova-2-lite': 'us.amazon.nova-2-lite-v1:0',
-    'nova-lite': 'us.amazon.nova-lite-v1:0',
-    'nova-lite-sr': 'amazon.nova-lite-v1:0',  # single-region: enforces per-region quotas
-    'nova-pro': 'us.amazon.nova-pro-v1:0',
-}
+# Model ID aliases: reuse create_model_config's canonical MODEL_MAP (was a local
+# six-entry subset that had to be extended by hand whenever a model was added).
+from create_model_config import MODEL_MAP
+
+MODEL_ALIASES = MODEL_MAP
 
 def resolve_model_id(model_input: str) -> str:
     """Resolve model alias to full model ID."""
@@ -61,7 +57,7 @@ Examples:
   # Use defaults from config.env
   python scripts/test_direct_bedrock.py
   
-  # Override model (supports aliases: opus, jamba)
+  # Override model (supports MODEL_MAP aliases, e.g. nova-2-lite, opus-5)
   python scripts/test_direct_bedrock.py --model nova-2-lite
   python scripts/test_direct_bedrock.py --model opus-5
   
@@ -76,7 +72,7 @@ Examples:
     parser.add_argument(
         '--model',
         type=str,
-        help='Bedrock model ID (or alias: opus, jamba). Defaults to config.env BEDROCK_MODEL_ID'
+        help='Bedrock model ID (or a MODEL_MAP alias, e.g. nova-2-lite). Defaults to config.env BEDROCK_MODEL_ID'
     )
     parser.add_argument(
         '--num-requests',

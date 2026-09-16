@@ -20,6 +20,11 @@ Requirements:
 
 - Python 3.10+ (the CDK app and Lambdas target 3.9+; use 3.10+ for development)
 - Node.js 18+ (for the AWS CDK CLI)
+- The AWS CDK CLI, at or above the minimum in the
+  [README prerequisites table](README.md#prerequisites). The floor is set by the
+  `aws-cdk-lib` pin in `requirements.txt`, not chosen freely — an older CLI synthesizes
+  fine and then fails at deploy with a cloud-assembly schema mismatch. `deploy.sh`
+  checks this before it does anything else.
 - AWS CLI configured with credentials for a sandbox/dev account
 - `jq`
 

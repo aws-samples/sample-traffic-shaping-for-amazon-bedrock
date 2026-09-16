@@ -6,8 +6,10 @@
 # 2. Requests 2-4: Submitted in parallel - may be immediate or queued depending on burst_capacity
 # 3. Request 5: Should complete successfully
 #
-# Usage: ./test_reserve_release.sh [MODEL_ID]
-# Example: ./test_reserve_release.sh us.amazon.nova-2-lite-v1:0
+# Usage: ./test_reserve_release.sh [MODEL]
+#   MODEL is a create_model_config.MODEL_MAP alias or a full Bedrock model ID.
+# Example: ./test_reserve_release.sh nova-2-lite
+#          ./test_reserve_release.sh us.amazon.nova-2-lite-v1:0
 
 # Load configuration
 if [ ! -f config.env ]; then
@@ -19,8 +21,18 @@ source config.env
 # Set AWS_DEFAULT_REGION so all aws CLI calls use the correct region
 export AWS_DEFAULT_REGION="${AWS_REGION:-us-east-1}"
 
-# Default to Opus, or use command line argument
-MODEL_ID="${1:-us.anthropic.claude-opus-5}"
+# Default to the cheap control model. This is the repo's 5-request smoke check, so it
+# must not default to an expensive model — it used to default to Opus 5.
+MODEL_ARG="${1:-nova-2-lite}"
+
+# Resolve short aliases through the canonical MODEL_MAP. The model ID is used as a
+# raw DynamoDB key below, so an unresolved alias would fail the config lookup.
+MODEL_ID=$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.join('$(dirname "$0")'))
+from create_model_config import MODEL_MAP
+print(MODEL_MAP.get(sys.argv[1].lower(), sys.argv[1]))
+" "$MODEL_ARG")
 
 # Read burst_capacity from DynamoDB config
 BURST_CAPACITY=$(aws dynamodb get-item \

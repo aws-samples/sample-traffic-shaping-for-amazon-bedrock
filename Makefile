@@ -1,4 +1,4 @@
-.PHONY: help setup deploy test check-queue analyze-conflicts tail-budget tail-queue tail-bedrock clean \
+.PHONY: help setup deploy destroy test check-queue analyze-conflicts tail-budget tail-queue tail-bedrock clean \
 	inspect-queue inspect-queue-single inspect-consumption inspect-queue-capacity inspect-config \
 	inspect-tpm-consumption \
 	test-budget-manager test-direct-bedrock test-direct-retry test-direct-leaky test-all test-stale-lock \
@@ -6,7 +6,7 @@
 	test-multi-model \
 	soak-test analyze-soak \
 	logs-recent logs-budget-recent logs-queue-recent logs-bedrock-recent logs-errors \
-	set-capacity get-capacity create-config \
+	set-capacity get-capacity create-config create-starter-configs refresh-quotas \
 	inspect-dlq drain-dlq \
 	dashboard
 
@@ -18,9 +18,11 @@ help:
 	@echo "Setup & Deployment:"
 	@echo "  make setup              - Initial setup (create venv, install deps, deploy CDK)"
 	@echo "  make deploy             - Redeploy CDK stack and update config.env"
+	@echo "  make destroy            - Tear down the CDK stack and remove config.env (prompts)"
 	@echo ""
 	@echo "Testing:"
-	@echo "  make test               - Run reserve/release test (5 requests)"
+	@echo "  make test               - Run reserve/release test (5 requests, MODEL=nova-2-lite)"
+	@echo "  make test MODEL=opus-5  - Same, against a specific model alias"
 	@echo "  make test-queue-processor-sim - Offline queue drain simulation (no AWS)"
 	@echo "  make test-budget-manager-sim  - Offline admission-gate simulation (no AWS)"
 	@echo "  make test-budget-manager - Load test via semaphore (uses config.env defaults)"
@@ -34,7 +36,7 @@ help:
 	@echo "  make test-stale-lock    - Test stale lock recovery"
 	@echo "  make soak-test          - Soak test (sustained RPM + adversarial injection)"
 	@echo "  make soak-test ARGS='--model nova-lite --target-rpm 70 --duration-hours 1' - Quick soak"
-	@echo "  make test-multi-model   - Multi-model contention test (Opus + Jamba + Nova Lite)"
+	@echo "  make test-multi-model   - Multi-model contention test (Opus 5 + Nova 2 Lite + Nova Lite)"
 	@echo "  make analyze-soak ARGS='soak_results.json' - Analyze soak results"
 	@echo "  make analyze-soak ARGS='--cloudwatch --hours 72' - Pull CloudWatch metrics"
 	@echo "  make test-all           - Run all tests"
@@ -63,8 +65,10 @@ help:
 	@echo "  make create-config MODEL=nova-2-lite RPM=10 BURST_CAPACITY=2 - Custom low burst (watch queueing)"
 	@echo "  make create-config MODEL=nova-2-lite RPM=2000 COUNTER_SHARDS=5 - Set RPM and shards"
 	@echo "  make create-config MODEL=nova-lite BURST_CAPACITY=5 ADAPTIVE_SHIFT_MAX=0.2 ADAPTIVE_QUEUE_THRESHOLD=10"
+	@echo "  make create-starter-configs              - Create/overwrite configs for the curated starter model list"
 	@echo "  make set-capacity CAPACITY=2            - Set token bucket capacity (without redeployment)"
 	@echo "  make get-capacity                       - Get current token bucket capacity"
+	@echo "  make refresh-quotas                     - Dump foundation models + service quotas to .bedrock_quota_cache.json"
 	@echo ""
 	@echo "Dead Letter Queue:"
 	@echo "  make inspect-dlq        - View messages in the Dead Letter Queue"
@@ -87,10 +91,38 @@ deploy:
 	@echo "Redeploying CDK stack..."
 	@./deploy.sh
 
-# Run the reserve/release test
+# Tear down the CDK stack and remove generated local config.
+# Mirrors deploy.sh's enable_mantle default so destroy synthesizes the same app.
+destroy:
+	@if [ ! -d ".venv" ]; then \
+		echo "❌ Virtual environment not found. Nothing to destroy from here."; \
+		echo "   Run 'make setup' first, or delete the stack from the CloudFormation console."; \
+		exit 1; \
+	fi
+	@echo "⚠️  This permanently deletes SemaphoreRateLimiterStack, including:"
+	@echo "     • API Gateway + regional WAF web ACL"
+	@echo "     • Step Functions state machine and all Lambda functions"
+	@echo "     • the DynamoDB single table (all model CONFIG records)"
+	@echo "     • the S3 output bucket and its contents (auto-emptied)"
+	@echo "     • the SQS DLQ and the KMS CMK (enters its pending-deletion window)"
+	@echo ""
+	@read -p "Type 'destroy' to confirm: " confirm; \
+	if [ "$$confirm" != "destroy" ]; then echo "Aborted."; exit 1; fi; \
+	source .venv/bin/activate && \
+	cdk destroy --force --context enable_mantle="$${ENABLE_MANTLE:-true}"
+	@rm -f config.env cdk-outputs.json
+	@echo ""
+	@echo "✅ Stack destroyed. Removed generated config.env."
+	@echo "   Retained by design (free, reused on redeploy): the API Gateway"
+	@echo "   CloudWatch role and the account-level API Gateway setting."
+
+# Run the reserve/release test. MODEL takes a MODEL_MAP alias or a full model ID and
+# defaults to the cheap control model — this is a 5-request smoke check, so it must
+# match what the README configures rather than silently billing an expensive model.
+TEST_MODEL ?= $(if $(MODEL),$(MODEL),nova-2-lite)
 test:
-	@echo "Running reserve/release test..."
-	@source .venv/bin/activate && ./scripts/test_reserve_release.sh
+	@echo "Running reserve/release test (model: $(TEST_MODEL))..."
+	@source .venv/bin/activate && ./scripts/test_reserve_release.sh "$(TEST_MODEL)"
 
 # Check queue depth
 check-queue:
@@ -314,6 +346,14 @@ create-config:
 	if [ -n "$(MAX_BURST_MULTIPLIER)" ]; then CMD="$$CMD --max-burst-multiplier $(MAX_BURST_MULTIPLIER)"; fi; \
 	echo "Creating config for $(MODEL)..."; \
 	eval $$CMD
+
+create-starter-configs:
+	@echo "Creating/overwriting configs for the starter model package..."
+	@source .venv/bin/activate && python scripts/create_model_config.py --starter-package
+
+refresh-quotas:
+	@echo "Refreshing Bedrock foundation models + service quotas..."
+	@source .venv/bin/activate && python scripts/get_bedrock_quotas.py
 
 # Dead Letter Queue
 inspect-dlq:
