@@ -784,44 +784,6 @@ class DynamoService:
 
         return [item['model_id'] for item in response.get('Items', []) if 'model_id' in item]
 
-    def get_effective_capacity(self, model_id: str) -> Dict[str, Any]:
-        """
-        Get model config with adaptive capacity adjustment.
-
-        When queue has items, shifts up to adaptive_shift_max of burst capacity
-        to queue to accelerate drain rate. Self-correcting: as queue drains,
-        burst capacity recovers.
-
-        Returns:
-            Config dict with adjusted burst_capacity and queue_capacity
-        """
-        config = self.get_model_config(model_id)
-
-        adaptive_shift_max = float(config.get('adaptive_shift_max', 0))
-        if adaptive_shift_max <= 0:
-            return config
-
-        adaptive_threshold = int(config.get('adaptive_queue_threshold', 50))
-        queue_depth = self.get_queue_depth(model_id)
-
-        if queue_depth <= 0:
-            return config
-
-        # Linear shift: 0 at queue_depth=0, adaptive_shift_max at queue_depth>=threshold
-        shift_pct = min(adaptive_shift_max, (queue_depth / adaptive_threshold) * adaptive_shift_max)
-
-        base_burst = int(config['burst_capacity'])
-        base_queue = int(config['queue_capacity'])
-        shift_amount = int(base_burst * shift_pct)
-
-        # Return adjusted config (don't mutate original)
-        adjusted = dict(config)
-        adjusted['burst_capacity'] = base_burst - shift_amount
-        adjusted['queue_capacity'] = base_queue + shift_amount
-        adjusted['_adaptive_shift'] = shift_amount
-
-        return adjusted
-
     # === Terminal-Status Methods (honest-outcomes layer) ===
 
     def write_pending_status(self, *, request_id: str, tenant_id: Optional[str],

@@ -64,7 +64,6 @@ help:
 	@echo "  make create-config MODEL=nova-2-lite              - Create model config with defaults"
 	@echo "  make create-config MODEL=nova-2-lite RPM=10 BURST_CAPACITY=2 - Custom low burst (watch queueing)"
 	@echo "  make create-config MODEL=nova-2-lite RPM=2000 COUNTER_SHARDS=5 - Set RPM and shards"
-	@echo "  make create-config MODEL=nova-lite BURST_CAPACITY=5 ADAPTIVE_SHIFT_MAX=0.2 ADAPTIVE_QUEUE_THRESHOLD=10"
 	@echo "  make create-starter-configs              - Create/overwrite configs for the curated starter model list"
 	@echo "  make set-capacity CAPACITY=2            - Set token bucket capacity (without redeployment)"
 	@echo "  make get-capacity                       - Get current token bucket capacity"
@@ -329,7 +328,6 @@ create-config:
 		echo "  make create-config MODEL=nova-2-lite         # Model defaults"; \
 		echo "  make create-config MODEL=nova-2-lite RPM=10 BURST_CAPACITY=2  # Test queueing"; \
 		echo "  make create-config MODEL=sonnet-5            # Token-only model"; \
-		echo "  make create-config MODEL=nova-lite BURST_CAPACITY=5 ADAPTIVE_SHIFT_MAX=0.2  # Adaptive"; \
 		echo "  make create-config MODEL=nova-2-lite RPM=2000 COUNTER_SHARDS=5  # Set RPM + shards"; \
 		exit 1; \
 	fi
@@ -341,8 +339,6 @@ create-config:
 	if [ -n "$(BURST_FRACTION)" ]; then CMD="$$CMD --burst-fraction $(BURST_FRACTION)"; fi; \
 	if [ -n "$(QUEUE_FRACTION)" ]; then CMD="$$CMD --queue-fraction $(QUEUE_FRACTION)"; fi; \
 	if [ -n "$(QUEUE_TARGET_TPM)" ]; then CMD="$$CMD --queue-target-tpm $(QUEUE_TARGET_TPM)"; fi; \
-	if [ -n "$(ADAPTIVE_SHIFT_MAX)" ]; then CMD="$$CMD --adaptive-shift-max $(ADAPTIVE_SHIFT_MAX)"; fi; \
-	if [ -n "$(ADAPTIVE_QUEUE_THRESHOLD)" ]; then CMD="$$CMD --adaptive-queue-threshold $(ADAPTIVE_QUEUE_THRESHOLD)"; fi; \
 	if [ -n "$(MAX_BURST_MULTIPLIER)" ]; then CMD="$$CMD --max-burst-multiplier $(MAX_BURST_MULTIPLIER)"; fi; \
 	echo "Creating config for $(MODEL)..."; \
 	eval $$CMD

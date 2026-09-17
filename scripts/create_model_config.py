@@ -214,7 +214,6 @@ def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
 
 
 def calculate_config(rpm, tpm: int, burndown_rate: float, burst_capacity_override: int = None,
-                     adaptive_shift_max: float = 0, adaptive_queue_threshold: int = 50,
                      bytes_per_token: float = 4.0,
                      short_window_sec: int = 2, long_window_sec: int = 15,
                      burst_fraction: float = 0.0, queue_fraction: float = 0.85,
@@ -243,8 +242,6 @@ def calculate_config(rpm, tpm: int, burndown_rate: float, burst_capacity_overrid
              runtime backend, 1.0 for everything else (including all of mantle). See that
              function for the derivation; do not restate the numbers elsewhere.
         burst_capacity_override: Optional override for burst capacity (for testing)
-        adaptive_shift_max: Max fraction of burst capacity to shift to queue (0=disabled)
-        adaptive_queue_threshold: Queue depth at which max shift applies
         bytes_per_token: Bytes per token ratio for token estimation. Callers pass what
              derive_default_bytes_per_token() returns -- 3.0 for Nova, 4.0 for every other
              model (Claude included). The signature default of 4.0 applies only to direct
@@ -317,9 +314,6 @@ def calculate_config(rpm, tpm: int, burndown_rate: float, burst_capacity_overrid
         'tpm_queue_regeneration_rate': Decimal(str(round(tpm_queue_regen_rate, 4))),
         'tpm_buffer_capacity': tpm_buffer_capacity,
         'output_token_burndown_rate': Decimal(str(burndown_rate)),
-        # Adaptive capacity (disabled by default — set adaptive_shift_max > 0 to enable)
-        'adaptive_shift_max': Decimal(str(adaptive_shift_max)),
-        'adaptive_queue_threshold': adaptive_queue_threshold,
         'bytes_per_token': Decimal(str(bytes_per_token)),
         # Sliding-window admission horizons (consumption-record read gate).
         #   short_window_sec — rate smoothing (2s): caps instantaneous dispatch
@@ -448,8 +442,6 @@ def process_model(model_arg: str, args, parser, model_id_override: str = None) -
 
     # Calculate configuration
     config_values = calculate_config(rpm, tpm, burndown_rate, args.burst_capacity,
-                                     adaptive_shift_max=args.adaptive_shift_max,
-                                     adaptive_queue_threshold=args.adaptive_queue_threshold,
                                      bytes_per_token=bytes_per_token,
                                      short_window_sec=args.short_window_sec,
                                      long_window_sec=args.long_window_sec,
@@ -510,9 +502,6 @@ def process_model(model_arg: str, args, parser, model_id_override: str = None) -
     print(f"\nAdmission Control (sliding-window read gate):")
     print(f"  short_window_sec: {config_values['short_window_sec']} (rate smoothing)")
     print(f"  long_window_sec: {config_values['long_window_sec']} (accuracy horizon; reconciled actuals dominate)")
-    print(f"\nAdaptive Capacity:")
-    print(f"  adaptive_shift_max: {config_values['adaptive_shift_max']} (0=disabled, 0.2=shift up to 20%)")
-    print(f"  adaptive_queue_threshold: {config_values['adaptive_queue_threshold']}")
 
     # Create config (or, under --dry-run, only resolve it -- no AWS resource is
     # constructed and nothing is written).
@@ -606,18 +595,6 @@ Model short names:
              '(.bedrock_quota_cache.json, populated by \'make refresh-quotas\'). REQUIRED '
              'for mantle/bare on-demand model IDs, which have no inference profile and so '
              'have no cache entry.'
-    )
-    parser.add_argument(
-        '--adaptive-shift-max',
-        type=float,
-        default=0,
-        help='Max fraction of burst capacity to shift to queue (0=disabled, 0.2=20%%). Default: 0'
-    )
-    parser.add_argument(
-        '--adaptive-queue-threshold',
-        type=int,
-        default=50,
-        help='Queue depth at which max shift applies. Default: 50'
     )
     parser.add_argument(
         '--short-window-sec',
