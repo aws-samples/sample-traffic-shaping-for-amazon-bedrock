@@ -138,10 +138,22 @@ def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
 
     Returns (tpm, source) where source is 'explicit' or 'cache'. Raises LookupError
     (with a message identifying the cause and the fix) when no --tpm was given and
-    the model has no usable cache entry -- callers must surface this via
-    parser.error(), never invent a fallback.
+    the model has no usable cache entry, or when the given --tpm is not positive --
+    callers must surface this via parser.error(), never invent a fallback.
     """
-    if explicit_tpm:
+    if explicit_tpm is not None:
+        # Tested against None, not truthiness: a bare `if explicit_tpm` would let --tpm 0
+        # fall silently through to the cache, so the run would succeed with a TPM the user
+        # never asked for. Unlike --rpm 0 (a documented "no RPM quota" sentinel, see main()),
+        # 0 is never a meaningful TPM -- TPM is the dimension every model paces on, so a 0
+        # limit gates the model to zero throughput rather than disabling the gate.
+        if explicit_tpm <= 0:
+            raise LookupError(
+                f"--tpm must be a positive tokens-per-minute value (got {explicit_tpm}). "
+                f"There is no 'disable the TPM gate' sentinel: a 0 limit would gate "
+                f"'{model_id}' to zero throughput, not remove the limit. Omit --tpm to use "
+                f"the cached quota value."
+            )
         return explicit_tpm, 'explicit'
 
     if not os.path.exists(QUOTA_CACHE_PATH):
@@ -171,7 +183,11 @@ def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
                     f"the stale cached value anyway.",
                     file=sys.stderr,
                 )
-        except ValueError:
+        except (ValueError, TypeError):
+            # ValueError: lastRefreshedAt isn't ISO-8601 at all. TypeError: it parsed but
+            # is timezone-naive, so subtracting an aware datetime raises. Either way this
+            # is only a freshness advisory -- a malformed timestamp must never be fatal to
+            # a run whose quota values are otherwise fine.
             pass
 
     profile = cache.get('profiles', {}).get(model_id)
@@ -222,11 +238,17 @@ def calculate_config(rpm, tpm: int, burndown_rate: float, burst_capacity_overrid
              (next-gen Claude on bedrock-runtime). When None, no RPM dimension is
              written and the admission gate paces purely on TPM.
         tpm: Tokens per minute limit
-        burndown_rate: Output token burndown multiplier (5 for Claude 3.7+, 1 for others)
+        burndown_rate: Output token burndown multiplier. Callers pass what
+             derive_default_burndown() returns -- 10.0 for Anthropic/OpenAI models on the
+             runtime backend, 1.0 for everything else (including all of mantle). See that
+             function for the derivation; do not restate the numbers elsewhere.
         burst_capacity_override: Optional override for burst capacity (for testing)
         adaptive_shift_max: Max fraction of burst capacity to shift to queue (0=disabled)
         adaptive_queue_threshold: Queue depth at which max shift applies
-        bytes_per_token: Bytes per token ratio for token estimation (3.5 for Claude, 4.0 default)
+        bytes_per_token: Bytes per token ratio for token estimation. Callers pass what
+             derive_default_bytes_per_token() returns -- 3.0 for Nova, 4.0 for every other
+             model (Claude included). The signature default of 4.0 applies only to direct
+             callers such as tests.
         burst_fraction: Fraction of quota allocated to burst bucket (default 0.00)
         queue_fraction: Fraction of quota allocated to queue bucket (default 0.85)
         buffer_fraction: Fraction of quota held back as safety buffer (default 0.15)
@@ -566,7 +588,9 @@ Model short names:
     parser.add_argument(
         '--burst-capacity',
         type=int,
-        help='Override burst capacity (for testing). Default: 50%% of RPM'
+        help='Override burst capacity (for testing). Default: RPM * --burst-fraction, '
+             'which is 0 under the default --burst-fraction 0.0 (queue-only). Set >0 here '
+             'to re-enable the immediate path without changing the fractions.'
     )
     parser.add_argument(
         '--rpm',

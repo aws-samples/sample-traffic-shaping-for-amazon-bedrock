@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """
-Dump this account's Bedrock foundation models and service quotas to a
-gitignored JSON cache (.bedrock_quota_cache.json at the repo root).
+Dump this account's Bedrock foundation models, inference profiles, and service
+quotas to a gitignored JSON cache (.bedrock_quota_cache.json at the repo root),
+along with a resolved per-inference-profile TPM lookup.
 
-Raw dump only — no matching of quotas to specific model IDs. That mapping
-is a separate, future piece of work; this script just reliably captures
-the two data sources so later tooling can use real numbers instead of
-hand-maintained constants.
+Cache keys written:
+    models              raw list_foundation_models records (id/provider/name)
+    inference_profiles  raw list_inference_profiles records, one per profile ID
+    quotas              raw list_service_quotas records, filtered to the rate
+                        quotas that shape this rate limiter (RATE_QUOTA_PATTERNS)
+    profiles            THE CONSUMED KEY — one entry per ACTIVE inference profile,
+                        keyed by inferenceProfileId, carrying that profile's own
+                        resolved TPM. This is what create_model_config.py reads.
+    lastRefreshedAt     ISO-8601 UTC timestamp, used for the staleness warning
+
+The point of 'profiles' is that regional vs global is derived from each profile's
+own ID prefix, so a us.X and a global.X profile sharing a base model can never
+borrow each other's quota pool. See match_profile_driven_quotas().
 
 Usage:
     python scripts/get_bedrock_quotas.py
@@ -24,12 +34,12 @@ from botocore.exceptions import ClientError
 
 OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.bedrock_quota_cache.json')
 
-# Base model IDs excluded from the profile-driven matching path (see
-# docs/bedrock-inference-endpoints.md). Everything else with an ACTIVE inference
-# profile and a list_foundation_models record is in scope -- profile-driven matching
-# is strictly safer than the fuzzy quota-name path below, so there is no allowlist,
-# only this denylist. IDs are bare (CRIS-prefix-stripped), matching baseModelId as
-# returned by get_inference_profiles().
+# Base model IDs excluded from quota matching (see docs/bedrock-inference-endpoints.md).
+# Everything else with an ACTIVE inference profile and a list_foundation_models record
+# is in scope, so there is no allowlist, only this denylist. A denylisted profile still
+# appears in the 'profiles' cache, with tpm: None -- the gap stays visible rather than
+# being filled from the wrong pool. IDs are bare (CRIS-prefix-stripped), matching
+# baseModelId as returned by get_inference_profiles().
 PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS = (
     'meta.llama4-maverick-17b-instruct-v1:0',
     'meta.llama4-scout-17b-instruct-v1:0',
@@ -52,9 +62,7 @@ def is_rate_quota(quota_name):
     return any(p.search(quota_name) for p in RATE_QUOTA_PATTERNS)
 
 
-# --- Grouping: associate each filtered quota back to the model it belongs to ---
-
-RUNTIME_VARIANTS = ['cross_region', 'global_cross_region', 'on_demand', 'on_demand_latency_optimized']
+# --- Matching: associate each filtered quota back to the model it belongs to ---
 
 # A trailing/embedded generic profile-version marker ('V1', 'v1:0') that AWS appends to some
 # quota-name suffixes with no corresponding meaning in the model record. The negative lookahead
@@ -79,10 +87,11 @@ def normalize_match_key(s):
 
 def match_key_tokens(s):
     """Tokenize the same normalized string as normalize_match_key(), but as separate words
-    instead of one concatenated key. Used only by the suffix-match fallback below, which needs
-    real word boundaries to compare 'trailing words' safely -- concatenating everything into one
-    string (as normalize_match_key does) would make that comparison a raw substring check and
-    risk exactly the kind of accidental partial-word collision the fuzzy matcher must avoid.
+    instead of one concatenated key. Used only by the suffix-match fallback in
+    match_profile_driven_quotas(), which needs real word boundaries to compare 'trailing
+    words' safely -- concatenating everything into one string (as normalize_match_key does)
+    would make that comparison a raw substring check and risk exactly the kind of accidental
+    partial-word collision the fallback must avoid.
     """
     s = s.lower()
     s = VERSION_TOKEN_RE.sub('', s)
@@ -144,92 +153,6 @@ def classify_quota(quota_name):
     return ('runtime', metric, variant)
 
 
-def build_model_index(models):
-    by_full_name = {}
-    by_bare_name = {}
-    # (bare-name tokens, model_id) pairs, for match_quota_model()'s suffix fallback below.
-    # Only models whose bare modelName has 2+ words are eligible -- see _is_token_suffix().
-    bare_token_candidates = []
-    for m in models:
-        model_id = m.get('modelId')
-        full_key = normalize_match_key(f"{m.get('providerName') or ''} {m.get('modelName') or ''}")
-        bare_key = normalize_match_key(m.get('modelName') or '')
-        by_full_name.setdefault(full_key, model_id)
-        by_bare_name.setdefault(bare_key, model_id)
-        bare_tokens = match_key_tokens(m.get('modelName') or '')
-        if len(bare_tokens) >= 2:
-            bare_token_candidates.append((bare_tokens, model_id))
-    return by_full_name, by_bare_name, bare_token_candidates
-
-
-def match_quota_model(quota_name, by_full_name, by_bare_name, bare_token_candidates):
-    suffix = split_suffix(quota_name)
-    if suffix is None:
-        return None
-    key = normalize_match_key(suffix)
-    exact = by_full_name.get(key) or by_bare_name.get(key)
-    if exact is not None:
-        return exact
-
-    # Fallback: the quota suffix carries a provider-name variant the model record spells
-    # differently (e.g. quota 'Writer AI Palmyra X4 V1' vs providerName 'Writer', or
-    # 'Mistral Pixtral Large 25.02 V1' vs providerName 'Mistral AI') -- neither the full nor
-    # bare exact key can account for that, so fall back to: does the quota suffix *end with*
-    # some model's bare name? Only trust this if exactly one model qualifies -- an ambiguous
-    # suffix match (e.g. a quota name that omits the distinguishing suffix of two sibling
-    # model versions) is treated as no match, per this module's strictness guardrail.
-    quota_tokens = match_key_tokens(suffix)
-    matches = {
-        model_id for bare_tokens, model_id in bare_token_candidates
-        if _is_token_suffix(quota_tokens, bare_tokens)
-    }
-    if len(matches) == 1:
-        return next(iter(matches))
-    return None
-
-
-def empty_runtime():
-    return {
-        'tpm': {variant: None for variant in RUNTIME_VARIANTS},
-        'rpm': {variant: None for variant in RUNTIME_VARIANTS},
-    }
-
-
-def group_quotas(quotas, models):
-    by_full_name, by_bare_name, bare_token_candidates = build_model_index(models)
-    models_by_id = {m['modelId']: m for m in models}
-    grouped = {}
-    unmatched_quotas = []
-
-    for q in quotas:
-        quota_name = q.get('QuotaName', '')
-        classification = classify_quota(quota_name)
-        if classification is None:
-            unmatched_quotas.append(q)
-            continue
-
-        model_id = match_quota_model(quota_name, by_full_name, by_bare_name, bare_token_candidates)
-        if model_id is None:
-            unmatched_quotas.append(q)
-            continue
-
-        entry = grouped.setdefault(model_id, {
-            'providerName': models_by_id[model_id].get('providerName'),
-            'modelName': models_by_id[model_id].get('modelName'),
-            'runtime': empty_runtime(),
-            'mantle': {'itpm': None, 'otpm': None},
-        })
-
-        if classification[0] == 'runtime':
-            _, metric, variant = classification
-            entry['runtime'][metric][variant] = q.get('Value')
-        else:
-            _, mantle_field = classification
-            entry['mantle'][mantle_field] = q.get('Value')
-
-    return grouped, unmatched_quotas
-
-
 def profile_variant(inference_profile_id):
     """Derive regional-vs-global strictly from the profile ID's own prefix.
 
@@ -243,15 +166,14 @@ def profile_variant(inference_profile_id):
 def match_profile_driven_quotas(quotas, models, inference_profiles):
     """Match every ACTIVE, non-denylisted inference profile to its own quota family.
 
-    Unlike match_quota_model()'s fuzzy quota-name matching, this determines
-    regional-vs-global strictly from each profile's own inferenceProfileId prefix
-    ('global.' -> global_cross_region, anything else -> cross_region) and never
-    checks the other family for a given profile -- the fix for the cross-pool risk
-    fuzzy matching alone couldn't distinguish. Applies to every base model with an
-    ACTIVE inference profile and a list_foundation_models record, except
-    PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS; profiles for denylisted base models are
-    left untouched here, so their quotas still flow only through the existing
-    fuzzy path.
+    Regional-vs-global is determined strictly from each profile's own
+    inferenceProfileId prefix ('global.' -> global_cross_region, anything else ->
+    cross_region), and a given profile is never checked against the other family --
+    that separation is the whole point of matching per profile rather than per base
+    model, since a us.X and a global.X profile share a base model but draw on two
+    different account quotas. Applies to every base model with an ACTIVE inference
+    profile and a list_foundation_models record, except
+    PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS, which are skipped entirely.
 
     Returns {base_model_id: {'tpm': {variant: value}, 'rpm': {variant: value}}},
     where variant is always 'cross_region' or 'global_cross_region'.
@@ -261,7 +183,7 @@ def match_profile_driven_quotas(quotas, models, inference_profiles):
     # Quota values usable by this path: runtime cross_region/global_cross_region only,
     # indexed by (variant, metric, normalized "for X" suffix key) for the exact-match fast
     # path, and by (variant, metric) -> [(suffix tokens, value), ...] for the suffix-match
-    # fallback below (see match_quota_model()'s docstring for why the fallback exists).
+    # fallback below.
     quota_index = {}
     quota_token_index = {}
     for q in quotas:
@@ -301,9 +223,14 @@ def match_profile_driven_quotas(quotas, models, inference_profiles):
             variant_map = quota_index.get((variant, metric), {})
             value = variant_map.get(full_key, variant_map.get(bare_key))
             if value is None:
-                # Same provider-name-variant fallback as match_quota_model(): does exactly one
+                # Neither exact key matched, which happens when the quota suffix carries a
+                # provider-name variant the model record spells differently (quota
+                # 'Writer AI Palmyra X4 V1' vs providerName 'Writer'; 'Mistral Pixtral Large
+                # 25.02 V1' vs providerName 'Mistral AI'). Fall back to: does exactly one
                 # quota in this model's own variant/metric family end with this model's bare
-                # name? Ambiguous (0 or 2+ candidates) is treated as no match, never a guess.
+                # name? Ambiguous (0 or 2+ candidates) is treated as no match, never a guess --
+                # e.g. 'Twelve Labs Marengo' carries no token distinguishing the 2.7 sibling
+                # from the 3.0 one, so it must resolve to nothing rather than pick one.
                 candidates = {
                     v for toks, v in quota_token_index.get((variant, metric), [])
                     if _is_token_suffix(toks, bare_tokens)
@@ -453,8 +380,6 @@ def main():
         output['quota_access_error'] = message
         print(message, file=sys.stderr)
 
-    output['grouped'], output['unmatched_quotas'] = group_quotas(output['quotas'], output['models'])
-
     try:
         output['inference_profiles'] = get_inference_profiles(bedrock)
     except ClientError as e:
@@ -465,29 +390,11 @@ def main():
         output['inference_profile_access_error'] = message
         print(message, file=sys.stderr)
 
-    # Profile-driven overlay: for every non-denylisted base model with an ACTIVE
-    # inference profile, this decisively supersedes whatever the fuzzy path above
-    # wrote into runtime.tpm/rpm.{cross_region|global_cross_region} -- it only ever
-    # touches those two variant keys, never mantle/on_demand/on_demand_latency_optimized,
-    # and never a denylisted base model (see PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS).
-    models_by_id = {m['modelId']: m for m in output['models']}
+    # The consumed output: one entry per ACTIVE inference profile, each carrying only
+    # its own pool's TPM. See build_profiles_cache() for the tpm sourcing rule.
     profile_matches = match_profile_driven_quotas(
         output['quotas'], output['models'], output['inference_profiles'],
     )
-    for base_model_id, runtime_values in profile_matches.items():
-        entry = output['grouped'].setdefault(base_model_id, {
-            'providerName': models_by_id[base_model_id].get('providerName'),
-            'modelName': models_by_id[base_model_id].get('modelName'),
-            'runtime': empty_runtime(),
-            'mantle': {'itpm': None, 'otpm': None},
-        })
-        for metric in ('tpm', 'rpm'):
-            for variant, value in runtime_values[metric].items():
-                entry['runtime'][metric][variant] = value
-
-    # Per-profile cache: one entry per ACTIVE inference profile, additive to
-    # everything above -- 'grouped'/'models'/'quotas'/'inference_profiles' are
-    # unchanged in shape. See build_profiles_cache() for the tpm sourcing rule.
     output['profiles'] = build_profiles_cache(
         output['models'], output['inference_profiles'], profile_matches,
     )

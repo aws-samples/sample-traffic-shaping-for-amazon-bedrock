@@ -3,8 +3,8 @@
 match_profile_driven_quotas() derives regional-vs-global strictly from each inference
 profile's own inferenceProfileId prefix ('global.' -> global_cross_region, anything else
 -> cross_region) and must never let one family borrow the other's quota value, even when
-both profiles resolve to the same base model. This is the whole point of the
-profile-driven path over fuzzy quota-name matching, and widening its scope must
+both profiles resolve to the same base model. That separation is the whole point of
+matching per inference profile rather than per base model, and widening its scope must
 not weaken it.
 
 Run: python -m pytest tests/test_get_bedrock_quotas.py -q
@@ -16,11 +16,8 @@ SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from get_bedrock_quotas import (  # noqa: E402
-    build_model_index,
     build_profiles_cache,
-    group_quotas,
     match_profile_driven_quotas,
-    match_quota_model,
 )
 
 
@@ -199,14 +196,20 @@ def test_profiles_cache_ignores_inactive_profiles():
     assert set(profiles_cache.keys()) == {f"us.{BASE_MODEL_ID}"}
 
 
-# --- normalize_match_key()/match_quota_model() regression coverage ---
+# --- normalize_match_key()/suffix-fallback regression coverage ---
 #
-# Real mismatch classes observed against account data: hyphen vs space ('DeepSeek-R1' vs
-# 'DeepSeek R1'), parenthesized vs bare version ('(25.02)' vs '25.02'), and a provider-name
-# variant embedded in the quota suffix that the model record spells differently
-# ('Writer AI Palmyra X4' vs providerName 'Writer', 'Mistral Pixtral Large' vs providerName
-# 'Mistral AI'). None of these should ever come at the cost of a sibling model wrongly
-# claiming another model's quota -- see the ambiguity-guard tests below.
+# Real mismatch classes observed against account data, all of which the exact-key lookup
+# alone cannot bridge: hyphen vs space ('DeepSeek-R1' vs 'DeepSeek R1'), parenthesized vs
+# bare version ('(25.02)' vs '25.02'), and a provider-name variant embedded in the quota
+# suffix that the model record spells differently ('Writer AI Palmyra X4' vs providerName
+# 'Writer', 'Mistral Pixtral Large' vs providerName 'Mistral AI'). None of these may come
+# at the cost of a model claiming a quota that isn't demonstrably its own -- see the
+# ambiguity-guard tests at the bottom.
+#
+# These exercise match_profile_driven_quotas() because that is the only consumer of
+# normalize_match_key()/match_key_tokens()/_is_token_suffix(); the standalone fuzzy
+# quota-name matcher they were originally written against had no production consumer and
+# was removed.
 
 FIXER_MODELS = [
     {"modelId": "deepseek.r1-v1:0", "providerName": "DeepSeek", "modelName": "DeepSeek-R1"},
@@ -220,47 +223,79 @@ FIXER_MODELS = [
 ]
 
 
-def test_match_quota_model_normalizes_hyphen_space_and_punctuation():
-    by_full_name, by_bare_name, bare_token_candidates = build_model_index(FIXER_MODELS)
+def us_profiles(models):
+    """One ACTIVE regional (cross_region) inference profile per model."""
+    return [
+        {
+            "inferenceProfileId": f"us.{m['modelId']}",
+            "inferenceProfileName": f"us-{m['modelId']}",
+            "status": "ACTIVE",
+            "baseModelId": m["modelId"],
+        }
+        for m in models
+    ]
 
-    model_id = match_quota_model(
-        "Cross-region model inference tokens per minute for DeepSeek R1 V1",
-        by_full_name, by_bare_name, bare_token_candidates,
-    )
 
-    assert model_id == "deepseek.r1-v1:0"
+def test_matching_normalizes_hyphen_space_and_punctuation():
+    """Quota suffix 'DeepSeek R1 V1' vs modelName 'DeepSeek-R1': hyphen-vs-space plus a
+    generic 'V1' profile-version token. Must still resolve to this model's own TPM."""
+    models = [FIXER_MODELS[0]]
+    quotas = [
+        {
+            "QuotaName": "Cross-region model inference tokens per minute for DeepSeek R1 V1",
+            "Value": 200_000,
+        },
+    ]
+
+    results = match_profile_driven_quotas(quotas, models, us_profiles(models))
+
+    assert results["deepseek.r1-v1:0"]["tpm"]["cross_region"] == 200_000
 
 
-def test_match_quota_model_resolves_provider_name_spelled_differently():
+def test_matching_resolves_provider_name_spelled_differently():
     """'Writer AI' in the quota suffix vs providerName 'Writer' -- and 'Mistral' in the quota
     suffix vs providerName 'Mistral AI' -- neither the full nor the bare exact key can match
-    this on their own; the suffix fallback must resolve it via the model's bare name alone."""
-    by_full_name, by_bare_name, bare_token_candidates = build_model_index(FIXER_MODELS)
+    this on their own; the suffix fallback must resolve it via the model's bare name alone,
+    and must still give each Palmyra sibling its own distinct value."""
+    quotas = [
+        {"QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X4 V1", "Value": 150_000},
+        {"QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X5 V1", "Value": 151_000},
+        {"QuotaName": "Cross-region model inference tokens per minute for Mistral Pixtral Large 25.02 V1", "Value": 80_000},
+    ]
 
-    palmyra_x4 = match_quota_model(
-        "Cross-region model inference tokens per minute for Writer AI Palmyra X4 V1",
-        by_full_name, by_bare_name, bare_token_candidates,
+    results = match_profile_driven_quotas(quotas, FIXER_MODELS, us_profiles(FIXER_MODELS))
+
+    assert results["writer.palmyra-x4-v1:0"]["tpm"]["cross_region"] == 150_000
+    assert results["writer.palmyra-x5-v1:0"]["tpm"]["cross_region"] == 151_000
+    assert results["mistral.pixtral-large-2502-v1:0"]["tpm"]["cross_region"] == 80_000
+
+    # The two siblings resolved independently -- neither borrowed the other's value.
+    assert (
+        results["writer.palmyra-x4-v1:0"]["tpm"]["cross_region"]
+        != results["writer.palmyra-x5-v1:0"]["tpm"]["cross_region"]
     )
-    palmyra_x5 = match_quota_model(
-        "Cross-region model inference tokens per minute for Writer AI Palmyra X5 V1",
-        by_full_name, by_bare_name, bare_token_candidates,
-    )
-    pixtral = match_quota_model(
-        "Cross-region model inference tokens per minute for Mistral Pixtral Large 25.02 V1",
-        by_full_name, by_bare_name, bare_token_candidates,
-    )
-
-    assert palmyra_x4 == "writer.palmyra-x4-v1:0"
-    assert palmyra_x5 == "writer.palmyra-x5-v1:0"
-    assert pixtral == "mistral.pixtral-large-2502-v1:0"
 
 
-def test_match_quota_model_refuses_ambiguous_suffix_between_sibling_versions():
+def test_matching_refuses_ambiguous_suffix_with_two_candidate_quotas():
+    """The suffix fallback must only fire when exactly one quota in this model's own
+    variant/metric family ends with its bare name. Here two quotas both end with
+    'Nano Pro' at different values -- picking either would be a coin flip, so the model
+    must come back with no TPM at all."""
+    models = [{"modelId": "acme.nano-pro-v1:0", "providerName": "Acme", "modelName": "Nano Pro"}]
+    quotas = [
+        {"QuotaName": "Cross-region model inference tokens per minute for Acme AI Nano Pro V1", "Value": 100_000},
+        {"QuotaName": "Cross-region model inference tokens per minute for Acme Labs Nano Pro V1", "Value": 200_000},
+    ]
+
+    results = match_profile_driven_quotas(quotas, models, us_profiles(models))
+
+    assert results["acme.nano-pro-v1:0"]["tpm"] == {}
+
+
+def test_matching_never_credits_a_sibling_with_an_underspecified_quota():
     """Real-world case: 'Twelve Labs Marengo' is AWS's quota-name for the 2.7 sibling, but
-    carries no 'Embed'/version token distinguishing it from the 3.0 sibling. A matcher loose
-    enough to ignore 'Embed <version>' entirely would let *both* siblings claim this quota
-    (or arbitrarily pick one) -- per the design's guardrail, this must resolve to no match
-    at all rather than guess."""
+    carries no 'Embed'/version token distinguishing it from the 3.0 sibling. Neither sibling
+    may claim it. The 3.0 sibling still gets its own fully-specified quota."""
     siblings = [
         {
             "modelId": "twelvelabs.marengo-embed-2-7-v1:0",
@@ -273,74 +308,14 @@ def test_match_quota_model_refuses_ambiguous_suffix_between_sibling_versions():
             "modelName": "Marengo Embed 3.0",
         },
     ]
-    by_full_name, by_bare_name, bare_token_candidates = build_model_index(siblings)
-
-    model_id = match_quota_model(
-        "Cross-region model inference requests per minute for Twelve Labs Marengo",
-        by_full_name, by_bare_name, bare_token_candidates,
-    )
-
-    assert model_id is None
-
-
-def test_no_quota_value_claimed_by_more_than_one_base_model():
-    """group_quotas() must never let two different base models share credit for the same
-    underlying quota record. Exercises the full model set above (including the ambiguous
-    Marengo siblings) plus every quota, and asserts each QuotaCode's value appears under at
-    most one base model's grouped entry."""
-    all_models = FIXER_MODELS + [
-        {
-            "modelId": "twelvelabs.marengo-embed-2-7-v1:0",
-            "providerName": "TwelveLabs",
-            "modelName": "Marengo Embed v2.7",
-        },
-        {
-            "modelId": "twelvelabs.marengo-embed-3-0-v1:0",
-            "providerName": "TwelveLabs",
-            "modelName": "Marengo Embed 3.0",
-        },
+    quotas = [
+        # Underspecified -- could tempt a loose matcher into crediting either sibling.
+        {"QuotaName": "Cross-region model inference requests per minute for Twelve Labs Marengo", "Value": 200},
+        {"QuotaName": "Cross-region model inference requests per minute for TwelveLabs Marengo Embed 3.0", "Value": 1000},
     ]
-    # Values are deliberately distinct (even where the real account has two models sharing an
-    # identical quota tier, e.g. Palmyra X4/X5 both at 150k TPM) so each quota's value can be
-    # traced unambiguously back to its own QuotaCode below -- a coincidental value collision
-    # between two correctly-matched, unrelated quotas is not the bug this test guards against.
-    all_quotas = [
-        {"QuotaCode": "Q1", "QuotaName": "Cross-region model inference tokens per minute for DeepSeek R1 V1", "Value": 200_000},
-        {"QuotaCode": "Q2", "QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X4 V1", "Value": 150_000},
-        {"QuotaCode": "Q3", "QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X5 V1", "Value": 151_000},
-        {"QuotaCode": "Q4", "QuotaName": "Cross-region model inference tokens per minute for Mistral Pixtral Large 25.02 V1", "Value": 80_000},
-        # Deliberately ambiguous -- no 'Embed'/version token, could tempt a loose matcher
-        # into crediting either Marengo sibling.
-        {"QuotaCode": "Q5", "QuotaName": "Cross-region model inference requests per minute for Twelve Labs Marengo", "Value": 200},
-        {"QuotaCode": "Q6", "QuotaName": "Cross-region model inference requests per minute for TwelveLabs Marengo Embed 3.0", "Value": 1000},
-    ]
-    value_by_code = {q["QuotaCode"]: q["Value"] for q in all_quotas}
 
-    grouped, unmatched = group_quotas(all_quotas, all_models)
+    results = match_profile_driven_quotas(quotas, siblings, us_profiles(siblings))
 
-    # Every quota's own value shows up under exactly the one base model it belongs to -- never
-    # under a second one, even when a sibling model happens to be a suffix-match candidate.
-    quota_code_owners = {}
-    for model_id, entry in grouped.items():
-        for metric in ("tpm", "rpm"):
-            for variant, value in entry["runtime"][metric].items():
-                if value is None:
-                    continue
-                for code, expected_value in value_by_code.items():
-                    if value == expected_value:
-                        quota_code_owners.setdefault(code, set()).add(model_id)
-
-    for code, owners in quota_code_owners.items():
-        assert len(owners) == 1, f"QuotaCode {code} claimed by more than one base model: {owners}"
-
-    # The genuinely ambiguous quota (Q5) must land in unmatched_quotas, not silently attributed
-    # to either Marengo sibling -- neither sibling gets a grouped entry from it at all.
-    assert "Q5" in {q["QuotaCode"] for q in unmatched}
-    assert "twelvelabs.marengo-embed-2-7-v1:0" not in grouped
-    assert grouped["twelvelabs.marengo-embed-3-0-v1:0"]["runtime"]["rpm"]["cross_region"] == 1000
-
-    # The unambiguous, correctly-matched quotas landed on the right model, not a sibling.
-    assert grouped["deepseek.r1-v1:0"]["runtime"]["tpm"]["cross_region"] == 200_000
-    assert grouped["writer.palmyra-x4-v1:0"]["runtime"]["tpm"]["cross_region"] == 150_000
-    assert grouped["writer.palmyra-x5-v1:0"]["runtime"]["tpm"]["cross_region"] == 151_000
-    assert grouped["mistral.pixtral-large-2502-v1:0"]["runtime"]["tpm"]["cross_region"] == 80_000
+    # The 200 value is never attributed to anyone.
+    assert results["twelvelabs.marengo-embed-2-7-v1:0"]["rpm"] == {}
+    assert results["twelvelabs.marengo-embed-3-0-v1:0"]["rpm"]["cross_region"] == 1000
