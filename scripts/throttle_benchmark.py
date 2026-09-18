@@ -189,8 +189,8 @@ def set_shaper_cap(alias, tpm_cap):
     model_id = cmc.MODEL_MAP.get(alias, alias)
     cfg = cmc.calculate_config(
         rpm=None, tpm=int(tpm_cap),
-        burndown_rate=cmc.OUTPUT_BURNDOWN_RATE.get(alias, 1.0),
-        bytes_per_token=cmc.BYTES_PER_TOKEN.get(alias, 4.0),
+        burndown_rate=cmc.derive_default_burndown(model_id, "runtime"),
+        bytes_per_token=cmc.derive_default_bytes_per_token(model_id),
     )
     cfg["backend"] = "runtime"
     cfg["api_style"] = "converse"

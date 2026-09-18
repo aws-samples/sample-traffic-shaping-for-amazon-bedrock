@@ -11,6 +11,7 @@ decisions behind it. For load testing, see [`../testing/`](../testing/).
 | [runbook.md](runbook.md) | **Operating the shaper.** Alarm response, latency SLAs, DLQ consumer, inspection commands. |
 | [cost-model.md](cost-model.md) | **Infrastructure cost analysis** per request and at scale. |
 | [production-hardening.md](production-hardening.md) | **Roadmap.** Production-readiness sprints and open gaps. |
+| [capacity-model-rationale.md](capacity-model-rationale.md) | **Why the capacity model looks like this.** Go-forward framing (one admission lane per model, RPM-vs-TPM trajectory, failover direction) plus the dated history — load-test findings, superseded designs — that produced it. |
 
 ## Decision record
 

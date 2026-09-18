@@ -212,10 +212,7 @@ def try_reserve_allocation_leaky_bucket(
     # Step 1: Get model config (use pre-fetched if available)
     try:
         if config is None:
-            config = dynamo_service.get_effective_capacity(model_id)
-        adaptive_shift = config.get('_adaptive_shift', 0)
-        if adaptive_shift:
-            logger.info(f"Adaptive capacity: shifted {adaptive_shift} tokens from burst to queue for model={model_id}")
+            config = dynamo_service.get_model_config(model_id)
         burst_capacity = int(config['burst_capacity'])
         burst_regen_rate = float(config['burst_regeneration_rate'])
         # TPM config (optional — gracefully degrade if not configured)
@@ -499,7 +496,7 @@ def handler(event, context):
         # Also pre-fetches config to avoid duplicate DynamoDB read in try_reserve_allocation_leaky_bucket()
         config = None
         try:
-            config = dynamo_service.get_effective_capacity(model_id)
+            config = dynamo_service.get_model_config(model_id)
             max_tokens_per_request = int(config.get('max_tokens_per_request', 4096))
         except Exception:
             max_tokens_per_request = 4096  # Safe default if config unavailable
@@ -556,7 +553,7 @@ def handler(event, context):
             }
 
         # Try to reserve using leaky bucket (with TPM estimation from payload)
-        # Pass pre-fetched config to avoid duplicate get_effective_capacity() call
+        # Pass pre-fetched config to avoid duplicate get_model_config() call
         success, metadata = try_reserve_allocation_leaky_bucket(
             dynamo_service, model_id, request_id, task_token, execution_arn,
             request_payload=request_payload,

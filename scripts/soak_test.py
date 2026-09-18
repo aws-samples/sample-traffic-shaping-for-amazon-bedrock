@@ -5,14 +5,14 @@ Soak Test — Sustained traffic at target RPM with adversarial injection.
 Sprint 2: Prove the system survives sustained and adversarial load.
 
 Usage:
-  # Quick validation (1 hour at 70% of Jamba RPM)
-  make soak-test ARGS="--model jamba --target-rpm 70 --duration-hours 1"
+  # Quick validation (1 hour at a modest RPM)
+  make soak-test ARGS="--model nova-2-lite --target-rpm 70 --duration-hours 1"
 
   # Full 72-hour soak
-  make soak-test ARGS="--model jamba --target-rpm 70 --duration-hours 72"
+  make soak-test ARGS="--model nova-2-lite --target-rpm 70 --duration-hours 72"
 
   # With adversarial injection (5% bad requests)
-  make soak-test ARGS="--model jamba --target-rpm 70 --duration-hours 1 --adversarial-pct 5"
+  make soak-test ARGS="--model nova-2-lite --target-rpm 70 --duration-hours 1 --adversarial-pct 5"
 """
 
 import argparse
@@ -34,12 +34,11 @@ sys.path.insert(0, layer_path)
 import config_loader
 from shared_service import DynamoService
 
-# Model aliases
-MODEL_ALIASES = {
-    'opus': 'us.anthropic.claude-opus-5',
-    'jamba': 'us.amazon.nova-2-lite-v1:0',
-    'nova-lite': 'us.amazon.nova-lite-v1:0',
-}
+# Model aliases: reuse create_model_config's canonical MODEL_MAP (was a local
+# three-entry copy whose 'jamba' key pointed at the nova-2-lite ID).
+from create_model_config import MODEL_MAP
+
+MODEL_ALIASES = MODEL_MAP
 
 # Prompt templates for payload variety
 PROMPTS = [

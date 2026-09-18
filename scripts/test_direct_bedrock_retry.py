@@ -323,7 +323,7 @@ def test_direct_bedrock_with_retry():
 
     # Summary comparison hint
     print(f"\n  Compare against Traffic Shaper:")
-    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'jamba'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
+    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'nova-2-lite'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
 
     if throttle_fail_count > 0:
         print(f"\n  {throttle_fail_count} requests exhausted all {MAX_RETRIES_ACTUAL} retries and still failed.")

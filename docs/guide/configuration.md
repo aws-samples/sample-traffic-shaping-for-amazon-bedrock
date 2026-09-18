@@ -31,8 +31,6 @@ which map to `create_model_config.py` flags:
 | `BURST_FRACTION` | `--burst-fraction` | Fraction of quota in the burst bucket (default `0.50`). |
 | `QUEUE_FRACTION` | `--queue-fraction` | Fraction of quota in the queue bucket (default `0.45`). |
 | `QUEUE_TARGET_TPM` | `--queue-target-tpm` | Even-spacing pacer target for the queue drain (tokens/min). Omitted = disabled. |
-| `ADAPTIVE_SHIFT_MAX` | `--adaptive-shift-max` | Max fraction of burst capacity to shift into the queue (default `0` = disabled). |
-| `ADAPTIVE_QUEUE_THRESHOLD` | `--adaptive-queue-threshold` | Queue depth at which the max adaptive shift applies (default `50`). |
 
 Flags accepted directly by `create_model_config.py` but **not** wired as make
 variables (use them by editing the command, or extend the Makefile):
@@ -108,15 +106,13 @@ RPM gate never binds and admission paces purely on TPM.
 | `output_token_burndown_rate` | Output-token multiplier for TPM accounting (e.g. `5.0` for the Claude 3.7+ family, `1.0` for most others). |
 | `bytes_per_token` | Bytes-per-token ratio used to estimate input tokens before the call (Claude ~3.5, Nova ~3.0, default 4.0). |
 
-### Queue, admission window, and adaptive controls
+### Queue and admission window
 
 | Field | Default | Meaning |
 |-------|---------|---------|
 | `queue_batch_size` | `10` | Items released per queue-drain tick; each tick fires its batch at Bedrock in parallel. |
 | `short_window_sec` | `2` | Short (rate-smoothing) admission window. |
 | `long_window_sec` | `15` | Long (accuracy) admission window — long enough that reconciled actual usage dominates. |
-| `adaptive_shift_max` | `0` | Max fraction of burst capacity to shift into the queue (`0` disables adaptive capacity). |
-| `adaptive_queue_threshold` | `50` | Queue depth at which the maximum adaptive shift applies. |
 
 ### Backend fields (Tier 2)
 
@@ -150,8 +146,15 @@ Both the RPM and the TPM quotas are split the same way, using three fractions:
 - **buffer** (`buffer_fraction`, default `0.05`) — a safety holdback.
 
 The three fractions do **not** have to sum to 1.0; the buffer is an independent
-holdback. For example `85 / 10 / 5` is a valid split (`--burst-fraction 0.85
---queue-fraction 0.10 --buffer-fraction 0.05`), biasing toward immediate admission.
+holdback and does not need to sum with the other two. `burst_fraction` and
+`queue_fraction`, however, should not both be set nonzero for the same model.
+Per [`../solution/capacity-model-rationale.md` §1.1](../solution/capacity-model-rationale.md#11-one-admission-lane-per-model--burst-only-or-queue-only-never-both),
+each model should run a single admission lane — burst-only (e.g. `85 / 0 / 15`,
+`--burst-fraction 0.85 --queue-fraction 0 --buffer-fraction 0.15`, biasing
+toward immediate admission) or queue-only (e.g. `0 / 85 / 15`) — never a blend
+of both. Both lanes draw against the same account-level Bedrock quota with no
+coordination between them, so a blended config either wastes budget or
+throttles.
 
 The `BURST_CAPACITY` override sets the RPM burst bucket directly, independent of
 the fraction math — this is the knob used to force queueing in tests.
@@ -175,7 +178,7 @@ used by the README Quick start walkthrough and `make test`.
 make create-config MODEL=nova-2-lite
 ```
 
-Uses Jamba's default RPM (100) and TPM (100,000), split 50/45/5.
+Uses Jamba's default RPM (100) and TPM (100,000), split 0/85/15.
 
 ### Set an explicit RPM and TPM
 
@@ -191,19 +194,20 @@ make create-config MODEL=sonnet-5 TPM=6000000
 
 `sonnet-5` has no RPM quota, so admission paces purely on TPM.
 
-### Bias capacity toward immediate admission
+### Burst-only lane (latency-intolerant workloads)
 
 ```bash
-make create-config MODEL=nova-2-lite BURST_FRACTION=0.85 QUEUE_FRACTION=0.10
+make create-config MODEL=nova-2-lite BURST_FRACTION=0.85 QUEUE_FRACTION=0
 ```
 
-### Enable adaptive capacity
-
-```bash
-make create-config MODEL=nova-2-lite BURST_CAPACITY=5 ADAPTIVE_SHIFT_MAX=0.2 ADAPTIVE_QUEUE_THRESHOLD=10
-```
-
-Shifts up to 20% of burst capacity into the queue as the queue depth approaches 10.
+Runs a single admission lane (burst) with nothing sent to the queue. Per
+[`../solution/capacity-model-rationale.md` §1.1](../solution/capacity-model-rationale.md#11-one-admission-lane-per-model--burst-only-or-queue-only-never-both),
+each model should run burst-only **or** queue-only, never both — both lanes
+draw against the same account-level Bedrock quota with no coordination
+between them, so mixing them either wastes budget or throttles. Use
+burst-only for latency-intolerant workloads, ideally paired with failover to
+a secondary model/provider for anything that misses an immediate slot; use
+queue-only (the default) for latency-tolerant, batch-shaped workloads.
 
 ### Adjust burst capacity without recreating the config
 

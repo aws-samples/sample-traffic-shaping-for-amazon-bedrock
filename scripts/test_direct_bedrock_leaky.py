@@ -25,7 +25,7 @@ Why it still falls short of the Traffic Shaper (the point of the comparison):
 Usage:
   python scripts/test_direct_bedrock_leaky.py --model nova-lite --num-requests 1000 \
     --prompt-size 60000 --tpm-limit 4000000 --max-wait 300
-  python scripts/test_direct_bedrock_leaky.py --model jamba --num-requests 150 \
+  python scripts/test_direct_bedrock_leaky.py --model nova-2-lite --num-requests 150 \
     --rpm-limit 100 --max-wait 120
 """
 
@@ -132,7 +132,7 @@ test_direct_bedrock_retry.py (retry+jitter), and test_budget_manager.py
 
 Examples:
   python scripts/test_direct_bedrock_leaky.py --model nova-lite --num-requests 1000 --prompt-size 60000 --tpm-limit 4000000
-  python scripts/test_direct_bedrock_leaky.py --model jamba --num-requests 150 --rpm-limit 100
+  python scripts/test_direct_bedrock_leaky.py --model nova-2-lite --num-requests 150 --rpm-limit 100
         """
     )
     parser.add_argument('--model', type=str, help='Model ID or alias (nova-2-lite, sonnet-5, opus-5)')
@@ -329,7 +329,7 @@ def test_direct_bedrock_leaky():
     print(f"  Total wall time:      {total_time:.1f}s")
     print(f"{'='*60}")
     print(f"\n  Compare against Traffic Shaper:")
-    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'jamba'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
+    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'nova-2-lite'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
     if throttle_count > 0:
         print(f"\n  {throttle_count} requests STILL throttled despite pacing — client-side buckets")
         print(f"  drift from Bedrock's real quota clock and can't coordinate across clients.")

@@ -54,7 +54,7 @@ Examples:
   # Use defaults from config.env
   python scripts/test_budget_manager.py
   
-  # Override model (supports aliases: opus, jamba)
+  # Override model (supports MODEL_MAP aliases, e.g. nova-2-lite, opus-5)
   python scripts/test_budget_manager.py --model nova-2-lite
   python scripts/test_budget_manager.py --model opus-5
   

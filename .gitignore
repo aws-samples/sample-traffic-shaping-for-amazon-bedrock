@@ -109,6 +109,9 @@ temp/
 # Config files
 config.env
 
+# Bedrock quota snapshot cache (account-specific, refresh via `make refresh-quotas`)
+.bedrock_quota_cache.json
+
 # Soak test artifacts
 .soak_pid
 soak_*_output.log
@@ -125,6 +128,16 @@ ${HOME}/
 
 # Agent/IDE steering (local maintainer context — not for publication)
 CLAUDE.md
+AGENTS.md
+.claude*
+.agents*
+.codex*
+prompts*
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+.beads*
 
 # ASH / detect-secrets scan output (never ship scan artifacts)
 .ash/
@@ -134,3 +147,6 @@ CLAUDE.md
 
 # Raw benchmark logs (internal artifacts — not for publication; keep charts + docs/testing)
 reports/*.txt
+
+# Intent working documents
+intents/
