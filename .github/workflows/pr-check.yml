@@ -51,10 +51,16 @@ jobs:
       - name: Unit tests (pytest)
         run: pytest
 
+      # SHELL=/bin/bash overrides make's own recipe-execution shell (hardcoded to
+      # /bin/sh by GNU Make, independent of the shell running this step). ubuntu-latest's
+      # /bin/sh is dash, which has no `source` builtin (only `.`) - these targets'
+      # `source .venv/bin/activate` recipe fails there with "source: not found",
+      # even though the identical make invocation succeeds locally on macOS, where
+      # /bin/sh is bash-backed and tolerates `source`.
       - name: Offline algorithm simulations
         run: |
-          make test-queue-processor-sim
-          make test-budget-manager-sim
+          make SHELL=/bin/bash test-queue-processor-sim
+          make SHELL=/bin/bash test-budget-manager-sim
 
       - name: Detect infrastructure changes
         id: infra-changes
