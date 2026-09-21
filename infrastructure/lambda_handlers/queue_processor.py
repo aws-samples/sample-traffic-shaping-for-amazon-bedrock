@@ -515,7 +515,13 @@ def process_single_item(item: Dict[str, Any], model_id: str) -> Dict[str, Any]:
         }
 
     try:
-        # Invoke Bedrock Processor with execution_arn (it will resolve payload)
+        # Invoke Bedrock Processor with execution_arn (it will resolve payload).
+        # Fail fast with a clear message rather than a cryptic botocore
+        # validation error if the env var never got wired up. (An `assert`
+        # would narrow the type the same way but trips bandit B101 in
+        # production code — this repo enforces B101 outside tests/sims.)
+        if not BEDROCK_PROCESSOR_ARN:
+            raise RuntimeError("BEDROCK_PROCESSOR_ARN environment variable is not set")
         lambda_client.invoke(
             FunctionName=BEDROCK_PROCESSOR_ARN,
             InvocationType="Event",  # Async invocation

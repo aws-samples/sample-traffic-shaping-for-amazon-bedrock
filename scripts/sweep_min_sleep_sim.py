@@ -31,7 +31,7 @@ import argparse
 import os
 import sys
 from collections import deque
-from typing import List
+from typing import Any, Dict, List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sim.core import Item, FakeClock, SimResult, make_uniform  # noqa: E402
@@ -233,7 +233,7 @@ def run_even_spacing_pacer(
 
 
 def _run_even_spacing_sweep(items: List[Item], doc_path: str) -> None:
-    rows = []
+    rows: List[Dict[str, Any]] = []
     for target_tpm in TARGET_RATES_TPM:
         r = run_even_spacing_pacer(items, target_tpm=target_tpm)
         rows.append(
@@ -252,12 +252,12 @@ def _run_even_spacing_sweep(items: List[Item], doc_path: str) -> None:
     )
     print(hdr)
     print("-" * len(hdr))
-    for r in rows:
-        safe = "OK" if r["peak_1s_tpm"] <= QUOTA_TPM else "OVER"
+    for row in rows:
+        safe = "OK" if row["peak_1s_tpm"] <= QUOTA_TPM else "OVER"
         print(
-            f"{r['target_tpm']:>11,} {r['sustained_tpm']:>14,.0f} "
-            f"{r['peak_1s_tpm']:>12,.0f} {r['peak_60s_tpm']:>13,.0f} "
-            f"{r['drain_s']:>8.1f} {safe:>6}"
+            f"{row['target_tpm']:>11,} {row['sustained_tpm']:>14,.0f} "
+            f"{row['peak_1s_tpm']:>12,.0f} {row['peak_60s_tpm']:>13,.0f} "
+            f"{row['drain_s']:>8.1f} {safe:>6}"
         )
 
     with open(doc_path, "a", encoding="utf-8") as f:
@@ -273,12 +273,12 @@ def _run_even_spacing_sweep(items: List[Item], doc_path: str) -> None:
             "| target TPM | sustained TPM | peak 1s TPM | peak 60s TPM | drain (s) | peak ≤8M? |\n"
         )
         f.write("|---|---|---|---|---|---|\n")
-        for r in rows:
-            safe = "✅ OK" if r["peak_1s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
+        for row in rows:
+            safe = "✅ OK" if row["peak_1s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
             f.write(
-                f"| {r['target_tpm']:,} | {r['sustained_tpm']:,.0f} | "
-                f"{r['peak_1s_tpm']:,.0f} | {r['peak_60s_tpm']:,.0f} | "
-                f"{r['drain_s']:.1f} | {safe} |\n"
+                f"| {row['target_tpm']:,} | {row['sustained_tpm']:,.0f} | "
+                f"{row['peak_1s_tpm']:,.0f} | {row['peak_60s_tpm']:,.0f} | "
+                f"{row['drain_s']:.1f} | {safe} |\n"
             )
         f.write("\n")
     print(f"\nAppended results to: {doc_path}")
@@ -301,7 +301,7 @@ def main() -> None:
         _run_even_spacing_sweep(items, args.doc)
         return
 
-    rows = []
+    rows: List[Dict[str, Any]] = []
     for cfg_name, cfg in CONFIGS.items():
         for floor in SLEEP_FLOORS:
             r = run_token_aware_with_floor(
@@ -336,12 +336,12 @@ def main() -> None:
     )
     print(hdr)
     print("-" * len(hdr))
-    for r in rows:
-        safe = "OK" if r["peak_60s_tpm"] <= QUOTA_TPM else "OVER"
+    for row in rows:
+        safe = "OK" if row["peak_60s_tpm"] <= QUOTA_TPM else "OVER"
         print(
-            f"{r['config']:>8} {r['floor']:>6.3f} {r['queue_slice']:>12,} "
-            f"{r['sustained_tpm']:>14,.0f} {r['peak_1s_tpm']:>12,.0f} "
-            f"{r['peak_60s_tpm']:>13,.0f} {r['drain_s']:>8.1f} {safe:>6}"
+            f"{row['config']:>8} {row['floor']:>6.3f} {row['queue_slice']:>12,} "
+            f"{row['sustained_tpm']:>14,.0f} {row['peak_1s_tpm']:>12,.0f} "
+            f"{row['peak_60s_tpm']:>13,.0f} {row['drain_s']:>8.1f} {safe:>6}"
         )
 
     # ── Append to results doc ───────────────────────────────────────────────────
@@ -380,13 +380,13 @@ def main() -> None:
             "sustained TPM | peak 1s TPM | peak 60s TPM | drain (s) | ≤8M? |\n"
         )
         f.write("|---|---|---|---|---|---|---|---|---|\n")
-        for r in rows:
-            buf = "3%" if r["config"] == "1/96/3" else "5%"
-            safe = "✅ OK" if r["peak_60s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
+        for row in rows:
+            buf = "3%" if row["config"] == "1/96/3" else "5%"
+            safe = "✅ OK" if row["peak_60s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
             f.write(
-                f"| {r['config']} | {r['floor']:.3f} | {r['queue_slice']:,} | {buf} | "
-                f"{r['sustained_tpm']:,.0f} | {r['peak_1s_tpm']:,.0f} | "
-                f"{r['peak_60s_tpm']:,.0f} | {r['drain_s']:.1f} | {safe} |\n"
+                f"| {row['config']} | {row['floor']:.3f} | {row['queue_slice']:,} | {buf} | "
+                f"{row['sustained_tpm']:,.0f} | {row['peak_1s_tpm']:,.0f} | "
+                f"{row['peak_60s_tpm']:,.0f} | {row['drain_s']:.1f} | {safe} |\n"
             )
         f.write("\n")
 

@@ -264,11 +264,16 @@ def inspect_queue_items(model_id: str, limit=10):
             print(f"{'-'*70}")
 
             for i, item in enumerate(items, 1):
-                print(f"\n{i}. pk: {item.get('pk', 'N/A')}")
-                print(f"   sk: {item.get('sk', 'N/A')}")
-                print(f"   request_id: {item.get('request_id', 'N/A')}")
-                print(f"   priority: {item.get('priority', 'N/A')}")
-                print(f"   queued_at: {item.get('queued_at', 'N/A')}")
+                # DynamoDB attribute values are typed as a broad Union that
+                # includes bytes; these are always strings/numbers in this
+                # table's schema, but str() the value explicitly rather than
+                # rely on the f-string's implicit conversion (mypy's
+                # str-bytes-safe check flags the latter either way).
+                print(f"\n{i}. pk: {str(item.get('pk', 'N/A'))}")
+                print(f"   sk: {str(item.get('sk', 'N/A'))}")
+                print(f"   request_id: {str(item.get('request_id', 'N/A'))}")
+                print(f"   priority: {str(item.get('priority', 'N/A'))}")
+                print(f"   queued_at: {str(item.get('queued_at', 'N/A'))}")
                 if "task_token" in item:
                     # Task tokens are bearer credentials — never print the value.
                     print(f"   task_token: [present]")

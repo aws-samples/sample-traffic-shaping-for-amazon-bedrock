@@ -21,6 +21,7 @@ import os
 import argparse
 import boto3
 from decimal import Decimal
+from typing import Optional
 
 # Add scripts directory for config_loader
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -253,7 +254,7 @@ def calculate_config(
     rpm,
     tpm: int,
     burndown_rate: float,
-    burst_capacity_override: int = None,
+    burst_capacity_override: Optional[int] = None,
     adaptive_shift_max: float = 0,
     adaptive_queue_threshold: int = 50,
     bytes_per_token: float = 4.0,

@@ -21,13 +21,20 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from botocore.config import Config
 from botocore.exceptions import ClientError
+
+if TYPE_CHECKING:
+    # Type-checking only — boto3-stubs is a dev dependency, never installed at
+    # runtime (the Lambda layer ships plain boto3). Guarding the import behind
+    # TYPE_CHECKING keeps this file importable without it.
+    from mypy_boto3_bedrock_runtime.client import BedrockRuntimeClient
+    from mypy_boto3_bedrock_runtime.type_defs import ConverseRequestTypeDef
 
 # Disable boto3 client-side retries on the runtime Converse call so Bedrock
 # throttles surface on the first attempt instead of being silently absorbed by
@@ -136,7 +143,11 @@ class RuntimeConverseClient(BedrockClient):
     response. Neither alters the wire call for a config that does not set them.
     """
 
-    def __init__(self, model_config: Optional[Dict[str, Any]] = None, client=None):
+    def __init__(
+        self,
+        model_config: Optional[Dict[str, Any]] = None,
+        client: "Optional[BedrockRuntimeClient]" = None,
+    ):
         self._config = model_config or {}
         self._client = client or boto3.client(
             "bedrock-runtime", config=_NO_RETRY_CONFIG
@@ -169,13 +180,13 @@ class RuntimeConverseClient(BedrockClient):
     ) -> BedrockResponse:
         start_time = time.time()
         try:
-            inference_config = {"maxTokens": max_tokens}
+            inference_config: Dict[str, Any] = {"maxTokens": max_tokens}
             # Only send temperature when the model accepts sampling params AND the
             # caller actually provided one. Next-gen Claude models 400 otherwise.
             if not strip_sampling and temperature is not None:
                 inference_config["temperature"] = temperature
 
-            converse_kwargs = {
+            converse_kwargs: Dict[str, Any] = {
                 "modelId": model_id,
                 "messages": [{"role": "user", "content": [{"text": prompt}]}],
                 "inferenceConfig": inference_config,
@@ -189,7 +200,13 @@ class RuntimeConverseClient(BedrockClient):
             if additional_fields:
                 converse_kwargs["additionalModelRequestFields"] = additional_fields
 
-            response = self._client.converse(**converse_kwargs)
+            # converse() takes Unpack[ConverseRequestTypeDef]; converse_kwargs is
+            # built up conditionally above (Any-typed) rather than as a TypedDict
+            # literal, so cast it at the boundary instead of hand-declaring every
+            # field. String form avoids importing the stub outside TYPE_CHECKING.
+            response = self._client.converse(
+                **cast("ConverseRequestTypeDef", converse_kwargs)
+            )
             duration_ms = (time.time() - start_time) * 1000
 
             usage = response.get("usage", {}) if isinstance(response, dict) else {}
@@ -201,7 +218,7 @@ class RuntimeConverseClient(BedrockClient):
             )
             return BedrockResponse(
                 success=True,
-                response_body=response,
+                response_body=cast(Dict[str, Any], response),
                 throttled=False,
                 duration_ms=duration_ms,
                 actual_input_tokens=actual_in,

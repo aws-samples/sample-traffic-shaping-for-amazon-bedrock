@@ -575,7 +575,7 @@ class AdmissionResult:
 
 
 def run_admission(
-    gate: AdmissionGate,
+    gate: "AdmissionGate | WindowReadGate",
     arrivals: List[Arrival],
     clock: FakeClock,
     verbose: bool = False,

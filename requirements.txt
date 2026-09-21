@@ -24,3 +24,8 @@ moto==5.2.2
 # Development dependencies
 black==26.5.1
 mypy==2.3.1
+# Pinned to match boto3's own version (mypy_boto3 packages track boto3 1:1).
+# Extras scoped to the services this repo actually calls via boto3.client()/
+# resource() — bedrock, bedrock-runtime, cloudwatch, dynamodb, events, lambda,
+# logs, s3, sqs, stepfunctions — rather than the full stub set.
+boto3-stubs[bedrock,bedrock-runtime,cloudwatch,dynamodb,events,lambda,logs,s3,sqs,stepfunctions]==1.43.78

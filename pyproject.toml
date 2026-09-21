@@ -1,3 +1,51 @@
+# mypy configuration for bedrock-traffic-shaper.
+# Run with:  mypy infrastructure scripts tests
+#
+# Scope: type-check only first-party source (infrastructure/, scripts/, tests/) — never
+# gitignored build output. `cdk.out/` in particular carries synthesized Lambda asset bundles
+# that are byte-for-byte copies of infrastructure/lambda_layer/python/shared_service; walking
+# it produces "Duplicate module named shared_service" and crashes mypy outright.
+#
+# `infrastructure/lambda_layer` is excluded from the *file-discovery walk* (so mypy doesn't
+# also assign it the dotted name infrastructure.lambda_layer.python.shared_service.*), but it
+# is still fully type-checked: mypy_path resolves the bare `from shared_service import ...`
+# imports used by infrastructure/lambda_handlers/*.py and tests/*.py (the same sys.path-sibling
+# convention the Lambda layer runtime and this repo's tests already rely on), and mypy type-checks
+# any first-party module it resolves that way. Same story for `scripts/`: modules inside it are
+# imported bare (`import config_loader`) by sibling scripts and by tests/ via sys.path
+# injection, never as `scripts.xxx` — mypy_path makes that resolution consistent with how
+# `scripts` itself is named when checked directly (see the removed scripts/__init__.py; nothing
+# in this repo ever imported `scripts` as a package).
+[tool.mypy]
+python_version = "3.10"
+mypy_path = ["scripts", "infrastructure/lambda_layer/python"]
+exclude = '(^|/)(cdk\.out|\.venv|venv|__pycache__|infrastructure/lambda_layer)/'
+warn_unused_configs = true
+warn_redundant_casts = true
+
+# matplotlib/numpy back scripts/generate_report_charts.py (an optional reporting
+# utility, not declared in requirements.txt at all — a pre-existing gap outside
+# this file's scope). No stubs are installed for either; silence rather than
+# pull two heavy sci-stack packages into the dev environment just for typing.
+[[tool.mypy.overrides]]
+module = ["matplotlib.*", "numpy.*"]
+ignore_missing_imports = true
+
+# shared_service/dynamo.py: PR #2 "Account quota enhancement" (open as of
+# 2026-09-21, see ci/pr-gate-remediation) rewrites large parts of this file.
+# Once boto3-stubs resolves cleanly, its DynamoDB AttributeValue Union type
+# (bytes | bytearray | str | int | Decimal | ... | None) turns out to be very
+# strict about the plain-dict shapes this module passes to put_item/get_item/
+# batch_write_item and threads through write_terminal_status(). ~15 findings,
+# all the same root cause. Fixing them now means re-fixing against different
+# code once PR #2 lands; deferred to a second mypy pass after that merge
+# rather than burning effort on code about to be rewritten. Every OTHER
+# module in infrastructure/, scripts/, and tests/ is fully checked — this is
+# the one deliberate, scoped exception.
+[[tool.mypy.overrides]]
+module = "shared_service.dynamo"
+ignore_errors = true
+
 # Bandit (Python SAST) configuration for bedrock-traffic-shaper.
 # Run with:  bandit -r . -c pyproject.toml
 #

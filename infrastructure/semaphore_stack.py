@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Optional
 from aws_cdk import (
     Stack,
     aws_dynamodb as dynamodb,
@@ -256,8 +257,10 @@ class SemaphoreRateLimiterStack(Stack):
         )
         # 0 → None so CDK OMITS reserved_concurrent_executions (unreserved, full-pool).
         # A literal 0 would instead DISABLE the function — not what we want.
-        bedrock_processor_reserved = bedrock_processor_reserved or None
-        budget_manager_reserved = budget_manager_reserved or None
+        bedrock_processor_reserved_opt: Optional[int] = (
+            bedrock_processor_reserved or None
+        )
+        budget_manager_reserved_opt: Optional[int] = budget_manager_reserved or None
 
         # Lambda memory (also scales CPU). The 2026-07-06 5x extreme-spike test
         # deadlocked partly because the Budget Manager admission gate ran at the 128MB
@@ -279,7 +282,7 @@ class SemaphoreRateLimiterStack(Stack):
             code=lambda_.Code.from_asset(str(lambda_dir)),
             timeout=Duration.minutes(5),
             memory_size=processor_memory,
-            reserved_concurrent_executions=bedrock_processor_reserved,
+            reserved_concurrent_executions=bedrock_processor_reserved_opt,
             # CKV_AWS_173: encrypt environment variables with the stack CMK.
             environment_encryption=data_key,
             # CKV_AWS_116: this function is invoked asynchronously (InvocationType
@@ -382,7 +385,7 @@ class SemaphoreRateLimiterStack(Stack):
             code=lambda_.Code.from_asset(str(lambda_dir)),
             timeout=Duration.seconds(30),
             memory_size=budget_manager_memory,
-            reserved_concurrent_executions=budget_manager_reserved,
+            reserved_concurrent_executions=budget_manager_reserved_opt,
             # CKV_AWS_173: encrypt environment variables with the stack CMK.
             environment_encryption=data_key,
             environment={

@@ -1273,11 +1273,11 @@ def main() -> None:
                     expect_rpm_only_to_violate_tpm=(tpm / tokens < rps),
                 )
             ]
-            for sc in custom:
-                all_results.append(run_token_scenario(sc, verbose=args.verbose))
+            for tok_sc in custom:
+                all_results.append(run_token_scenario(tok_sc, verbose=args.verbose))
         else:
-            for sc in make_token_scenarios():
-                all_results.append(run_token_scenario(sc, verbose=args.verbose))
+            for tok_sc in make_token_scenarios():
+                all_results.append(run_token_scenario(tok_sc, verbose=args.verbose))
 
     # ── Part 3: 13-min correctness ────────────────────────────────────────────
     if not args.skip_13min:
