@@ -15,6 +15,13 @@ jobs:
   pr-gate:
     name: PR Gate
     runs-on: ubuntu-latest
+    env:
+      # queue_processor.py, budget_manager.py, bedrock_processor.py, and result_fn.py
+      # construct boto3 clients at import time (fine in the real Lambda runtime, which
+      # always has a region) - pytest importing them for pure-function tests needs a
+      # region to exist too, even though no AWS call is ever made. No credentials
+      # needed, just enough for boto3 to build a client object.
+      AWS_DEFAULT_REGION: us-east-1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -31,8 +38,15 @@ jobs:
       - name: Install AWS CDK CLI
         run: npm install -g aws-cdk@2.1139.0
 
+      # A real .venv at repo root, not a bare pip install - the make targets below
+      # (test-queue-processor-sim, test-budget-manager-sim) hardcode
+      # `source .venv/bin/activate`, matching the local dev workflow in CONTRIBUTING.md.
+      # Appending its bin/ to GITHUB_PATH makes plain `pytest`/`cdk synth` use it too.
       - name: Install Python dependencies
-        run: pip install -r requirements.lock
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.lock
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Unit tests (pytest)
         run: pytest
@@ -49,7 +63,8 @@ jobs:
           filters: |
             infra:
               - 'infrastructure/**'
-              - 'requirements*.txt'
+              - 'requirements.txt'
+              - 'requirements.lock'
               - 'cdk.json'
 
       # cdk-nag's AwsSolutionsChecks Aspect is wired in infrastructure/app.py;
