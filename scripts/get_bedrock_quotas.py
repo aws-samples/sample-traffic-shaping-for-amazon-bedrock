@@ -5,6 +5,9 @@ quotas to a gitignored JSON cache (.bedrock_quota_cache.json at the repo root),
 along with a resolved per-inference-profile TPM lookup.
 
 Cache keys written:
+    region              the region this cache was built against -- config.env's
+                        AWS_REGION (the deployed stack's own region) when present,
+                        else the session/profile default, else 'us-east-1'
     models              raw list_foundation_models records (id/provider/name)
     inference_profiles  raw list_inference_profiles records, one per profile ID
     quotas              raw list_service_quotas records, filtered to the rate
@@ -334,6 +337,30 @@ def get_inference_profiles(bedrock):
     return profiles
 
 
+def resolve_region(session):
+    """Prefer the deployed stack's own region (config.env's AWS_REGION, written by
+    deploy.sh from the live state machine ARN) over the CLI/profile default, so the
+    quota cache never silently reflects the wrong region's models/profiles/quotas.
+
+    Reads config.env directly and tolerantly rather than via config_loader.load_config(),
+    which sys.exit(1)s if config.env is missing -- that would break `make refresh-quotas`
+    run standalone before a first deploy.
+    """
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.env')
+    if os.path.exists(config_path):
+        with open(config_path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    if key.strip() == 'AWS_REGION' and value.strip():
+                        return value.strip()
+
+    return session.region_name or 'us-east-1'
+
+
 def get_quotas(service_quotas):
     quotas = []
     next_token = None
@@ -360,13 +387,14 @@ def get_quotas(service_quotas):
 
 def main():
     session = boto3.Session()
-    region = session.region_name
+    region = resolve_region(session)
 
     bedrock = session.client('bedrock', region_name=region)
     service_quotas = session.client('service-quotas', region_name=region)
 
     output = {
         'lastRefreshedAt': datetime.now(timezone.utc).isoformat(),
+        'region': region,
         'models': get_models(bedrock),
     }
 
