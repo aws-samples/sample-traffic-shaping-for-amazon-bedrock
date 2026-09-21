@@ -46,22 +46,15 @@ sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
 
-# Model ID aliases (kept in sync with test_direct_bedrock.py)
-MODEL_ALIASES = {
-    'opus-5': 'us.anthropic.claude-opus-5',
-    'sonnet-5': 'us.anthropic.claude-sonnet-5',
-    'nova-2-lite': 'us.amazon.nova-2-lite-v1:0',
-    'nova-lite': 'us.amazon.nova-lite-v1:0',
-    'nova-lite-sr': 'amazon.nova-lite-v1:0',
-    'nova-pro': 'us.amazon.nova-pro-v1:0',
-}
+# Model ID aliases: imports create_model_config's canonical MODEL_MAP directly.
+from create_model_config import MODEL_MAP
 
 # Rough token estimate: ~4 chars/token for prompt, plus max_tokens for output.
 CHARS_PER_TOKEN = 4.0
 
 
 def resolve_model_id(model_input: str) -> str:
-    return MODEL_ALIASES.get(model_input.lower(), model_input)
+    return MODEL_MAP.get(model_input.lower(), model_input)
 
 
 def validate_model_config(dynamo_service: DynamoService, model_id: str) -> None:
