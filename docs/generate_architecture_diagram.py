@@ -43,7 +43,9 @@ F2 = {"color": "#d97706", "style": "dashed", "penwidth": "2.2"}
 DATA = {"color": "#64748b", "style": "dotted", "penwidth": "1.4"}
 RESP = {"color": "#9ca3af", "style": "solid", "penwidth": "1.0"}
 
-OUTPUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "architecture-diagram")
+OUTPUT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "architecture-diagram"
+)
 
 with Diagram(
     "Bedrock Traffic Shaper \u2014 Distributed Rate Limiter with TPM Tracking",

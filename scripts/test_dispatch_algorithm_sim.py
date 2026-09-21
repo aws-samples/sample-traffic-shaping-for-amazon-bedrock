@@ -38,9 +38,11 @@ from typing import List, Optional, Tuple
 # Item
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class Item:
     """A single queued request with its token estimate."""
+
     tokens: int = 1
 
 
@@ -53,8 +55,13 @@ def make_mixed(n: int, low: int, high: int, seed: int = 42) -> List[Item]:
     return [Item(tokens=rng.randint(low, high)) for _ in range(n)]
 
 
-def make_heavy_tail(n: int, small_tokens: int, large_tokens: int,
-                    large_pct: float = 0.20, seed: int = 42) -> List[Item]:
+def make_heavy_tail(
+    n: int,
+    small_tokens: int,
+    large_tokens: int,
+    large_pct: float = 0.20,
+    seed: int = 42,
+) -> List[Item]:
     """Mostly small requests with a heavy tail of large ones."""
     rng = random.Random(seed)
     return [
@@ -66,6 +73,7 @@ def make_heavy_tail(n: int, small_tokens: int, large_tokens: int,
 # ──────────────────────────────────────────────────────────────────────────────
 # Fake clock
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class FakeClock:
     """A wall clock controlled by the simulation, not real time."""
@@ -88,6 +96,7 @@ class FakeClock:
 # ──────────────────────────────────────────────────────────────────────────────
 # SimResult
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class SimResult:
@@ -114,12 +123,20 @@ class SimResult:
 
     @property
     def effective_rps(self) -> float:
-        return self.total_dispatched / self.total_sim_time if self.total_sim_time > 0 else 0.0
+        return (
+            self.total_dispatched / self.total_sim_time
+            if self.total_sim_time > 0
+            else 0.0
+        )
 
     @property
     def effective_tps(self) -> float:
         """Tokens per second (token throughput)."""
-        return self.total_tokens_dispatched / self.total_sim_time if self.total_sim_time > 0 else 0.0
+        return (
+            self.total_tokens_dispatched / self.total_sim_time
+            if self.total_sim_time > 0
+            else 0.0
+        )
 
     def total_sleep_time(self) -> float:
         return sum(d for _, d in self.sleep_events)
@@ -188,6 +205,7 @@ class SimResult:
 # CURRENT algorithm
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def run_current_algo(
     clock: FakeClock,
     items: List[Item],
@@ -213,12 +231,14 @@ def run_current_algo(
 
     while idx < len(items):
         batch_start = clock.now
-        batch_items = items[idx:idx + batch_size]
+        batch_items = items[idx : idx + batch_size]
 
         # DynamoDB read — check request count windows
         result._db_reads += 1
         now = clock.now
-        recent_2s = sum(1 for ts, _ in result.dispatch_events if now - ts < short_window_sec)
+        recent_2s = sum(
+            1 for ts, _ in result.dispatch_events if now - ts < short_window_sec
+        )
         headroom = max(0, short_window_cap - recent_2s)
 
         if headroom <= 0:
@@ -227,7 +247,9 @@ def run_current_algo(
             clock.sleep(sleep_for)
             continue
 
-        avail_60s = queue_capacity - sum(1 for ts, _ in result.dispatch_events if now - ts < 60.0)
+        avail_60s = queue_capacity - sum(
+            1 for ts, _ in result.dispatch_events if now - ts < 60.0
+        )
         if avail_60s <= 0:
             sleep_for = 1.0
             result.sleep_events.append((clock.now, sleep_for))
@@ -244,8 +266,10 @@ def run_current_algo(
 
         if verbose:
             toks = sum(it.tokens for it in batch_items[:reserved])
-            print(f"  t={clock.now:.2f}  dispatched {reserved} items at same tick "
-                  f"(tokens={toks})")
+            print(
+                f"  t={clock.now:.2f}  dispatched {reserved} items at same tick "
+                f"(tokens={toks})"
+            )
 
         # RPM pacing sleep
         elapsed = clock.now - batch_start
@@ -261,6 +285,7 @@ def run_current_algo(
 # ──────────────────────────────────────────────────────────────────────────────
 # PROPOSED algorithm — streaming per-item, RPM window only (no TPM gate)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def run_proposed_algo(
     clock: FakeClock,
@@ -283,7 +308,7 @@ def run_proposed_algo(
 
     short_window_cap = max(1, int(queue_regen_rate * short_window_sec))
     dispatch_overhead = dispatch_overhead_ms / 1000.0
-    dispatch_log: deque = deque()   # (timestamp, tokens)
+    dispatch_log: deque = deque()  # (timestamp, tokens)
     idx = 0
     last_resync = clock.now
 
@@ -311,7 +336,9 @@ def run_proposed_algo(
             # RPM 2s gate
             r2 = recent_count(short_window_sec)
             if r2 >= short_window_cap:
-                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
+                in_win = [
+                    ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec
+                ]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 sleep_for = max(0.001, (oldest + short_window_sec) - clock.now + 0.005)
                 result.sleep_events.append((clock.now, sleep_for))
@@ -342,14 +369,15 @@ def run_proposed_algo(
 # TOKEN-AWARE algorithm — streaming per-item, RPM + TPM windows
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def run_proposed_token_aware(
     clock: FakeClock,
     items: List[Item],
     batch_size: int,
     queue_regen_rate: float,
     queue_capacity: int,
-    tpm_regen_rate: float,    # tokens/second (= TPM_quota / 60)
-    tpm_capacity: int,        # max tokens per 60s window
+    tpm_regen_rate: float,  # tokens/second (= TPM_quota / 60)
+    tpm_capacity: int,  # max tokens per 60s window
     short_window_sec: float = 2.0,
     dispatch_overhead_ms: float = 20.0,
     verbose: bool = False,
@@ -365,10 +393,10 @@ def run_proposed_token_aware(
     result._db_reads = 1
 
     short_window_cap = max(1, int(queue_regen_rate * short_window_sec))
-    tpm_2s_cap  = int(tpm_regen_rate * short_window_sec) if tpm_regen_rate > 0 else 0
+    tpm_2s_cap = int(tpm_regen_rate * short_window_sec) if tpm_regen_rate > 0 else 0
     dispatch_overhead = dispatch_overhead_ms / 1000.0
 
-    dispatch_log: deque = deque()   # (timestamp, tokens)
+    dispatch_log: deque = deque()  # (timestamp, tokens)
     idx = 0
     last_resync = clock.now
 
@@ -393,7 +421,7 @@ def run_proposed_token_aware(
         """
         in_win = sorted(
             ((ts, tok) for ts, tok in dispatch_log if ts >= clock.now - window),
-            key=lambda e: e[0]
+            key=lambda e: e[0],
         )
         current_tokens = sum(tok for _, tok in in_win)
         deficit = current_tokens + item_tokens - cap
@@ -401,16 +429,18 @@ def run_proposed_token_aware(
             return
         freed = 0
         sleep_until = clock.now
-        for ts, tok in in_win:          # oldest first
+        for ts, tok in in_win:  # oldest first
             freed += tok
-            sleep_until = ts + window   # this entry exits the window at ts + window
+            sleep_until = ts + window  # this entry exits the window at ts + window
             if freed >= deficit:
                 break
         sleep_for = max(0.001, sleep_until - clock.now + 0.005)
         if verbose:
-            print(f"  t={clock.now:.2f}  TPM {window:.0f}s window full: "
-                  f"current={current_tokens:,}, item={item_tokens:,}, "
-                  f"cap={cap:,}, sleeping {sleep_for:.3f}s")
+            print(
+                f"  t={clock.now:.2f}  TPM {window:.0f}s window full: "
+                f"current={current_tokens:,}, item={item_tokens:,}, "
+                f"cap={cap:,}, sleeping {sleep_for:.3f}s"
+            )
         result.sleep_events.append((clock.now, sleep_for))
         clock.sleep(sleep_for)
 
@@ -429,7 +459,9 @@ def run_proposed_token_aware(
             # ── Gate 1: RPM 2s window ─────────────────────────────────────────
             r2 = recent_count(short_window_sec)
             if r2 >= short_window_cap:
-                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
+                in_win = [
+                    ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec
+                ]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 sleep_for = max(0.001, (oldest + short_window_sec) - clock.now + 0.005)
                 result.sleep_events.append((clock.now, sleep_for))
@@ -446,13 +478,24 @@ def run_proposed_token_aware(
                 if item.tokens > tpm_2s_cap:
                     # Oversized item — wait for window to drain completely
                     if t2 > 0:
-                        in_win = [(ts, tok) for ts, tok in dispatch_log
-                                  if ts >= clock.now - short_window_sec]
-                        newest = max(ts for ts, _ in in_win) if in_win else clock.now - short_window_sec
-                        sleep_for = max(0.001, (newest + short_window_sec) - clock.now + 0.005)
+                        in_win = [
+                            (ts, tok)
+                            for ts, tok in dispatch_log
+                            if ts >= clock.now - short_window_sec
+                        ]
+                        newest = (
+                            max(ts for ts, _ in in_win)
+                            if in_win
+                            else clock.now - short_window_sec
+                        )
+                        sleep_for = max(
+                            0.001, (newest + short_window_sec) - clock.now + 0.005
+                        )
                         if verbose:
-                            print(f"  t={clock.now:.2f}  Oversized item ({item.tokens} tok > "
-                                  f"2s cap {tpm_2s_cap}): draining window, sleeping {sleep_for:.3f}s")
+                            print(
+                                f"  t={clock.now:.2f}  Oversized item ({item.tokens} tok > "
+                                f"2s cap {tpm_2s_cap}): draining window, sleeping {sleep_for:.3f}s"
+                            )
                         result.sleep_events.append((clock.now, sleep_for))
                         clock.sleep(sleep_for)
                         prune(60.0)
@@ -490,6 +533,7 @@ def run_proposed_token_aware(
 # ──────────────────────────────────────────────────────────────────────────────
 # Assertions
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class AssertionResult:
     def __init__(self):
@@ -531,13 +575,17 @@ def assert_result(
 
     # Request-count windows
     peak_2s = result.max_in_rolling_window(short_window_sec)
-    ar.check(peak_2s <= rpm_2s_cap,
-             f"Peak requests in {short_window_sec}s ≤ {rpm_2s_cap}",
-             f"peak={peak_2s}")
+    ar.check(
+        peak_2s <= rpm_2s_cap,
+        f"Peak requests in {short_window_sec}s ≤ {rpm_2s_cap}",
+        f"peak={peak_2s}",
+    )
     peak_60s = result.max_in_rolling_window(60.0)
-    ar.check(peak_60s <= queue_capacity,
-             f"Peak requests in 60s ≤ {queue_capacity}",
-             f"peak={peak_60s}")
+    ar.check(
+        peak_60s <= queue_capacity,
+        f"Peak requests in 60s ≤ {queue_capacity}",
+        f"peak={peak_60s}",
+    )
 
     # Token windows (only when TPM is configured)
     if tpm_2s_cap > 0:
@@ -546,28 +594,38 @@ def assert_result(
         # regardless of scheduling. Allow the cap to flex up to that item's size
         # so the assertion reflects what's actually achievable.
         effective_2s_cap = max(tpm_2s_cap, max_item_tokens)
-        label_2s = (f"Peak tokens in {short_window_sec}s ≤ {tpm_2s_cap:,}"
-                    + (f" (oversized-item exception: cap flexed to {effective_2s_cap:,})"
-                       if effective_2s_cap > tpm_2s_cap else ""))
-        ar.check(peak_tok_2s <= effective_2s_cap, label_2s,
-                 f"peak={peak_tok_2s:,}")
+        label_2s = f"Peak tokens in {short_window_sec}s ≤ {tpm_2s_cap:,}" + (
+            f" (oversized-item exception: cap flexed to {effective_2s_cap:,})"
+            if effective_2s_cap > tpm_2s_cap
+            else ""
+        )
+        ar.check(peak_tok_2s <= effective_2s_cap, label_2s, f"peak={peak_tok_2s:,}")
     if tpm_capacity > 0:
         peak_tok_60s = result.max_tokens_in_rolling_window(60.0)
-        ar.check(peak_tok_60s <= tpm_capacity,
-                 f"Peak tokens in 60s ≤ {tpm_capacity:,}",
-                 f"peak={peak_tok_60s:,}")
+        ar.check(
+            peak_tok_60s <= tpm_capacity,
+            f"Peak tokens in 60s ≤ {tpm_capacity:,}",
+            f"peak={peak_tok_60s:,}",
+        )
 
     # Throughput
-    ar.check(result.effective_rps >= target_rps * (1 - rps_tolerance),
-             f"Effective RPS ≥ {target_rps * (1 - rps_tolerance):.2f}",
-             f"actual={result.effective_rps:.2f}")
+    ar.check(
+        result.effective_rps >= target_rps * (1 - rps_tolerance),
+        f"Effective RPS ≥ {target_rps * (1 - rps_tolerance):.2f}",
+        f"actual={result.effective_rps:.2f}",
+    )
     if target_tps > 0:
-        ar.check(result.effective_tps >= target_tps * (1 - tps_tolerance),
-                 f"Effective TPS ≥ {target_tps * (1 - tps_tolerance):.0f} tok/s",
-                 f"actual={result.effective_tps:.0f}")
+        ar.check(
+            result.effective_tps >= target_tps * (1 - tps_tolerance),
+            f"Effective TPS ≥ {target_tps * (1 - tps_tolerance):.0f} tok/s",
+            f"actual={result.effective_tps:.0f}",
+        )
 
-    ar.check(result.total_dispatched > 0, "All items dispatched",
-             f"dispatched={result.total_dispatched}")
+    ar.check(
+        result.total_dispatched > 0,
+        "All items dispatched",
+        f"dispatched={result.total_dispatched}",
+    )
     return ar
 
 
@@ -575,46 +633,65 @@ def assert_result(
 # Report helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-SEP  = "─" * 72
+SEP = "─" * 72
 DSEP = "━" * 72
 
-def print_result_summary(result: SimResult, short_window_sec: float,
-                         rpm_2s_cap: int, queue_capacity: int,
-                         target_rps: float,
-                         tpm_2s_cap: int = 0, tpm_capacity: int = 0) -> None:
+
+def print_result_summary(
+    result: SimResult,
+    short_window_sec: float,
+    rpm_2s_cap: int,
+    queue_capacity: int,
+    target_rps: float,
+    tpm_2s_cap: int = 0,
+    tpm_capacity: int = 0,
+) -> None:
     print(f"\n{DSEP}")
     print(f"  Algorithm : {result.algo_name}")
     print(SEP)
     print(f"  Items dispatched       : {result.total_dispatched}")
     print(f"  Total tokens dispatched: {result.total_tokens_dispatched:,}")
     print(f"  Total sim time         : {result.total_sim_time:.2f}s")
-    print(f"  Effective RPS          : {result.effective_rps:.2f}  "
-          f"(target={target_rps:.2f}, efficiency={result.effective_rps / target_rps * 100:.1f}%)")
+    print(
+        f"  Effective RPS          : {result.effective_rps:.2f}  "
+        f"(target={target_rps:.2f}, efficiency={result.effective_rps / target_rps * 100:.1f}%)"
+    )
     print(f"  Effective TPS          : {result.effective_tps:,.0f} tok/s")
-    print(f"  Total sleep time       : {result.total_sleep_time():.2f}s  "
-          f"({len(result.sleep_events)} sleep events)")
+    print(
+        f"  Total sleep time       : {result.total_sleep_time():.2f}s  "
+        f"({len(result.sleep_events)} sleep events)"
+    )
     print(f"  DynamoDB reads         : {result.total_db_reads()}")
-    print(f"  Peak requests / {short_window_sec}s      : "
-          f"{result.max_in_rolling_window(short_window_sec)}  (cap={rpm_2s_cap})")
-    print(f"  Peak requests / 60s    : "
-          f"{result.max_in_rolling_window(60.0)}  (cap={queue_capacity})")
+    print(
+        f"  Peak requests / {short_window_sec}s      : "
+        f"{result.max_in_rolling_window(short_window_sec)}  (cap={rpm_2s_cap})"
+    )
+    print(
+        f"  Peak requests / 60s    : "
+        f"{result.max_in_rolling_window(60.0)}  (cap={queue_capacity})"
+    )
     if tpm_2s_cap > 0:
         peak_tok_2s = result.max_tokens_in_rolling_window(short_window_sec)
         viol = result.token_window_violations(short_window_sec, tpm_2s_cap)
         flag = "  ⚠  VIOLATIONS" if viol > 0 else ""
-        print(f"  Peak tokens   / {short_window_sec}s      : "
-              f"{peak_tok_2s:,}  (cap={tpm_2s_cap:,}){flag}")
+        print(
+            f"  Peak tokens   / {short_window_sec}s      : "
+            f"{peak_tok_2s:,}  (cap={tpm_2s_cap:,}){flag}"
+        )
     if tpm_capacity > 0:
         peak_tok_60s = result.max_tokens_in_rolling_window(60.0)
         viol = result.token_window_violations(60.0, tpm_capacity)
         flag = "  ⚠  VIOLATIONS" if viol > 0 else ""
-        print(f"  Peak tokens   / 60s    : "
-              f"{peak_tok_60s:,}  (cap={tpm_capacity:,}){flag}")
+        print(
+            f"  Peak tokens   / 60s    : "
+            f"{peak_tok_60s:,}  (cap={tpm_capacity:,}){flag}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Part 1: RPS-only scenarios (prove streaming beats batch-parallel)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class RpsScenario:
@@ -628,51 +705,66 @@ class RpsScenario:
 RPS_SCENARIOS = [
     RpsScenario("Original test config  (rps=10, batch=10)", 10.0, 10, 200),
     RpsScenario("Updated config        (rps=15, batch=10)", 15.0, 10, 200),
-    RpsScenario("Low-rate              (rps=5,  batch=5)",   5.0,  5, 100),
+    RpsScenario("Low-rate              (rps=5,  batch=5)", 5.0, 5, 100),
     RpsScenario("High-rate             (rps=30, batch=10)", 30.0, 10, 400),
     RpsScenario("Large-batch           (rps=20, batch=20)", 20.0, 20, 300),
 ]
 
 
 def run_rps_scenario(sc: RpsScenario, verbose: bool = False) -> bool:
-    queue_capacity   = int(sc.rps * 60)
-    rpm_2s_cap       = max(1, int(sc.rps * 2.0))
-    items            = make_uniform(sc.items, tokens=1)
+    queue_capacity = int(sc.rps * 60)
+    rpm_2s_cap = max(1, int(sc.rps * 2.0))
+    items = make_uniform(sc.items, tokens=1)
 
     print(f"\n{'#' * 72}")
     print(f"# RPS SCENARIO: {sc.name}")
-    print(f"#   rps={sc.rps}, batch={sc.batch_size}, items={sc.items}, "
-          f"RPM={queue_capacity}, 2s_cap={rpm_2s_cap}")
+    print(
+        f"#   rps={sc.rps}, batch={sc.batch_size}, items={sc.items}, "
+        f"RPM={queue_capacity}, 2s_cap={rpm_2s_cap}"
+    )
     print(f"{'#' * 72}")
 
     wall_start = real_time.perf_counter()
 
     c_clock = FakeClock()
-    r_current = run_current_algo(c_clock, items, sc.batch_size, sc.rps,
-                                  queue_capacity, verbose=verbose)
+    r_current = run_current_algo(
+        c_clock, items, sc.batch_size, sc.rps, queue_capacity, verbose=verbose
+    )
 
     p_clock = FakeClock()
-    r_proposed = run_proposed_algo(p_clock, items, sc.batch_size, sc.rps,
-                                    queue_capacity, verbose=verbose)
+    r_proposed = run_proposed_algo(
+        p_clock, items, sc.batch_size, sc.rps, queue_capacity, verbose=verbose
+    )
 
     wall_ms = (real_time.perf_counter() - wall_start) * 1000
 
-    print_result_summary(r_current,  2.0, rpm_2s_cap, queue_capacity, sc.rps)
+    print_result_summary(r_current, 2.0, rpm_2s_cap, queue_capacity, sc.rps)
     print_result_summary(r_proposed, 2.0, rpm_2s_cap, queue_capacity, sc.rps)
 
     # Side-by-side
     delta = r_proposed.effective_rps - r_current.effective_rps
-    pct   = delta / r_current.effective_rps * 100 if r_current.effective_rps > 0 else 0
+    pct = delta / r_current.effective_rps * 100 if r_current.effective_rps > 0 else 0
     print(f"\n  {'─'*60}")
-    print(f"  RPS delta: PROPOSED vs CURRENT  → "
-          f"{'+' if delta >= 0 else ''}{delta:.2f} RPS  ({pct:+.1f}%)")
-    print(f"  DB reads : CURRENT={r_current.total_db_reads()}  "
-          f"PROPOSED={r_proposed.total_db_reads()}")
+    print(
+        f"  RPS delta: PROPOSED vs CURRENT  → "
+        f"{'+' if delta >= 0 else ''}{delta:.2f} RPS  ({pct:+.1f}%)"
+    )
+    print(
+        f"  DB reads : CURRENT={r_current.total_db_reads()}  "
+        f"PROPOSED={r_proposed.total_db_reads()}"
+    )
 
-    ar = assert_result(r_proposed, 2.0, rpm_2s_cap, queue_capacity,
-                       sc.rps, rps_tolerance=sc.rps_tolerance)
-    ar_curr = assert_result(r_current, 2.0, rpm_2s_cap, queue_capacity,
-                             sc.rps, rps_tolerance=0.40)
+    ar = assert_result(
+        r_proposed,
+        2.0,
+        rpm_2s_cap,
+        queue_capacity,
+        sc.rps,
+        rps_tolerance=sc.rps_tolerance,
+    )
+    ar_curr = assert_result(
+        r_current, 2.0, rpm_2s_cap, queue_capacity, sc.rps, rps_tolerance=0.40
+    )
 
     print(f"\n  Assertions — CURRENT")
     ar_curr.report()
@@ -681,7 +773,9 @@ def run_rps_scenario(sc: RpsScenario, verbose: bool = False) -> bool:
     print(f"\n  Simulation wall time: {wall_ms:.0f}ms")
 
     passed = ar.all_passed and r_proposed.effective_rps > r_current.effective_rps
-    print(f"  {'✅ PROPOSED outperforms CURRENT' if passed else '❌ PROPOSED did not outperform CURRENT'}")
+    print(
+        f"  {'✅ PROPOSED outperforms CURRENT' if passed else '❌ PROPOSED did not outperform CURRENT'}"
+    )
     return passed
 
 
@@ -689,16 +783,17 @@ def run_rps_scenario(sc: RpsScenario, verbose: bool = False) -> bool:
 # Part 2: Token-heavy scenarios (expose TPM gap, then prove fix)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class TokenScenario:
     name: str
-    rps: float              # RPM quota / 60
+    rps: float  # RPM quota / 60
     batch_size: int
-    tpm_regen_rate: float   # tokens/sec = TPM quota / 60
-    tpm_capacity: int       # tokens per 60s window = TPM quota
+    tpm_regen_rate: float  # tokens/sec = TPM quota / 60
+    tpm_capacity: int  # tokens per 60s window = TPM quota
     items: List[Item]
     # expected behaviour flags
-    expect_rpm_only_to_violate_tpm: bool = True   # should proposed (RPM-only) fail?
+    expect_rpm_only_to_violate_tpm: bool = True  # should proposed (RPM-only) fail?
     notes: str = ""
 
 
@@ -713,14 +808,16 @@ def make_token_scenarios() -> List[TokenScenario]:
       - 50-tok items  : 40 fit per 2s window, but RPM cap is 20 → RPM-bound at 10 RPS
     """
     rps = 10.0
-    tpm_rate = 1_000.0     # tokens/sec
-    tpm_cap  = 60_000      # tokens per 60s
+    tpm_rate = 1_000.0  # tokens/sec
+    tpm_cap = 60_000  # tokens per 60s
 
     return [
         TokenScenario(
             name="Uniform large requests (800 tok each) — TPM-bound",
-            rps=rps, batch_size=10,
-            tpm_regen_rate=tpm_rate, tpm_capacity=tpm_cap,
+            rps=rps,
+            batch_size=10,
+            tpm_regen_rate=tpm_rate,
+            tpm_capacity=tpm_cap,
             items=make_uniform(60, tokens=800),
             expect_rpm_only_to_violate_tpm=True,
             notes=(
@@ -731,8 +828,10 @@ def make_token_scenarios() -> List[TokenScenario]:
         ),
         TokenScenario(
             name="Mixed workload (200–1,500 tok) — TPM-bound, variable rate",
-            rps=rps, batch_size=10,
-            tpm_regen_rate=tpm_rate, tpm_capacity=tpm_cap,
+            rps=rps,
+            batch_size=10,
+            tpm_regen_rate=tpm_rate,
+            tpm_capacity=tpm_cap,
             items=make_mixed(80, low=200, high=1_500),
             expect_rpm_only_to_violate_tpm=True,
             notes=(
@@ -743,8 +842,10 @@ def make_token_scenarios() -> List[TokenScenario]:
         ),
         TokenScenario(
             name="Small requests (50 tok each) — RPM-bound, TPM irrelevant",
-            rps=rps, batch_size=10,
-            tpm_regen_rate=tpm_rate, tpm_capacity=tpm_cap,
+            rps=rps,
+            batch_size=10,
+            tpm_regen_rate=tpm_rate,
+            tpm_capacity=tpm_cap,
             items=make_uniform(200, tokens=50),
             expect_rpm_only_to_violate_tpm=False,
             notes=(
@@ -755,9 +856,13 @@ def make_token_scenarios() -> List[TokenScenario]:
         ),
         TokenScenario(
             name="Heavy-tail (80% × 300 tok, 20% × 4,000 tok) — burst spikes",
-            rps=rps, batch_size=10,
-            tpm_regen_rate=tpm_rate, tpm_capacity=tpm_cap,
-            items=make_heavy_tail(80, small_tokens=300, large_tokens=4_000, large_pct=0.20),
+            rps=rps,
+            batch_size=10,
+            tpm_regen_rate=tpm_rate,
+            tpm_capacity=tpm_cap,
+            items=make_heavy_tail(
+                80, small_tokens=300, large_tokens=4_000, large_pct=0.20
+            ),
             expect_rpm_only_to_violate_tpm=True,
             notes=(
                 "Most requests are small but occasional large ones cause brief "
@@ -777,11 +882,11 @@ def run_token_scenario(sc: TokenScenario, verbose: bool = False) -> bool:
       - TOKEN-AWARE: respects both windows, adaptive rate
     Returns True if TOKEN-AWARE passes all assertions.
     """
-    tpm_2s_cap  = int(sc.tpm_regen_rate * 2.0)
-    rpm_2s_cap  = max(1, int(sc.rps * 2.0))
-    queue_cap   = int(sc.rps * 60)
+    tpm_2s_cap = int(sc.tpm_regen_rate * 2.0)
+    rpm_2s_cap = max(1, int(sc.rps * 2.0))
+    queue_cap = int(sc.rps * 60)
 
-    avg_tokens  = sum(it.tokens for it in sc.items) / len(sc.items) if sc.items else 1
+    avg_tokens = sum(it.tokens for it in sc.items) / len(sc.items) if sc.items else 1
     # Token-aware effective RPS is min(rps, tpm_rate / avg_tokens)
     # We give it 15% tolerance for overhead
     effective_target_rps = min(sc.rps, sc.tpm_regen_rate / avg_tokens)
@@ -789,12 +894,16 @@ def run_token_scenario(sc: TokenScenario, verbose: bool = False) -> bool:
     print(f"\n{'#' * 72}")
     print(f"# TOKEN SCENARIO: {sc.name}")
     print(f"#   rps={sc.rps}, batch={sc.batch_size}, items={len(sc.items)}")
-    print(f"#   tpm_quota={sc.tpm_capacity:,}/min  "
-          f"tpm_rate={sc.tpm_regen_rate:.0f} tok/s  "
-          f"tpm_2s_cap={tpm_2s_cap:,}")
-    print(f"#   avg_tokens/item={avg_tokens:.0f}  "
-          f"binding_constraint={'TPM' if sc.tpm_regen_rate / avg_tokens < sc.rps else 'RPM'}  "
-          f"expected_effective_rps≈{effective_target_rps:.2f}")
+    print(
+        f"#   tpm_quota={sc.tpm_capacity:,}/min  "
+        f"tpm_rate={sc.tpm_regen_rate:.0f} tok/s  "
+        f"tpm_2s_cap={tpm_2s_cap:,}"
+    )
+    print(
+        f"#   avg_tokens/item={avg_tokens:.0f}  "
+        f"binding_constraint={'TPM' if sc.tpm_regen_rate / avg_tokens < sc.rps else 'RPM'}  "
+        f"expected_effective_rps≈{effective_target_rps:.2f}"
+    )
     if sc.notes:
         print(f"#")
         for line in sc.notes.split("  |  "):
@@ -804,40 +913,50 @@ def run_token_scenario(sc: TokenScenario, verbose: bool = False) -> bool:
     wall_start = real_time.perf_counter()
 
     c_clock = FakeClock()
-    r_current = run_current_algo(c_clock, sc.items, sc.batch_size, sc.rps,
-                                  queue_cap, verbose=verbose)
+    r_current = run_current_algo(
+        c_clock, sc.items, sc.batch_size, sc.rps, queue_cap, verbose=verbose
+    )
 
     p_clock = FakeClock()
-    r_proposed = run_proposed_algo(p_clock, sc.items, sc.batch_size, sc.rps,
-                                    queue_cap, verbose=verbose)
+    r_proposed = run_proposed_algo(
+        p_clock, sc.items, sc.batch_size, sc.rps, queue_cap, verbose=verbose
+    )
 
     t_clock = FakeClock()
-    r_token = run_proposed_token_aware(t_clock, sc.items, sc.batch_size, sc.rps,
-                                        queue_cap, sc.tpm_regen_rate, sc.tpm_capacity,
-                                        verbose=verbose)
+    r_token = run_proposed_token_aware(
+        t_clock,
+        sc.items,
+        sc.batch_size,
+        sc.rps,
+        queue_cap,
+        sc.tpm_regen_rate,
+        sc.tpm_capacity,
+        verbose=verbose,
+    )
 
     wall_ms = (real_time.perf_counter() - wall_start) * 1000
 
     # Print summaries for all three
-    print_result_summary(r_current,  2.0, rpm_2s_cap, queue_cap, sc.rps,
-                         tpm_2s_cap, sc.tpm_capacity)
-    print_result_summary(r_proposed, 2.0, rpm_2s_cap, queue_cap, sc.rps,
-                         tpm_2s_cap, sc.tpm_capacity)
-    print_result_summary(r_token,    2.0, rpm_2s_cap, queue_cap, sc.rps,
-                         tpm_2s_cap, sc.tpm_capacity)
+    print_result_summary(
+        r_current, 2.0, rpm_2s_cap, queue_cap, sc.rps, tpm_2s_cap, sc.tpm_capacity
+    )
+    print_result_summary(
+        r_proposed, 2.0, rpm_2s_cap, queue_cap, sc.rps, tpm_2s_cap, sc.tpm_capacity
+    )
+    print_result_summary(
+        r_token, 2.0, rpm_2s_cap, queue_cap, sc.rps, tpm_2s_cap, sc.tpm_capacity
+    )
 
     # Violation comparison table
     print(f"\n  {'─'*60}")
     print(f"  {'Algorithm':<42} {'2s tok violations':>18} {'60s tok violations':>18}")
     print(f"  {'─'*42} {'─'*18} {'─'*18}")
     for r in [r_current, r_proposed, r_token]:
-        v2s  = r.token_window_violations(2.0, tpm_2s_cap)
+        v2s = r.token_window_violations(2.0, tpm_2s_cap)
         v60s = r.token_window_violations(60.0, sc.tpm_capacity)
-        icon2  = "⚠ " if v2s  > 0 else "✅"
+        icon2 = "⚠ " if v2s > 0 else "✅"
         icon60 = "⚠ " if v60s > 0 else "✅"
-        print(f"  {r.algo_name:<42} "
-              f"{icon2} {v2s:>14}   "
-              f"{icon60} {v60s:>14}")
+        print(f"  {r.algo_name:<42} " f"{icon2} {v2s:>14}   " f"{icon60} {v60s:>14}")
 
     # ── Compute assertion parameters ──────────────────────────────────────────
     max_item_tokens = max(it.tokens for it in sc.items) if sc.items else 0
@@ -850,17 +969,31 @@ def run_token_scenario(sc: TokenScenario, verbose: bool = False) -> bool:
 
     # Assertions — TOKEN-AWARE is the one that must pass all checks
     print(f"\n  Assertions — CURRENT")
-    ar_c = assert_result(r_current, 2.0, rpm_2s_cap, queue_cap, sc.rps,
-                          rps_tolerance=0.50,
-                          tpm_2s_cap=tpm_2s_cap, tpm_capacity=sc.tpm_capacity,
-                          max_item_tokens=max_item_tokens)
+    ar_c = assert_result(
+        r_current,
+        2.0,
+        rpm_2s_cap,
+        queue_cap,
+        sc.rps,
+        rps_tolerance=0.50,
+        tpm_2s_cap=tpm_2s_cap,
+        tpm_capacity=sc.tpm_capacity,
+        max_item_tokens=max_item_tokens,
+    )
     ar_c.report()
 
     print(f"\n  Assertions — PROPOSED (RPM-only, expected to fail TPM)")
-    ar_p = assert_result(r_proposed, 2.0, rpm_2s_cap, queue_cap, sc.rps,
-                          rps_tolerance=0.50,
-                          tpm_2s_cap=tpm_2s_cap, tpm_capacity=sc.tpm_capacity,
-                          max_item_tokens=max_item_tokens)
+    ar_p = assert_result(
+        r_proposed,
+        2.0,
+        rpm_2s_cap,
+        queue_cap,
+        sc.rps,
+        rps_tolerance=0.50,
+        tpm_2s_cap=tpm_2s_cap,
+        tpm_capacity=sc.tpm_capacity,
+        max_item_tokens=max_item_tokens,
+    )
     ar_p.report()
     if sc.expect_rpm_only_to_violate_tpm and ar_p.all_passed:
         print(f"    ⚠  Expected TPM violation but none found — check token config")
@@ -868,15 +1001,25 @@ def run_token_scenario(sc: TokenScenario, verbose: bool = False) -> bool:
         print(f"    (expected failures above confirm RPM-only gate is insufficient)")
 
     print(f"\n  Assertions — TOKEN-AWARE (must pass all)")
-    ar_t = assert_result(r_token, 2.0, rpm_2s_cap, queue_cap, effective_target_rps,
-                          rps_tolerance=0.25,   # discrete token pacing has ±25% natural variance
-                          tpm_2s_cap=tpm_2s_cap, tpm_capacity=sc.tpm_capacity,
-                          target_tps=target_tps, tps_tolerance=0.20,
-                          max_item_tokens=max_item_tokens)
+    ar_t = assert_result(
+        r_token,
+        2.0,
+        rpm_2s_cap,
+        queue_cap,
+        effective_target_rps,
+        rps_tolerance=0.25,  # discrete token pacing has ±25% natural variance
+        tpm_2s_cap=tpm_2s_cap,
+        tpm_capacity=sc.tpm_capacity,
+        target_tps=target_tps,
+        tps_tolerance=0.20,
+        max_item_tokens=max_item_tokens,
+    )
     ar_t.report()
 
     print(f"\n  Simulation wall time: {wall_ms:.0f}ms")
-    print(f"  {'✅ TOKEN-AWARE passed all assertions' if ar_t.all_passed else '❌ TOKEN-AWARE failed — review output'}")
+    print(
+        f"  {'✅ TOKEN-AWARE passed all assertions' if ar_t.all_passed else '❌ TOKEN-AWARE failed — review output'}"
+    )
     return ar_t.all_passed
 
 
@@ -884,19 +1027,24 @@ def run_token_scenario(sc: TokenScenario, verbose: bool = False) -> bool:
 # Part 3: 13-minute rolling-log correctness (token-aware)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def run_rolling_log_correctness_test(rps: float = 10.0,
-                                     tpm_regen_rate: float = 1_000.0,
-                                     tpm_capacity: int = 60_000,
-                                     verbose: bool = False) -> bool:
-    tpm_2s_cap  = int(tpm_regen_rate * 2.0)
-    rpm_2s_cap  = max(1, int(rps * 2.0))
-    queue_cap   = int(rps * 60)
-    tokens_each = 500   # mid-range — TPM-bound at rps=2 (1000/500=2)
+
+def run_rolling_log_correctness_test(
+    rps: float = 10.0,
+    tpm_regen_rate: float = 1_000.0,
+    tpm_capacity: int = 60_000,
+    verbose: bool = False,
+) -> bool:
+    tpm_2s_cap = int(tpm_regen_rate * 2.0)
+    rpm_2s_cap = max(1, int(rps * 2.0))
+    queue_cap = int(rps * 60)
+    tokens_each = 500  # mid-range — TPM-bound at rps=2 (1000/500=2)
 
     print(f"\n{'#' * 72}")
     print(f"# SCENARIO: 13-minute rolling-log correctness (token-aware)")
-    print(f"#   rps={rps}, RPM={queue_cap}, tpm_rate={tpm_regen_rate:.0f} tok/s, "
-          f"tokens/item={tokens_each}")
+    print(
+        f"#   rps={rps}, RPM={queue_cap}, tpm_rate={tpm_regen_rate:.0f} tok/s, "
+        f"tokens/item={tokens_each}"
+    )
     print(f"#   Effective RPS expected ≈ {min(rps, tpm_regen_rate/tokens_each):.1f}")
     print(f"{'#' * 72}")
 
@@ -906,9 +1054,13 @@ def run_rolling_log_correctness_test(rps: float = 10.0,
 
     clock = FakeClock()
     result = run_proposed_token_aware(
-        clock, items, batch_size=10,
-        queue_regen_rate=rps, queue_capacity=queue_cap,
-        tpm_regen_rate=tpm_regen_rate, tpm_capacity=tpm_capacity,
+        clock,
+        items,
+        batch_size=10,
+        queue_regen_rate=rps,
+        queue_capacity=queue_cap,
+        tpm_regen_rate=tpm_regen_rate,
+        tpm_capacity=tpm_capacity,
         verbose=verbose,
     )
 
@@ -920,28 +1072,36 @@ def run_rolling_log_correctness_test(rps: float = 10.0,
     # 1. Records from t<10 should not appear in the 60s window at t=70
     early = [ts for ts, _ in events_in_780 if ts < 10.0]
     leaked = [ts for ts in early if ts >= 70.0 - 60.0]
-    ar.check(len(leaked) == 0,
-             "Records from t<10 absent from 60s window at t=70",
-             f"leaked={len(leaked)}")
+    ar.check(
+        len(leaked) == 0,
+        "Records from t<10 absent from 60s window at t=70",
+        f"leaked={len(leaked)}",
+    )
 
     # 2. 2s token window never exceeded across entire run
     peak_tok_2s = result.max_tokens_in_rolling_window(2.0)
-    ar.check(peak_tok_2s <= tpm_2s_cap,
-             f"2s token window never exceeds {tpm_2s_cap:,} over 13 min",
-             f"peak={peak_tok_2s:,}")
+    ar.check(
+        peak_tok_2s <= tpm_2s_cap,
+        f"2s token window never exceeds {tpm_2s_cap:,} over 13 min",
+        f"peak={peak_tok_2s:,}",
+    )
 
     # 3. 2s request window never exceeded
     peak_req_2s = result.max_in_rolling_window(2.0)
-    ar.check(peak_req_2s <= rpm_2s_cap,
-             f"2s request window never exceeds {rpm_2s_cap} over 13 min",
-             f"peak={peak_req_2s}")
+    ar.check(
+        peak_req_2s <= rpm_2s_cap,
+        f"2s request window never exceeds {rpm_2s_cap} over 13 min",
+        f"peak={peak_req_2s}",
+    )
 
     # 4. Effective RPS stays ≥ 90% of the token-aware target over 780s
     eff_rps_780 = len(events_in_780) / 780.0 if events_in_780 else 0
     target = min(rps, tpm_regen_rate / tokens_each) * 0.90
-    ar.check(eff_rps_780 >= target,
-             f"13-min effective RPS ≥ {target:.2f}",
-             f"actual={eff_rps_780:.2f}")
+    ar.check(
+        eff_rps_780 >= target,
+        f"13-min effective RPS ≥ {target:.2f}",
+        f"actual={eff_rps_780:.2f}",
+    )
 
     print(f"\n  Items dispatched (≤780s): {len(events_in_780)}")
     print(f"  Total sim time          : {result.total_sim_time:.1f}s")
@@ -956,6 +1116,7 @@ def run_rolling_log_correctness_test(rps: float = 10.0,
 # ──────────────────────────────────────────────────────────────────────────────
 # Algorithm proposal printout
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def print_algorithm_proposal() -> None:
     print(f"\n{'=' * 72}")
@@ -1045,17 +1206,30 @@ def print_algorithm_proposal() -> None:
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Dispatch algorithm simulation — prove before implement."
     )
-    parser.add_argument("--verbose",     action="store_true", help="Per-dispatch trace")
-    parser.add_argument("--skip-rps",    action="store_true", help="Skip RPS-only scenarios")
-    parser.add_argument("--skip-token",  action="store_true", help="Skip token scenarios")
-    parser.add_argument("--skip-13min",  action="store_true", help="Skip 13-min correctness test")
-    parser.add_argument("--rps",         type=float, default=None, help="Custom RPS for token scenario")
-    parser.add_argument("--tpm-rate",    type=float, default=None, help="Custom TPM rate (tok/s)")
-    parser.add_argument("--tokens",      type=int,   default=None, help="Custom tokens per item")
+    parser.add_argument("--verbose", action="store_true", help="Per-dispatch trace")
+    parser.add_argument(
+        "--skip-rps", action="store_true", help="Skip RPS-only scenarios"
+    )
+    parser.add_argument(
+        "--skip-token", action="store_true", help="Skip token scenarios"
+    )
+    parser.add_argument(
+        "--skip-13min", action="store_true", help="Skip 13-min correctness test"
+    )
+    parser.add_argument(
+        "--rps", type=float, default=None, help="Custom RPS for token scenario"
+    )
+    parser.add_argument(
+        "--tpm-rate", type=float, default=None, help="Custom TPM rate (tok/s)"
+    )
+    parser.add_argument(
+        "--tokens", type=int, default=None, help="Custom tokens per item"
+    )
     args = parser.parse_args()
 
     print("=" * 72)
@@ -1084,17 +1258,21 @@ def main() -> None:
         print(f"{'=' * 72}")
 
         if args.rps or args.tpm_rate or args.tokens:
-            rps     = args.rps      or 10.0
-            tpm     = args.tpm_rate or 1_000.0
-            tokens  = args.tokens   or 800
+            rps = args.rps or 10.0
+            tpm = args.tpm_rate or 1_000.0
+            tokens = args.tokens or 800
             tpm_cap = int(tpm * 60)
-            custom  = [TokenScenario(
-                name=f"Custom (rps={rps}, tpm_rate={tpm:.0f}, tokens={tokens})",
-                rps=rps, batch_size=10,
-                tpm_regen_rate=tpm, tpm_capacity=tpm_cap,
-                items=make_uniform(60, tokens=tokens),
-                expect_rpm_only_to_violate_tpm=(tpm / tokens < rps),
-            )]
+            custom = [
+                TokenScenario(
+                    name=f"Custom (rps={rps}, tpm_rate={tpm:.0f}, tokens={tokens})",
+                    rps=rps,
+                    batch_size=10,
+                    tpm_regen_rate=tpm,
+                    tpm_capacity=tpm_cap,
+                    items=make_uniform(60, tokens=tokens),
+                    expect_rpm_only_to_violate_tpm=(tpm / tokens < rps),
+                )
+            ]
             for sc in custom:
                 all_results.append(run_token_scenario(sc, verbose=args.verbose))
         else:
@@ -1106,16 +1284,20 @@ def main() -> None:
         print(f"\n\n{'=' * 72}")
         print("  PART 3 OF 3 — 13-minute rolling-log correctness (token-aware)")
         print(f"{'=' * 72}")
-        rps      = args.rps      or 10.0
+        rps = args.rps or 10.0
         tpm_rate = args.tpm_rate or 1_000.0
-        tpm_cap  = int(tpm_rate * 60)
-        all_results.append(run_rolling_log_correctness_test(
-            rps=rps, tpm_regen_rate=tpm_rate, tpm_capacity=tpm_cap,
-            verbose=args.verbose,
-        ))
+        tpm_cap = int(tpm_rate * 60)
+        all_results.append(
+            run_rolling_log_correctness_test(
+                rps=rps,
+                tpm_regen_rate=tpm_rate,
+                tpm_capacity=tpm_cap,
+                verbose=args.verbose,
+            )
+        )
 
     # ── Final summary ─────────────────────────────────────────────────────────
-    total  = len(all_results)
+    total = len(all_results)
     passed = sum(all_results)
     failed = total - passed
 

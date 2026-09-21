@@ -24,20 +24,30 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Environment variables
-SINGLE_TABLE_NAME = os.environ.get('SINGLE_TABLE_NAME')
-BEDROCK_PROCESSOR_ARN = os.environ.get('BEDROCK_PROCESSOR_ARN')
+SINGLE_TABLE_NAME = os.environ.get("SINGLE_TABLE_NAME")
+BEDROCK_PROCESSOR_ARN = os.environ.get("BEDROCK_PROCESSOR_ARN")
 
 # Clients
-eventbridge = boto3.client('events')
-lambda_client = boto3.client('lambda')
-sfn_client = boto3.client('stepfunctions')
+eventbridge = boto3.client("events")
+lambda_client = boto3.client("lambda")
+sfn_client = boto3.client("stepfunctions")
 
 # Constants
 SEMAPHORE_ID = "semaphore#default"  # Used in EventBridge events for queue processor
 
 
-def _record_status(dynamo_service, *, request_id, state, http_status, reason,
-                   correlation_id, tenant_id, model_id, source):
+def _record_status(
+    dynamo_service,
+    *,
+    request_id,
+    state,
+    http_status,
+    reason,
+    correlation_id,
+    tenant_id,
+    model_id,
+    source,
+):
     """Best-effort honest-outcomes status write (Objective 3).
 
     Records a lifecycle transition on the single-table REQUEST#{id}/STATUS item via
@@ -59,16 +69,27 @@ def _record_status(dynamo_service, *, request_id, state, http_status, reason,
             tenant_id=tenant_id,
             correlation_id=correlation_id,
             model_id=model_id,
-            arm='shaper',
+            arm="shaper",
             source=source,
         )
     except Exception as e:
         logger.warning(f"Failed to write {state} status (non-fatal): {e}")
 
 
-def _enqueue_on_reject(dynamo_service, model_id, request_id, task_token, execution_arn,
-                       correlation_id, tenant_id, reason, extra=None,
-                       estimated_tokens=0, estimated_input_tokens=0, estimated_output_tokens=0):
+def _enqueue_on_reject(
+    dynamo_service,
+    model_id,
+    request_id,
+    task_token,
+    execution_arn,
+    correlation_id,
+    tenant_id,
+    reason,
+    extra=None,
+    estimated_tokens=0,
+    estimated_input_tokens=0,
+    estimated_output_tokens=0,
+):
     """Enqueue a rejected request and return the (False, metadata) tuple.
 
     Shared by the mantle admission path for both gate-reject and over-consumption
@@ -80,28 +101,51 @@ def _enqueue_on_reject(dynamo_service, model_id, request_id, task_token, executi
     """
     try:
         dynamo_service.enqueue_request(
-            model_id=model_id, request_id=request_id,
-            task_token=task_token, execution_arn=execution_arn,
-            correlation_id=correlation_id, tenant_id=tenant_id,
+            model_id=model_id,
+            request_id=request_id,
+            task_token=task_token,
+            execution_arn=execution_arn,
+            correlation_id=correlation_id,
+            tenant_id=tenant_id,
             estimated_tokens=estimated_tokens,
             estimated_input_tokens=estimated_input_tokens,
             estimated_output_tokens=estimated_output_tokens,
         )
-        logger.info(f"Enqueued request ({reason}): request_id={request_id}, "
-                    f"model_id={model_id}, correlation_id={correlation_id}")
+        logger.info(
+            f"Enqueued request ({reason}): request_id={request_id}, "
+            f"model_id={model_id}, correlation_id={correlation_id}"
+        )
     except Exception as e:
         logger.error(f"Failed to enqueue to single table: {e}")
         raise
-    meta = {'queued': True, 'reason': reason, 'correlation_id': correlation_id, 'tenant_id': tenant_id}
+    meta = {
+        "queued": True,
+        "reason": reason,
+        "correlation_id": correlation_id,
+        "tenant_id": tenant_id,
+    }
     if extra:
         meta.update(extra)
     return (False, meta)
 
 
-def _try_reserve_mantle(*, dynamo_service, model_id, request_id, task_token, execution_arn,
-                        request_payload, correlation_id, tenant_id, config,
-                        burst_capacity, burst_regen_rate, rpm_quota_enabled,
-                        short_window_sec=0.0, long_window_sec=0.0):
+def _try_reserve_mantle(
+    *,
+    dynamo_service,
+    model_id,
+    request_id,
+    task_token,
+    execution_arn,
+    request_payload,
+    correlation_id,
+    tenant_id,
+    config,
+    burst_capacity,
+    burst_regen_rate,
+    rpm_quota_enabled,
+    short_window_sec=0.0,
+    long_window_sec=0.0,
+):
     """
     Mantle iTPM/oTPM split admission via the sliding-window read gate.
 
@@ -117,72 +161,96 @@ def _try_reserve_mantle(*, dynamo_service, model_id, request_id, task_token, exe
     rollback, and no reconciliation Lambda.
     """
     # Split-token config (required on mantle — create-config enforces presence).
-    itpm_burst_capacity = int(config.get('itpm_burst_capacity', 0))
-    itpm_burst_regen_rate = float(config.get('itpm_burst_regeneration_rate', 0))
-    otpm_burst_capacity = int(config.get('otpm_burst_capacity', 0))
-    otpm_burst_regen_rate = float(config.get('otpm_burst_regeneration_rate', 0))
-    bytes_per_token = float(config.get('bytes_per_token', 4.0))
+    itpm_burst_capacity = int(config.get("itpm_burst_capacity", 0))
+    itpm_burst_regen_rate = float(config.get("itpm_burst_regeneration_rate", 0))
+    otpm_burst_capacity = int(config.get("otpm_burst_capacity", 0))
+    otpm_burst_regen_rate = float(config.get("otpm_burst_regeneration_rate", 0))
+    bytes_per_token = float(config.get("bytes_per_token", 4.0))
     # Sub-minute (2s) request-rate cap. Next-gen mantle models set rpm_quota_enabled
     # =False (no RPM signal to default from), so an explicit short_window_rps is
     # required to enable the 2s gate on those; absent ⇒ 0 (gate off for that model).
-    short_window_rps = float(config.get('short_window_rps', 0))
+    short_window_rps = float(config.get("short_window_rps", 0))
 
-    prompt = (request_payload or {}).get('prompt', '')
-    max_tokens = (request_payload or {}).get('max_tokens', 100)
+    prompt = (request_payload or {}).get("prompt", "")
+    max_tokens = (request_payload or {}).get("max_tokens", 100)
     est_input, est_output = estimate_request_tokens_split(
         prompt=prompt, max_tokens=max_tokens, bytes_per_token=bytes_per_token
     )
     estimated_tokens = est_input + est_output
-    logger.info(f"Mantle split estimate: itpm~{est_input}, otpm~{est_output} "
-                f"(input_bytes~{len((prompt or '').encode('utf-8'))}, max_tokens={max_tokens}, "
-                f"bytes_per_token={bytes_per_token}, rpm_enabled={rpm_quota_enabled})")
+    logger.info(
+        f"Mantle split estimate: itpm~{est_input}, otpm~{est_output} "
+        f"(input_bytes~{len((prompt or '').encode('utf-8'))}, max_tokens={max_tokens}, "
+        f"bytes_per_token={bytes_per_token}, rpm_enabled={rpm_quota_enabled})"
+    )
 
     # Step 2: Atomic 3-way admission gate.
     try:
         allocation_result = dynamo_service.put_allocation(
-            model_id, request_id, estimated_tokens=estimated_tokens,
+            model_id,
+            request_id,
+            estimated_tokens=estimated_tokens,
             correlation_id=correlation_id,
-            burst_capacity=burst_capacity, burst_regen_rate=burst_regen_rate,
-            backend='mantle', rpm_quota_enabled=rpm_quota_enabled,
-            estimated_input_tokens=est_input, estimated_output_tokens=est_output,
-            itpm_burst_capacity=itpm_burst_capacity, itpm_burst_regen_rate=itpm_burst_regen_rate,
-            otpm_burst_capacity=otpm_burst_capacity, otpm_burst_regen_rate=otpm_burst_regen_rate,
+            burst_capacity=burst_capacity,
+            burst_regen_rate=burst_regen_rate,
+            backend="mantle",
+            rpm_quota_enabled=rpm_quota_enabled,
+            estimated_input_tokens=est_input,
+            estimated_output_tokens=est_output,
+            itpm_burst_capacity=itpm_burst_capacity,
+            itpm_burst_regen_rate=itpm_burst_regen_rate,
+            otpm_burst_capacity=otpm_burst_capacity,
+            otpm_burst_regen_rate=otpm_burst_regen_rate,
             short_window_rps=short_window_rps,
-            short_window_sec=short_window_sec, long_window_sec=long_window_sec,
+            short_window_sec=short_window_sec,
+            long_window_sec=long_window_sec,
         )
     except BurstCapacityExceeded:
-        logger.info(f"Mantle admission gate rejected: request_id={request_id}, "
-                    f"correlation_id={correlation_id}, tenant_id={tenant_id}")
+        logger.info(
+            f"Mantle admission gate rejected: request_id={request_id}, "
+            f"correlation_id={correlation_id}, tenant_id={tenant_id}"
+        )
         return _enqueue_on_reject(
-            dynamo_service, model_id, request_id, task_token, execution_arn,
-            correlation_id, tenant_id, 'mantle_admission_gate',
-            extra={'burst_capacity': burst_capacity},
+            dynamo_service,
+            model_id,
+            request_id,
+            task_token,
+            execution_arn,
+            correlation_id,
+            tenant_id,
+            "mantle_admission_gate",
+            extra={"burst_capacity": burst_capacity},
             estimated_tokens=estimated_tokens,
-            estimated_input_tokens=est_input, estimated_output_tokens=est_output,
+            estimated_input_tokens=est_input,
+            estimated_output_tokens=est_output,
         )
 
-    timestamp_ms = allocation_result['timestamp_ms']
+    timestamp_ms = allocation_result["timestamp_ms"]
 
     # The mantle window-read gate already enforced iTPM + oTPM (+ optional RPM)
     # against the 2s/15s consumption windows. Reaching this point means every
     # enabled dimension had headroom. There is no post-gate verify and no rollback:
     # bounded over-admission from concurrent reads is accepted and caught downstream
     # by requeue-on-throttle; the 15s window horizon self-heals any drift.
-    logger.info(f"Mantle capacity available (window-read gate), proceeding: request_id={request_id}, "
-                f"correlation_id={correlation_id}, tenant_id={tenant_id}")
-    return (True, {
-        'queued': False,
-        'available_itpm': None,  # counter-enforced; no post-gate availability computed
-        'available_otpm': None,
-        'available_rpm': None,
-        'estimated_tokens': estimated_tokens,
-        'estimated_input_tokens': est_input,
-        'estimated_output_tokens': est_output,
-        'timestamp_ms': timestamp_ms,
-        'burst_capacity': burst_capacity,
-        'correlation_id': correlation_id,
-        'tenant_id': tenant_id,
-    })
+    logger.info(
+        f"Mantle capacity available (window-read gate), proceeding: request_id={request_id}, "
+        f"correlation_id={correlation_id}, tenant_id={tenant_id}"
+    )
+    return (
+        True,
+        {
+            "queued": False,
+            "available_itpm": None,  # counter-enforced; no post-gate availability computed
+            "available_otpm": None,
+            "available_rpm": None,
+            "estimated_tokens": estimated_tokens,
+            "estimated_input_tokens": est_input,
+            "estimated_output_tokens": est_output,
+            "timestamp_ms": timestamp_ms,
+            "burst_capacity": burst_capacity,
+            "correlation_id": correlation_id,
+            "tenant_id": tenant_id,
+        },
+    )
 
 
 def try_reserve_allocation_leaky_bucket(
@@ -193,8 +261,8 @@ def try_reserve_allocation_leaky_bucket(
     execution_arn: Optional[str] = None,
     request_payload: Optional[Dict[str, Any]] = None,
     correlation_id: Optional[str] = None,
-    tenant_id: str = 'unknown',
-    config: Optional[Dict[str, Any]] = None
+    tenant_id: str = "unknown",
+    config: Optional[Dict[str, Any]] = None,
 ):
     """
     Optimistic write-then-verify pattern for burst capacity.
@@ -213,30 +281,34 @@ def try_reserve_allocation_leaky_bucket(
     try:
         if config is None:
             config = dynamo_service.get_effective_capacity(model_id)
-        adaptive_shift = config.get('_adaptive_shift', 0)
+        adaptive_shift = config.get("_adaptive_shift", 0)
         if adaptive_shift:
-            logger.info(f"Adaptive capacity: shifted {adaptive_shift} tokens from burst to queue for model={model_id}")
-        burst_capacity = int(config['burst_capacity'])
-        burst_regen_rate = float(config['burst_regeneration_rate'])
+            logger.info(
+                f"Adaptive capacity: shifted {adaptive_shift} tokens from burst to queue for model={model_id}"
+            )
+        burst_capacity = int(config["burst_capacity"])
+        burst_regen_rate = float(config["burst_regeneration_rate"])
         # TPM config (optional — gracefully degrade if not configured)
-        tpm_burst_capacity = int(config.get('tpm_burst_capacity', 0))
-        tpm_burst_regen_rate = float(config.get('tpm_burst_regeneration_rate', 0))
-        burndown_rate = float(config.get('output_token_burndown_rate', 1.0))
+        tpm_burst_capacity = int(config.get("tpm_burst_capacity", 0))
+        tpm_burst_regen_rate = float(config.get("tpm_burst_regeneration_rate", 0))
+        burndown_rate = float(config.get("output_token_burndown_rate", 1.0))
         # Backend selects the admission shape. Absent ⇒ 'runtime' (legacy configs).
-        backend = config.get('backend', 'runtime')
+        backend = config.get("backend", "runtime")
         # RPM is optional per-config: next-gen runtime AND mantle no-RPM models set
         # rpm_quota_enabled=False. Absent ⇒ True (legacy RPM-gated configs).
-        rpm_quota_enabled = bool(config.get('rpm_quota_enabled', True))
+        rpm_quota_enabled = bool(config.get("rpm_quota_enabled", True))
         # Sub-minute (2s) rate cap. Requests/sec admitted per 2s window; smooths
         # instantaneous dispatch to ~the sustained quota rate. Absent ⇒ 0, which
         # makes put_allocation fall back to burst_regeneration_rate (≈ quota req/s).
-        short_window_rps = float(config.get('short_window_rps', 0))
+        short_window_rps = float(config.get("short_window_rps", 0))
         # Sliding-window admission horizons (future-state gate). Absent ⇒ 0, which
         # makes put_allocation fall back to its class defaults (2s / 15s).
-        short_window_sec = float(config.get('short_window_sec', 0))
-        long_window_sec = float(config.get('long_window_sec', 0))
+        short_window_sec = float(config.get("short_window_sec", 0))
+        long_window_sec = float(config.get("long_window_sec", 0))
     except KeyError:
-        raise ValueError(f"Model config not found: {model_id}. Run 'make create-config MODEL=...'")
+        raise ValueError(
+            f"Model config not found: {model_id}. Run 'make create-config MODEL=...'"
+        )
     except Exception as e:
         raise ValueError(f"Error loading model config for {model_id}: {e}")
 
@@ -249,15 +321,22 @@ def try_reserve_allocation_leaky_bucket(
 
     # Mantle backend uses the iTPM/oTPM split 3-way admission gate. Dispatch early
     # so the runtime path below stays byte-identical to its pre-Tier-2 behavior.
-    if backend == 'mantle':
+    if backend == "mantle":
         return _try_reserve_mantle(
-            dynamo_service=dynamo_service, model_id=model_id, request_id=request_id,
-            task_token=task_token, execution_arn=execution_arn,
-            request_payload=request_payload, correlation_id=correlation_id,
-            tenant_id=tenant_id, config=config,
-            burst_capacity=burst_capacity, burst_regen_rate=burst_regen_rate,
+            dynamo_service=dynamo_service,
+            model_id=model_id,
+            request_id=request_id,
+            task_token=task_token,
+            execution_arn=execution_arn,
+            request_payload=request_payload,
+            correlation_id=correlation_id,
+            tenant_id=tenant_id,
+            config=config,
+            burst_capacity=burst_capacity,
+            burst_regen_rate=burst_regen_rate,
             rpm_quota_enabled=rpm_quota_enabled,
-            short_window_sec=short_window_sec, long_window_sec=long_window_sec,
+            short_window_sec=short_window_sec,
+            long_window_sec=long_window_sec,
         )
 
     # Step 1b: Estimate TPM cost of this request.
@@ -276,18 +355,20 @@ def try_reserve_allocation_leaky_bucket(
     # does NOT enable that gate when burst is disabled.
     estimated_tokens = 0
     if request_payload:
-        prompt = request_payload.get('prompt', '')
-        max_tokens = request_payload.get('max_tokens', 100)
-        bytes_per_token = float(config.get('bytes_per_token', 4.0))
+        prompt = request_payload.get("prompt", "")
+        max_tokens = request_payload.get("max_tokens", 100)
+        bytes_per_token = float(config.get("bytes_per_token", 4.0))
         estimated_tokens = estimate_request_tokens(
             prompt=prompt,
             max_tokens=max_tokens,
             burndown_rate=burndown_rate,
-            bytes_per_token=bytes_per_token
+            bytes_per_token=bytes_per_token,
         )
-        logger.info(f"TPM estimate: {estimated_tokens} tokens "
-                    f"(input_bytes~{len((prompt or '').encode('utf-8'))}, max_tokens={max_tokens}, "
-                    f"burndown={burndown_rate}x, bytes_per_token={bytes_per_token})")
+        logger.info(
+            f"TPM estimate: {estimated_tokens} tokens "
+            f"(input_bytes~{len((prompt or '').encode('utf-8'))}, max_tokens={max_tokens}, "
+            f"burndown={burndown_rate}x, bytes_per_token={bytes_per_token})"
+        )
 
     # Step 2: Sliding-window read admission gate — see put_allocation(). One
     # strongly-consistent read of the last 15s of consumption records enforces both
@@ -297,9 +378,12 @@ def try_reserve_allocation_leaky_bucket(
     # actuals ~7.5s later by bedrock_processor). No counters, no transaction.
     try:
         allocation_result = dynamo_service.put_allocation(
-            model_id, request_id, estimated_tokens=estimated_tokens,
+            model_id,
+            request_id,
+            estimated_tokens=estimated_tokens,
             correlation_id=correlation_id,
-            burst_capacity=burst_capacity, burst_regen_rate=burst_regen_rate,
+            burst_capacity=burst_capacity,
+            burst_regen_rate=burst_regen_rate,
             tpm_burst_capacity=tpm_burst_capacity,
             tpm_burst_regen_rate=tpm_burst_regen_rate,
             rpm_quota_enabled=rpm_quota_enabled,
@@ -309,8 +393,10 @@ def try_reserve_allocation_leaky_bucket(
         )
     except BurstCapacityExceeded:
         # Atomic admission gate rejected — no consumption record written, no rollback needed
-        logger.info(f"Burst capacity gate rejected: request_id={request_id}, "
-                    f"correlation_id={correlation_id}, tenant_id={tenant_id}")
+        logger.info(
+            f"Burst capacity gate rejected: request_id={request_id}, "
+            f"correlation_id={correlation_id}, tenant_id={tenant_id}"
+        )
 
         queue_partition_id = model_id
         try:
@@ -323,9 +409,11 @@ def try_reserve_allocation_leaky_bucket(
                 tenant_id=tenant_id,
                 estimated_tokens=estimated_tokens,
             )
-            logger.info(f"Enqueued request (burst gate): request_id={request_id}, "
-                        f"model_id={queue_partition_id}, correlation_id={correlation_id}, "
-                        f"estimated_tokens={estimated_tokens}")
+            logger.info(
+                f"Enqueued request (burst gate): request_id={request_id}, "
+                f"model_id={queue_partition_id}, correlation_id={correlation_id}, "
+                f"estimated_tokens={estimated_tokens}"
+            )
         except Exception as e:
             # Log-then-raise: exception propagates to the caller (SFN retry/DLQ), which
             # owns terminal handling. Use warning here to avoid double-counting as a
@@ -333,35 +421,43 @@ def try_reserve_allocation_leaky_bucket(
             logger.warning(f"Failed to enqueue to single table: {e}")
             raise
 
-        return (False, {
-            'queued': True,
-            'reason': 'burst_capacity_gate',
-            'burst_capacity': burst_capacity,
-            'correlation_id': correlation_id,
-            'tenant_id': tenant_id
-        })
+        return (
+            False,
+            {
+                "queued": True,
+                "reason": "burst_capacity_gate",
+                "burst_capacity": burst_capacity,
+                "correlation_id": correlation_id,
+                "tenant_id": tenant_id,
+            },
+        )
 
-    timestamp_ms = allocation_result['timestamp_ms']
-    current_time = allocation_result['timestamp']
+    timestamp_ms = allocation_result["timestamp_ms"]
+    current_time = allocation_result["timestamp"]
 
     # The window-read gate already enforced both RPS and TPS against the 2s/15s
     # consumption windows. Reaching this point means the request had headroom in
     # both. There is no post-gate over-consumption check and nothing to roll back:
     # bounded over-admission from concurrent reads is accepted and caught downstream
     # by requeue-on-throttle; the 15s window horizon self-heals any drift.
-    logger.info(f"Capacity available (window-read gate), proceeding: request_id={request_id}, "
-                f"correlation_id={correlation_id}, tenant_id={tenant_id}, "
-                f"tpm_gated={tpm_burst_capacity > 0 and estimated_tokens > 0}")
-    return (True, {
-        'queued': False,
-        'available_capacity': burst_capacity,  # counter-gated; sentinel for EMF utilization math
-        'available_tpm': None,                 # no post-gate availability computed (counter-enforced)
-        'estimated_tokens': estimated_tokens,
-        'timestamp_ms': timestamp_ms,
-        'burst_capacity': burst_capacity,
-        'correlation_id': correlation_id,
-        'tenant_id': tenant_id
-    })
+    logger.info(
+        f"Capacity available (window-read gate), proceeding: request_id={request_id}, "
+        f"correlation_id={correlation_id}, tenant_id={tenant_id}, "
+        f"tpm_gated={tpm_burst_capacity > 0 and estimated_tokens > 0}"
+    )
+    return (
+        True,
+        {
+            "queued": False,
+            "available_capacity": burst_capacity,  # counter-gated; sentinel for EMF utilization math
+            "available_tpm": None,  # no post-gate availability computed (counter-enforced)
+            "estimated_tokens": estimated_tokens,
+            "timestamp_ms": timestamp_ms,
+            "burst_capacity": burst_capacity,
+            "correlation_id": correlation_id,
+            "tenant_id": tenant_id,
+        },
+    )
 
 
 def trigger_queue_processor(model_id: str, dynamo_service: DynamoService):
@@ -392,19 +488,25 @@ def trigger_queue_processor(model_id: str, dynamo_service: DynamoService):
     # Note: Multiple Budget Managers may reach here simultaneously if lock is stale
     # That's OK - Queue Processor uses atomic acquire_processor_lock() to ensure
     # only one wins
-    logger.info(f"No active processor detected, triggering Queue Processor: model={model_id}")
+    logger.info(
+        f"No active processor detected, triggering Queue Processor: model={model_id}"
+    )
 
     try:
         eventbridge.put_events(
-            Entries=[{
-                'Source': 'budget-manager',
-                'DetailType': 'QueueProcessingRequired',
-                'Detail': json.dumps({
-                    'semaphore_id': SEMAPHORE_ID,
-                    'model_id': model_id,
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-            }]
+            Entries=[
+                {
+                    "Source": "budget-manager",
+                    "DetailType": "QueueProcessingRequired",
+                    "Detail": json.dumps(
+                        {
+                            "semaphore_id": SEMAPHORE_ID,
+                            "model_id": model_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                    ),
+                }
+            ]
         )
         logger.info(f"Triggered queue processor via EventBridge for model: {model_id}")
     except Exception as e:
@@ -416,153 +518,165 @@ def handler(event, context):
     """Handle budget reservation using leaky bucket algorithm."""
     # Log only non-sensitive metadata — never the full event (it carries the user
     # prompt in request_payload, plus the task_token bearer credential).
-    logger.info(f"Budget Manager received: action={event.get('action')}, "
-                f"model_id={event.get('model_id')}, request_id={event.get('request_id')}, "
-                f"correlation_id={event.get('correlation_id')}, tenant_id={event.get('tenant_id')}")
+    logger.info(
+        f"Budget Manager received: action={event.get('action')}, "
+        f"model_id={event.get('model_id')}, request_id={event.get('request_id')}, "
+        f"correlation_id={event.get('correlation_id')}, tenant_id={event.get('tenant_id')}"
+    )
 
     # Initialize shared service
     dynamo_service = DynamoService(single_table_name=SINGLE_TABLE_NAME)
 
-    action = event.get('action', 'reserve')
+    action = event.get("action", "reserve")
 
-    if action == 'reserve':
-        request_id = event.get('request_id', 'unknown')
-        model_id = event.get('model_id')
-        task_token = event.get('task_token')
-        execution_arn = event.get('execution_arn')
+    if action == "reserve":
+        request_id = event.get("request_id", "unknown")
+        model_id = event.get("model_id")
+        task_token = event.get("task_token")
+        execution_arn = event.get("execution_arn")
 
         # P2: Generate correlation_id for distributed tracing
-        correlation_id = event.get('correlation_id') or str(uuid.uuid4())[:12]
+        correlation_id = event.get("correlation_id") or str(uuid.uuid4())[:12]
         # P0: Extract tenant_id for per-tenant observability
-        tenant_id = event.get('tenant_id', 'unknown')
+        tenant_id = event.get("tenant_id", "unknown")
 
-        logger.info(f"Reserve request: request_id={request_id}, correlation_id={correlation_id}, "
-                    f"tenant_id={tenant_id}, model_id={model_id}")
+        logger.info(
+            f"Reserve request: request_id={request_id}, correlation_id={correlation_id}, "
+            f"tenant_id={tenant_id}, model_id={model_id}"
+        )
 
         # Extract request_payload from event or construct from input
         # Supports both:
         #   - {request_payload: {prompt: "..."}} - explicit payload
         #   - {input: {prompt: "..."}} - loose params passed via Step Functions
-        request_payload = event.get('request_payload', {})
+        request_payload = event.get("request_payload", {})
         if not request_payload:
             # Try to extract from nested input object (passed by Step Functions)
-            input_obj = event.get('input', {})
-            if input_obj.get('prompt'):
+            input_obj = event.get("input", {})
+            if input_obj.get("prompt"):
                 request_payload = {
-                    'prompt': input_obj.get('prompt'),
-                    'max_tokens': input_obj.get('max_tokens', 100),
+                    "prompt": input_obj.get("prompt"),
+                    "max_tokens": input_obj.get("max_tokens", 100),
                     # Carry temperature only if explicitly provided; the Bedrock
                     # Processor strips it for next-gen Claude models regardless.
-                    **({'temperature': input_obj['temperature']}
-                       if 'temperature' in input_obj else {})
+                    **(
+                        {"temperature": input_obj["temperature"]}
+                        if "temperature" in input_obj
+                        else {}
+                    ),
                 }
-            elif input_obj.get('request_payload'):
-                request_payload = input_obj.get('request_payload')
+            elif input_obj.get("request_payload"):
+                request_payload = input_obj.get("request_payload")
 
         # Validate required fields
         if not model_id or not isinstance(model_id, str):
             error_msg = "model_id is required and must be a non-empty string"
             logger.error(error_msg)
-            return {
-                'statusCode': 400,
-                'error': error_msg,
-                'queued': False
-            }
+            return {"statusCode": 400, "error": error_msg, "queued": False}
 
         # Validate model_id format: alphanumeric, dots, hyphens, colons, underscores only
         # Max 256 chars (Bedrock model IDs are typically under 100 chars)
-        if len(model_id) > 256 or not re.match(r'^[a-zA-Z0-9._:/-]+$', model_id):
+        if len(model_id) > 256 or not re.match(r"^[a-zA-Z0-9._:/-]+$", model_id):
             error_msg = f"model_id format invalid: must be <= 256 chars, alphanumeric/dots/hyphens/colons/underscores/slashes only, got: {model_id[:64]!r}"
             logger.error(error_msg)
             _record_status(
-                dynamo_service, request_id=request_id, state='FAILED',
-                http_status=400, reason='validation_error',
-                correlation_id=correlation_id, tenant_id=tenant_id,
-                model_id=model_id, source='immediate',
+                dynamo_service,
+                request_id=request_id,
+                state="FAILED",
+                http_status=400,
+                reason="validation_error",
+                correlation_id=correlation_id,
+                tenant_id=tenant_id,
+                model_id=model_id,
+                source="immediate",
             )
-            return {
-                'statusCode': 400,
-                'error': error_msg,
-                'queued': False
-            }
+            return {"statusCode": 400, "error": error_msg, "queued": False}
 
         if not task_token:
             error_msg = "task_token is required for Step Functions callback"
             logger.error(error_msg)
-            return {
-                'statusCode': 400,
-                'error': error_msg,
-                'queued': False
-            }
+            return {"statusCode": 400, "error": error_msg, "queued": False}
 
         # Input validation: reject oversized payloads BEFORE consuming burst slots
         # Also pre-fetches config to avoid duplicate DynamoDB read in try_reserve_allocation_leaky_bucket()
         config = None
         try:
             config = dynamo_service.get_effective_capacity(model_id)
-            max_tokens_per_request = int(config.get('max_tokens_per_request', 4096))
+            max_tokens_per_request = int(config.get("max_tokens_per_request", 4096))
         except Exception:
             max_tokens_per_request = 4096  # Safe default if config unavailable
 
-        requested_max_tokens = int(request_payload.get('max_tokens', 100)) if request_payload else 100
+        requested_max_tokens = (
+            int(request_payload.get("max_tokens", 100)) if request_payload else 100
+        )
         if requested_max_tokens > max_tokens_per_request:
-            error_msg = (f"max_tokens ({requested_max_tokens}) exceeds limit ({max_tokens_per_request}). "
-                         f"Reduce max_tokens or update max_tokens_per_request in model config.")
+            error_msg = (
+                f"max_tokens ({requested_max_tokens}) exceeds limit ({max_tokens_per_request}). "
+                f"Reduce max_tokens or update max_tokens_per_request in model config."
+            )
             logger.error(f"Input validation rejected: {error_msg}")
             try:
                 sfn_client.send_task_failure(
-                    taskToken=task_token,
-                    error='InputValidationError',
-                    cause=error_msg
+                    taskToken=task_token, error="InputValidationError", cause=error_msg
                 )
             except Exception as sfn_err:
                 logger.error(f"Failed to send task failure callback: {sfn_err}")
             _record_status(
-                dynamo_service, request_id=request_id, state='FAILED',
-                http_status=400, reason='validation_error',
-                correlation_id=correlation_id, tenant_id=tenant_id,
-                model_id=model_id, source='immediate',
+                dynamo_service,
+                request_id=request_id,
+                state="FAILED",
+                http_status=400,
+                reason="validation_error",
+                correlation_id=correlation_id,
+                tenant_id=tenant_id,
+                model_id=model_id,
+                source="immediate",
             )
-            return {
-                'statusCode': 400,
-                'error': error_msg,
-                'queued': False
-            }
+            return {"statusCode": 400, "error": error_msg, "queued": False}
 
-        prompt_bytes = len((request_payload.get('prompt', '') if request_payload else '').encode('utf-8'))
+        prompt_bytes = len(
+            (request_payload.get("prompt", "") if request_payload else "").encode(
+                "utf-8"
+            )
+        )
         max_prompt_bytes = 1_048_576  # 1 MB
         if prompt_bytes > max_prompt_bytes:
-            error_msg = (f"Prompt size ({prompt_bytes} bytes) exceeds limit ({max_prompt_bytes} bytes / 1MB). "
-                         f"Reduce prompt size.")
+            error_msg = (
+                f"Prompt size ({prompt_bytes} bytes) exceeds limit ({max_prompt_bytes} bytes / 1MB). "
+                f"Reduce prompt size."
+            )
             logger.error(f"Input validation rejected: {error_msg}")
             try:
                 sfn_client.send_task_failure(
-                    taskToken=task_token,
-                    error='InputValidationError',
-                    cause=error_msg
+                    taskToken=task_token, error="InputValidationError", cause=error_msg
                 )
             except Exception as sfn_err:
                 logger.error(f"Failed to send task failure callback: {sfn_err}")
             _record_status(
-                dynamo_service, request_id=request_id, state='FAILED',
-                http_status=400, reason='validation_error',
-                correlation_id=correlation_id, tenant_id=tenant_id,
-                model_id=model_id, source='immediate',
+                dynamo_service,
+                request_id=request_id,
+                state="FAILED",
+                http_status=400,
+                reason="validation_error",
+                correlation_id=correlation_id,
+                tenant_id=tenant_id,
+                model_id=model_id,
+                source="immediate",
             )
-            return {
-                'statusCode': 400,
-                'error': error_msg,
-                'queued': False
-            }
+            return {"statusCode": 400, "error": error_msg, "queued": False}
 
         # Try to reserve using leaky bucket (with TPM estimation from payload)
         # Pass pre-fetched config to avoid duplicate get_effective_capacity() call
         success, metadata = try_reserve_allocation_leaky_bucket(
-            dynamo_service, model_id, request_id, task_token, execution_arn,
+            dynamo_service,
+            model_id,
+            request_id,
+            task_token,
+            execution_arn,
             request_payload=request_payload,
             correlation_id=correlation_id,
             tenant_id=tenant_id,
-            config=config
+            config=config,
         )
 
         # Emit EMF metrics for observability (never crash the handler).
@@ -579,17 +693,19 @@ def handler(event, context):
             emf = {
                 "_aws": {
                     "Timestamp": int(time.time() * 1000),
-                    "CloudWatchMetrics": [{
-                        "Namespace": "BedrockShaper",
-                        "Dimensions": [["ServiceName", "model_id"]],
-                        "Metrics": metric_defs
-                    }]
+                    "CloudWatchMetrics": [
+                        {
+                            "Namespace": "BedrockShaper",
+                            "Dimensions": [["ServiceName", "model_id"]],
+                            "Metrics": metric_defs,
+                        }
+                    ],
                 },
                 "ServiceName": "TrafficShaper",
                 "model_id": model_id,
                 "correlation_id": correlation_id,
                 "tenant_id": tenant_id,
-                "RequestQueued": 1 if metadata.get('queued') else 0,
+                "RequestQueued": 1 if metadata.get("queued") else 0,
             }
             print(json.dumps(emf))
         except Exception as e:
@@ -598,54 +714,56 @@ def handler(event, context):
         if success:
             # Capacity available - invoke Bedrock Processor async
             allocation_id = f"{metadata['timestamp_ms']}#{request_id}"
-            logger.info(f"Allocation successful, invoking Bedrock Processor async: request_id={request_id}, "
-                        f"model_id={model_id}, correlation_id={correlation_id}, tenant_id={tenant_id}")
+            logger.info(
+                f"Allocation successful, invoking Bedrock Processor async: request_id={request_id}, "
+                f"model_id={model_id}, correlation_id={correlation_id}, tenant_id={tenant_id}"
+            )
 
             if not request_payload:
                 # This is a bug: capacity was reserved but no payload exists to send.
                 # Send task failure callback and return error instead of silently fabricating a prompt.
-                error_msg = (f"BUG: request_payload is empty after capacity reservation. "
-                             f"request_id={request_id}, model_id={model_id}")
+                error_msg = (
+                    f"BUG: request_payload is empty after capacity reservation. "
+                    f"request_id={request_id}, model_id={model_id}"
+                )
                 logger.error(error_msg)
                 try:
                     sfn_client.send_task_failure(
                         taskToken=task_token,
-                        error='MissingRequestPayload',
-                        cause=error_msg
+                        error="MissingRequestPayload",
+                        cause=error_msg,
                     )
                 except Exception as sfn_err:
                     logger.error(f"Failed to send task failure callback: {sfn_err}")
-                return {
-                    'statusCode': 500,
-                    'error': error_msg,
-                    'request_id': request_id
-                }
+                return {"statusCode": 500, "error": error_msg, "request_id": request_id}
 
             # Invoke Bedrock Processor asynchronously with direct payload
             lambda_client.invoke(
                 FunctionName=BEDROCK_PROCESSOR_ARN,
-                InvocationType='Event',  # Async invocation
-                Payload=json.dumps({
-                    'task_token': task_token,
-                    'model_id': model_id,
-                    'request_id': request_id,
-                    'request_payload': request_payload,
-                    'allocation_id': allocation_id,
-                    'correlation_id': correlation_id,
-                    'tenant_id': tenant_id
-                })
+                InvocationType="Event",  # Async invocation
+                Payload=json.dumps(
+                    {
+                        "task_token": task_token,
+                        "model_id": model_id,
+                        "request_id": request_id,
+                        "request_payload": request_payload,
+                        "allocation_id": allocation_id,
+                        "correlation_id": correlation_id,
+                        "tenant_id": tenant_id,
+                    }
+                ),
             )
 
             # Lambda exits, Step Functions waits for callback from processor
             return {
-                'statusCode': 200,
-                'body': {
-                    'message': 'Bedrock processor invoked async',
-                    'request_id': request_id,
-                    'allocation_id': allocation_id,
-                    'correlation_id': correlation_id,
-                    'tenant_id': tenant_id
-                }
+                "statusCode": 200,
+                "body": {
+                    "message": "Bedrock processor invoked async",
+                    "request_id": request_id,
+                    "allocation_id": allocation_id,
+                    "correlation_id": correlation_id,
+                    "tenant_id": tenant_id,
+                },
             }
         else:
             # Queued - trigger queue processor
@@ -655,10 +773,15 @@ def handler(event, context):
             # mantle _enqueue_on_reject path — both surface here as success=False. The
             # true terminal (SUCCEEDED/FAILED) is written later when the queue drains.
             _record_status(
-                dynamo_service, request_id=request_id, state='QUEUED',
-                http_status=202, reason=None,
-                correlation_id=correlation_id, tenant_id=tenant_id,
-                model_id=model_id, source='queued',
+                dynamo_service,
+                request_id=request_id,
+                state="QUEUED",
+                http_status=202,
+                reason=None,
+                correlation_id=correlation_id,
+                tenant_id=tenant_id,
+                model_id=model_id,
+                source="queued",
             )
 
             try:
@@ -667,31 +790,30 @@ def handler(event, context):
                 logger.error(f"Failed to trigger processor: {e}")
                 # Don't fail the request if trigger fails
 
-            logger.info(f"Request enqueued, awaiting processing: request_id={request_id}, "
-                        f"correlation_id={correlation_id}, tenant_id={tenant_id}")
+            logger.info(
+                f"Request enqueued, awaiting processing: request_id={request_id}, "
+                f"correlation_id={correlation_id}, tenant_id={tenant_id}"
+            )
             return {
-                'statusCode': 200,
-                'body': {
-                    'message': 'Request enqueued, awaiting processing',
-                    'request_id': request_id,
-                    'correlation_id': correlation_id,
-                    'tenant_id': tenant_id
-                }
+                "statusCode": 200,
+                "body": {
+                    "message": "Request enqueued, awaiting processing",
+                    "request_id": request_id,
+                    "correlation_id": correlation_id,
+                    "tenant_id": tenant_id,
+                },
             }
 
-    elif action == 'release':
+    elif action == "release":
         # No-op in leaky bucket (TTL handles cleanup)
         # Keep for Step Functions compatibility
         return {
-            'statusCode': 200,
-            'body': {
-                'message': 'Release acknowledged (TTL handles cleanup)',
-                'allocation_id': event.get('allocation_id')
-            }
+            "statusCode": 200,
+            "body": {
+                "message": "Release acknowledged (TTL handles cleanup)",
+                "allocation_id": event.get("allocation_id"),
+            },
         }
 
     else:
-        return {
-            'statusCode': 400,
-            'body': {'error': f'Unknown action: {action}'}
-        }
+        return {"statusCode": 400, "body": {"error": f"Unknown action: {action}"}}

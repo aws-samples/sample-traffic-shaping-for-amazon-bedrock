@@ -41,19 +41,21 @@ from botocore.config import Config
 import config_loader
 
 # Add lambda layer to Python path to import shared_service
-layer_path = os.path.join(os.path.dirname(__file__), '..', 'infrastructure', 'lambda_layer', 'python')
+layer_path = os.path.join(
+    os.path.dirname(__file__), "..", "infrastructure", "lambda_layer", "python"
+)
 sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
 
 # Model ID aliases (kept in sync with test_direct_bedrock.py)
 MODEL_ALIASES = {
-    'opus-5': 'us.anthropic.claude-opus-5',
-    'sonnet-5': 'us.anthropic.claude-sonnet-5',
-    'nova-2-lite': 'us.amazon.nova-2-lite-v1:0',
-    'nova-lite': 'us.amazon.nova-lite-v1:0',
-    'nova-lite-sr': 'amazon.nova-lite-v1:0',
-    'nova-pro': 'us.amazon.nova-pro-v1:0',
+    "opus-5": "us.anthropic.claude-opus-5",
+    "sonnet-5": "us.anthropic.claude-sonnet-5",
+    "nova-2-lite": "us.amazon.nova-2-lite-v1:0",
+    "nova-lite": "us.amazon.nova-lite-v1:0",
+    "nova-lite-sr": "amazon.nova-lite-v1:0",
+    "nova-pro": "us.amazon.nova-pro-v1:0",
 }
 
 # Rough token estimate: ~4 chars/token for prompt, plus max_tokens for output.
@@ -122,7 +124,7 @@ class LeakyBucket:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Load test direct Bedrock calls with a client-side leaky bucket (paced)',
+        description="Load test direct Bedrock calls with a client-side leaky bucket (paced)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 This test paces requests client-side to stay under quota, waiting (leaking)
@@ -133,22 +135,58 @@ test_direct_bedrock_retry.py (retry+jitter), and test_budget_manager.py
 Examples:
   python scripts/test_direct_bedrock_leaky.py --model nova-lite --num-requests 1000 --prompt-size 60000 --tpm-limit 4000000
   python scripts/test_direct_bedrock_leaky.py --model jamba --num-requests 150 --rpm-limit 100
-        """
+        """,
     )
-    parser.add_argument('--model', type=str, help='Model ID or alias (nova-2-lite, sonnet-5, opus-5)')
-    parser.add_argument('--num-requests', type=int, help='Number of requests (default: config.env)')
-    parser.add_argument('--max-workers', type=int, help='Concurrent threads (default: config.env)')
-    parser.add_argument('--submission-duration', type=int, help='Submission spread in seconds (default: config.env)')
-    parser.add_argument('--prompt-size', type=int, default=None, help='Prompt size in chars (for TPM testing)')
-    parser.add_argument('--max-tokens', type=int, default=20, help='max_tokens per request (default: 20)')
-    parser.add_argument('--tpm-limit', type=int, default=None,
-                        help='TPM quota to pace against (token-bucket capacity). Use for TPM-bound models.')
-    parser.add_argument('--rpm-limit', type=int, default=None,
-                        help='RPM quota to pace against. Use for RPM-bound models. One of --tpm-limit/--rpm-limit required.')
-    parser.add_argument('--max-wait', type=float, default=300.0,
-                        help='Max seconds a request waits in the bucket before counting as failed (default: 300)')
-    parser.add_argument('--headroom', type=float, default=1.0,
-                        help='Fraction of quota the pacer targets (e.g. 0.9 = pace to 90%% of quota). Default 1.0.')
+    parser.add_argument(
+        "--model", type=str, help="Model ID or alias (nova-2-lite, sonnet-5, opus-5)"
+    )
+    parser.add_argument(
+        "--num-requests", type=int, help="Number of requests (default: config.env)"
+    )
+    parser.add_argument(
+        "--max-workers", type=int, help="Concurrent threads (default: config.env)"
+    )
+    parser.add_argument(
+        "--submission-duration",
+        type=int,
+        help="Submission spread in seconds (default: config.env)",
+    )
+    parser.add_argument(
+        "--prompt-size",
+        type=int,
+        default=None,
+        help="Prompt size in chars (for TPM testing)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=20,
+        help="max_tokens per request (default: 20)",
+    )
+    parser.add_argument(
+        "--tpm-limit",
+        type=int,
+        default=None,
+        help="TPM quota to pace against (token-bucket capacity). Use for TPM-bound models.",
+    )
+    parser.add_argument(
+        "--rpm-limit",
+        type=int,
+        default=None,
+        help="RPM quota to pace against. Use for RPM-bound models. One of --tpm-limit/--rpm-limit required.",
+    )
+    parser.add_argument(
+        "--max-wait",
+        type=float,
+        default=300.0,
+        help="Max seconds a request waits in the bucket before counting as failed (default: 300)",
+    )
+    parser.add_argument(
+        "--headroom",
+        type=float,
+        default=1.0,
+        help="Fraction of quota the pacer targets (e.g. 0.9 = pace to 90%% of quota). Default 1.0.",
+    )
     return parser.parse_args()
 
 
@@ -156,23 +194,37 @@ Examples:
 config = config_loader.get_config_with_aws_check()
 args = parse_args()
 
-AWS_REGION = config.get('AWS_REGION', 'us-east-1')
-BEDROCK_MODEL_ID = resolve_model_id(args.model) if args.model else config.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
-SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
-NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get('NUM_REQUESTS', '125'))
-MAX_WORKERS = args.max_workers if args.max_workers else int(config.get('MAX_WORKERS', '10'))
-SUBMISSION_DURATION = args.submission_duration if args.submission_duration is not None else int(config.get('SUBMISSION_DURATION', '10'))
+AWS_REGION = config.get("AWS_REGION", "us-east-1")
+BEDROCK_MODEL_ID = (
+    resolve_model_id(args.model)
+    if args.model
+    else config.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
+)
+SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
+NUM_REQUESTS = (
+    args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
+)
+MAX_WORKERS = (
+    args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
+)
+SUBMISSION_DURATION = (
+    args.submission_duration
+    if args.submission_duration is not None
+    else int(config.get("SUBMISSION_DURATION", "10"))
+)
 PROMPT_SIZE = args.prompt_size
 MAX_TOKENS = args.max_tokens
 MAX_WAIT = args.max_wait
 HEADROOM = args.headroom
 
 if args.tpm_limit is None and args.rpm_limit is None:
-    print("ERROR: one of --tpm-limit or --rpm-limit is required (the quota to pace against).")
+    print(
+        "ERROR: one of --tpm-limit or --rpm-limit is required (the quota to pace against)."
+    )
     sys.exit(1)
 
-PACE_MODE = 'TPM' if args.tpm_limit is not None else 'RPM'
-QUOTA_PER_MIN = (args.tpm_limit if PACE_MODE == 'TPM' else args.rpm_limit) * HEADROOM
+PACE_MODE = "TPM" if args.tpm_limit is not None else "RPM"
+QUOTA_PER_MIN = (args.tpm_limit if PACE_MODE == "TPM" else args.rpm_limit) * HEADROOM
 
 # Validate model config exists
 dynamo_service = DynamoService(single_table_name=SINGLE_TABLE_NAME)
@@ -184,7 +236,7 @@ bucket = LeakyBucket(QUOTA_PER_MIN)
 def build_prompt(request_num, prompt_size=None):
     base = f'Say "Request {request_num} completed"'
     if prompt_size and prompt_size > len(base):
-        padding = ' This is padding text for TPM validation testing.'
+        padding = " This is padding text for TPM validation testing."
         reps = (prompt_size - len(base)) // len(padding) + 1
         base = (base + padding * reps)[:prompt_size]
     return base
@@ -192,7 +244,7 @@ def build_prompt(request_num, prompt_size=None):
 
 def estimate_cost(prompt: str) -> float:
     """Estimate the pacing cost of a request in the active mode."""
-    if PACE_MODE == 'RPM':
+    if PACE_MODE == "RPM":
         return 1.0
     # TPM: input tokens (prompt) + output tokens (max_tokens ceiling).
     return (len(prompt) / CHARS_PER_TOKEN) + MAX_TOKENS
@@ -208,33 +260,47 @@ def make_bedrock_call_leaky(bedrock, request_num):
     if waited is None:
         # Could not be admitted within max_wait — leaky bucket "drops" it.
         return {
-            'request_num': request_num, 'success': False, 'error': 'bucket_timeout',
-            'wait_time': MAX_WAIT, 'total_time': time.time() - start_time,
+            "request_num": request_num,
+            "success": False,
+            "error": "bucket_timeout",
+            "wait_time": MAX_WAIT,
+            "total_time": time.time() - start_time,
         }
 
     try:
         bedrock.converse(
             modelId=BEDROCK_MODEL_ID,
-            messages=[{'role': 'user', 'content': [{'text': prompt}]}],
-            inferenceConfig={'maxTokens': MAX_TOKENS},
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"maxTokens": MAX_TOKENS},
         )
         return {
-            'request_num': request_num, 'success': True, 'error': None,
-            'wait_time': waited, 'total_time': time.time() - start_time,
+            "request_num": request_num,
+            "success": True,
+            "error": None,
+            "wait_time": waited,
+            "total_time": time.time() - start_time,
         }
     except ClientError as e:
-        error_code = e.response['Error']['Code']
-        is_throttle = error_code in ['ThrottlingException', 'TooManyRequestsException',
-                                     'ServiceQuotaExceededException']
+        error_code = e.response["Error"]["Code"]
+        is_throttle = error_code in [
+            "ThrottlingException",
+            "TooManyRequestsException",
+            "ServiceQuotaExceededException",
+        ]
         return {
-            'request_num': request_num, 'success': False,
-            'error': '429' if is_throttle else error_code,
-            'wait_time': waited, 'total_time': time.time() - start_time,
+            "request_num": request_num,
+            "success": False,
+            "error": "429" if is_throttle else error_code,
+            "wait_time": waited,
+            "total_time": time.time() - start_time,
         }
     except Exception as e:
         return {
-            'request_num': request_num, 'success': False, 'error': str(e),
-            'wait_time': waited, 'total_time': time.time() - start_time,
+            "request_num": request_num,
+            "success": False,
+            "error": str(e),
+            "wait_time": waited,
+            "total_time": time.time() - start_time,
         }
 
 
@@ -245,58 +311,77 @@ def test_direct_bedrock_leaky():
     print(f"Model: {BEDROCK_MODEL_ID}")
     print(f"Total requests: {NUM_REQUESTS}")
     print(f"Concurrency: {MAX_WORKERS} threads")
-    print(f"Pacing: {PACE_MODE} bucket, capacity {QUOTA_PER_MIN:,.0f}/min (headroom {HEADROOM:.0%})")
+    print(
+        f"Pacing: {PACE_MODE} bucket, capacity {QUOTA_PER_MIN:,.0f}/min (headroom {HEADROOM:.0%})"
+    )
     print(f"Prompt size: {PROMPT_SIZE or '~30'} chars, max_tokens: {MAX_TOKENS}")
-    print(f"Per-request cost estimate: {estimate_cost(build_prompt(0, PROMPT_SIZE)):,.0f} {PACE_MODE} units")
+    print(
+        f"Per-request cost estimate: {estimate_cost(build_prompt(0, PROMPT_SIZE)):,.0f} {PACE_MODE} units"
+    )
     print(f"Max wait per request: {MAX_WAIT:.0f}s")
 
     if SUBMISSION_DURATION > 0:
-        print(f"Submission: {SUBMISSION_DURATION}s duration ({NUM_REQUESTS/SUBMISSION_DURATION:.1f} req/s)")
+        print(
+            f"Submission: {SUBMISSION_DURATION}s duration ({NUM_REQUESTS/SUBMISSION_DURATION:.1f} req/s)"
+        )
     else:
         print(f"Submission: Instant spike (all at once)")
     print(f"{'='*60}\n")
 
     # No SDK retries — the bucket is the only rate control.
-    config_obj = Config(retries={'max_attempts': 1, 'mode': 'standard'})
-    bedrock = boto3.client('bedrock-runtime', region_name=AWS_REGION, config=config_obj)
+    config_obj = Config(retries={"max_attempts": 1, "mode": "standard"})
+    bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION, config=config_obj)
 
     results = []
     start_time = time.time()
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = []
-        delay_between_requests = SUBMISSION_DURATION / NUM_REQUESTS if SUBMISSION_DURATION > 0 else 0
+        delay_between_requests = (
+            SUBMISSION_DURATION / NUM_REQUESTS if SUBMISSION_DURATION > 0 else 0
+        )
 
         for i in range(NUM_REQUESTS):
             futures.append(executor.submit(make_bedrock_call_leaky, bedrock, i))
             if delay_between_requests > 0:
                 time.sleep(delay_between_requests)
-                print(f"  Submitted {i+1}/{NUM_REQUESTS} ({(i+1)/NUM_REQUESTS*100:.0f}%)", end='\r')
+                print(
+                    f"  Submitted {i+1}/{NUM_REQUESTS} ({(i+1)/NUM_REQUESTS*100:.0f}%)",
+                    end="\r",
+                )
 
         if SUBMISSION_DURATION > 0:
-            print(f"\n\nAll requests submitted. Waiting for bucket drain + completion...")
+            print(
+                f"\n\nAll requests submitted. Waiting for bucket drain + completion..."
+            )
 
         completed = 0
         for future in as_completed(futures):
             result = future.result()
             results.append(result)
             completed += 1
-            status = "ok" if result['success'] else f"FAIL {result['error']}"
-            print(f"  Completed {completed}/{NUM_REQUESTS}: {status}", end='\r')
+            status = "ok" if result["success"] else f"FAIL {result['error']}"
+            print(f"  Completed {completed}/{NUM_REQUESTS}: {status}", end="\r")
 
     total_time = time.time() - start_time
 
     # Statistics
-    success_count = sum(1 for r in results if r['success'])
-    throttle_count = sum(1 for r in results if r['error'] == '429')
-    timeout_count = sum(1 for r in results if r['error'] == 'bucket_timeout')
-    other_errors = sum(1 for r in results if r['error'] and r['error'] not in ('429', 'bucket_timeout'))
+    success_count = sum(1 for r in results if r["success"])
+    throttle_count = sum(1 for r in results if r["error"] == "429")
+    timeout_count = sum(1 for r in results if r["error"] == "bucket_timeout")
+    other_errors = sum(
+        1 for r in results if r["error"] and r["error"] not in ("429", "bucket_timeout")
+    )
 
-    times = sorted(r['total_time'] for r in results)
-    waits = sorted(r['wait_time'] for r in results)
+    times = sorted(r["total_time"] for r in results)
+    waits = sorted(r["wait_time"] for r in results)
 
     def pct(sorted_list, p):
-        return sorted_list[min(len(sorted_list) - 1, int(len(sorted_list) * p))] if sorted_list else 0
+        return (
+            sorted_list[min(len(sorted_list) - 1, int(len(sorted_list) * p))]
+            if sorted_list
+            else 0
+        )
 
     print(f"\n\n{'='*60}")
     print(f"RESULTS: Direct Bedrock with Client-Side Leaky Bucket")
@@ -305,9 +390,15 @@ def test_direct_bedrock_leaky():
     print(f"  Success Rate")
     print(f"  {'-'*40}")
     print(f"  Total requests:       {NUM_REQUESTS}")
-    print(f"  Successful:           {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)")
-    print(f"  Throttled (429):      {throttle_count} ({throttle_count/NUM_REQUESTS*100:.1f}%)")
-    print(f"  Dropped (bucket wait):{timeout_count} ({timeout_count/NUM_REQUESTS*100:.1f}%)")
+    print(
+        f"  Successful:           {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)"
+    )
+    print(
+        f"  Throttled (429):      {throttle_count} ({throttle_count/NUM_REQUESTS*100:.1f}%)"
+    )
+    print(
+        f"  Dropped (bucket wait):{timeout_count} ({timeout_count/NUM_REQUESTS*100:.1f}%)"
+    )
     print(f"  Other errors:         {other_errors}")
     print(f"")
     print(f"  API call amplification: 1x (no retries — same as no-retry and shaper)")
@@ -329,12 +420,20 @@ def test_direct_bedrock_leaky():
     print(f"  Total wall time:      {total_time:.1f}s")
     print(f"{'='*60}")
     print(f"\n  Compare against Traffic Shaper:")
-    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'jamba'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
+    print(
+        f"  make test-budget-manager ARGS=\"--model {args.model or 'jamba'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\""
+    )
     if throttle_count > 0:
-        print(f"\n  {throttle_count} requests STILL throttled despite pacing — client-side buckets")
-        print(f"  drift from Bedrock's real quota clock and can't coordinate across clients.")
+        print(
+            f"\n  {throttle_count} requests STILL throttled despite pacing — client-side buckets"
+        )
+        print(
+            f"  drift from Bedrock's real quota clock and can't coordinate across clients."
+        )
     if timeout_count > 0:
-        print(f"  {timeout_count} requests dropped after waiting {MAX_WAIT:.0f}s — no durable queue, unlike the shaper.")
+        print(
+            f"  {timeout_count} requests dropped after waiting {MAX_WAIT:.0f}s — no durable queue, unlike the shaper."
+        )
     print()
 
 

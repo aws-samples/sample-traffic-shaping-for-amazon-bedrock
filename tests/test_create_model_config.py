@@ -4,11 +4,13 @@ from decimal import Decimal
 import pathlib
 import sys
 
-
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from create_model_config import calculate_config, configure_mantle_queue_only  # noqa: E402
+from create_model_config import (
+    calculate_config,
+    configure_mantle_queue_only,
+)  # noqa: E402
 
 
 def test_mantle_configuration_disables_every_immediate_path():

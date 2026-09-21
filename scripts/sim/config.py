@@ -18,6 +18,7 @@ Every quota parameter in this file is in NATURAL UNITS (RPM, TPM).  Per-second
 rates are derived properties, never stored directly.  This matches how operators
 reason about Bedrock service quotas in the console.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -27,11 +28,12 @@ from typing import Optional, Dict
 # Bedrock models are capped at 200k input context.  We add a flat output
 # headroom to get the maximum plausible total tokens a single request can consume.
 
-MAX_INPUT_TOKENS: int = 200_000       # Bedrock context window cap
-MAX_TOTAL_TOKENS: int = 204_000       # 200k input + 4k output safety margin
+MAX_INPUT_TOKENS: int = 200_000  # Bedrock context window cap
+MAX_TOTAL_TOKENS: int = 204_000  # 200k input + 4k output safety margin
 
 
 # ── SimQuota ───────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class SimQuota:
@@ -47,11 +49,12 @@ class SimQuota:
     slice because that is what test_queue_processor_sim.py needs.  The budget
     manager sim will expose its own cap properties when implemented.
     """
-    rpm: int                     # total RPM quota (or 0 if token-quota-only model)
-    tpm: int                     # total TPM quota
-    burst_fraction: float = 0.50 # fraction allocated to budget manager (burst path)
-    queue_fraction: float = 0.45 # fraction allocated to queue processor (drain path)
-    buffer_fraction: float = 0.05 # safety holdback — neither algorithm uses this
+
+    rpm: int  # total RPM quota (or 0 if token-quota-only model)
+    tpm: int  # total TPM quota
+    burst_fraction: float = 0.50  # fraction allocated to budget manager (burst path)
+    queue_fraction: float = 0.45  # fraction allocated to queue processor (drain path)
+    buffer_fraction: float = 0.05  # safety holdback — neither algorithm uses this
     notes: str = ""
 
     # ── Split allocations (mirrors calculate_config() arithmetic) ──────────────
@@ -149,6 +152,7 @@ class SimQuota:
 
 # ── WorkloadPreset ─────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class WorkloadPreset:
     """
@@ -164,6 +168,7 @@ class WorkloadPreset:
 
     All totals are capped at MAX_TOTAL_TOKENS.
     """
+
     description: str
 
     # Base population: input token range + flat output estimate
@@ -175,7 +180,7 @@ class WorkloadPreset:
     spike_input_low: int = 0
     spike_input_high: int = 0
     spike_output: int = 0
-    spike_pct: float = 0.0   # fraction of requests that are spike items (0–1)
+    spike_pct: float = 0.0  # fraction of requests that are spike items (0–1)
 
     @property
     def is_spike(self) -> bool:
@@ -221,10 +226,10 @@ class WorkloadPreset:
 # results match what would be deployed: burst=50%, queue=45%, buffer=5%.
 
 QUOTA_PROFILES: Dict[str, SimQuota] = {
-
     # ── Smoke / dev ────────────────────────────────────────────────────────────
     "smoke": SimQuota(
-        rpm=100, tpm=100_000,
+        rpm=100,
+        tpm=100_000,
         notes=(
             "Smoke test — intentionally small quota to verify the script runs. "
             "Only rpm-push (small items) is exercised at smoke scale; "
@@ -232,47 +237,51 @@ QUOTA_PROFILES: Dict[str, SimQuota] = {
         ),
     ),
     "dev": SimQuota(
-        rpm=600, tpm=100_000,
+        rpm=600,
+        tpm=100_000,
         notes="Development baseline — matches original test_dispatch_algorithm_sim.py",
     ),
-
     # ── Production target ──────────────────────────────────────────────────────
     "prod": SimQuota(
-        rpm=2_000, tpm=4_000_000,
+        rpm=2_000,
+        tpm=4_000_000,
         notes=(
             "Production target: 2,000 RPM / 4M TPM (total). "
             "Queue processor slice: 900 RPM / 1.8M TPM (45%). "
             "Budget manager slice: 1,000 RPM / 2M TPM (50%)."
         ),
     ),
-
     # ── Claude on-demand limits ────────────────────────────────────────────────
     "claude-haiku": SimQuota(
-        rpm=1_000, tpm=100_000,
+        rpm=1_000,
+        tpm=100_000,
         notes="Claude 3 Haiku on-demand",
     ),
     "claude-sonnet": SimQuota(
-        rpm=1_000, tpm=200_000,
+        rpm=1_000,
+        tpm=200_000,
         notes="Claude 3.5 Sonnet on-demand",
     ),
     "claude-opus": SimQuota(
-        rpm=100, tpm=10_000,
+        rpm=100,
+        tpm=10_000,
         notes="Claude 3 Opus on-demand — very tight quotas, similar to smoke at small scale",
     ),
-
     # ── Amazon Nova on-demand limits ───────────────────────────────────────────
     "nova-lite": SimQuota(
-        rpm=1_000, tpm=1_000_000,
+        rpm=1_000,
+        tpm=1_000_000,
         notes="Amazon Nova Lite — high TPM, token-heavy workloads stay TPM-bound",
     ),
     "nova-pro": SimQuota(
-        rpm=400, tpm=400_000,
+        rpm=400,
+        tpm=400_000,
         notes="Amazon Nova Pro",
     ),
-
     # ── Provisioned throughput representative ──────────────────────────────────
     "prod-high": SimQuota(
-        rpm=2_000, tpm=500_000,
+        rpm=2_000,
+        tpm=500_000,
         notes="Representative provisioned throughput tier",
     ),
 }
@@ -293,16 +302,16 @@ QUOTA_PROFILES: Dict[str, SimQuota] = {
 #   mixed-spike avg ~18.7k tok → TPM-bound at 1.6 RPS,  RPM-bound at 15 → TPM wins
 
 WORKLOAD_PRESETS: Dict[str, WorkloadPreset] = {
-
     "rpm-push": WorkloadPreset(
         description=(
             "Small requests (150–1,000 input + 200 output ≈ 350–1,200 total tokens). "
             "At prod quotas the RPM window saturates before the TPM window; "
             "expected drain rate ≈ queue RPS (15 RPS at prod)."
         ),
-        input_low=150,   input_high=1_000,  output_tokens=200,
+        input_low=150,
+        input_high=1_000,
+        output_tokens=200,
     ),
-
     "tpm-push": WorkloadPreset(
         description=(
             "Large requests (20k–100k input + 2k output ≈ 22k–102k total tokens). "
@@ -310,9 +319,10 @@ WORKLOAD_PRESETS: Dict[str, WorkloadPreset] = {
             "TOKEN-AWARE uses the oversized-item drain path. "
             "Expected drain rate ≈ queue_tpm_rate / avg_tokens (~0.5 RPS at prod)."
         ),
-        input_low=20_000, input_high=100_000, output_tokens=2_000,
+        input_low=20_000,
+        input_high=100_000,
+        output_tokens=2_000,
     ),
-
     "nova-live": WorkloadPreset(
         description=(
             "Nova-2-Lite live load-test profile: ~6,200 total tokens/req "
@@ -321,9 +331,10 @@ WORKLOAD_PRESETS: Dict[str, WorkloadPreset] = {
             "but NOT so token-heavy that a single request saturates the 2s window, "
             "so counter-item contention (not capacity) is the throughput lever."
         ),
-        input_low=5_800, input_high=6_200, output_tokens=200,
+        input_low=5_800,
+        input_high=6_200,
+        output_tokens=200,
     ),
-
     "mixed-spike": WorkloadPreset(
         description=(
             "Medium base traffic (5k–15k input + 1k output ≈ 6k–16k total tokens) "
@@ -332,14 +343,19 @@ WORKLOAD_PRESETS: Dict[str, WorkloadPreset] = {
             "pause for those while flowing medium items through at the TPM-paced rate. "
             "Expected drain rate ≈ 1.6 RPS at prod."
         ),
-        input_low=5_000,  input_high=15_000, output_tokens=1_000,
-        spike_input_low=20_000, spike_input_high=100_000, spike_output=2_000,
+        input_low=5_000,
+        input_high=15_000,
+        output_tokens=1_000,
+        spike_input_low=20_000,
+        spike_input_high=100_000,
+        spike_output=2_000,
         spike_pct=0.15,
     ),
 }
 
 
 # ── SimConfig ──────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class SimConfig:
@@ -356,6 +372,7 @@ class SimConfig:
         (c) TPM rate:              queue_tpm_rate / avg_tokens
     The binding constraint is whichever gives the lowest RPS.
     """
+
     quota: SimQuota
     workload_name: str
     workload: WorkloadPreset
@@ -385,20 +402,20 @@ class SimConfig:
                                     fake clock regardless of quota headroom; at
                                     high RPM quotas this becomes the binding limit.
         """
-        avg_tok      = max(1.0, self.workload.avg_total_tokens())
-        rpm_60s      = self.quota.queue_rps
-        rpm_2s       = self.quota.rpm_2s_cap / self.short_window_sec
-        tpm_lim      = self.quota.queue_tpm_rate / avg_tok
+        avg_tok = max(1.0, self.workload.avg_total_tokens())
+        rpm_60s = self.quota.queue_rps
+        rpm_2s = self.quota.rpm_2s_cap / self.short_window_sec
+        tpm_lim = self.quota.queue_tpm_rate / avg_tok
         overhead_lim = 1000.0 / self.dispatch_overhead_ms
         return min(rpm_60s, rpm_2s, tpm_lim, overhead_lim)
 
     @property
     def binding_constraint(self) -> str:
         """Which dimension limits throughput: RPM, RPM-2s, TPM, or OVERHEAD."""
-        avg_tok      = max(1.0, self.workload.avg_total_tokens())
-        rpm_60s      = self.quota.queue_rps
-        rpm_2s       = self.quota.rpm_2s_cap / self.short_window_sec
-        tpm_lim      = self.quota.queue_tpm_rate / avg_tok
+        avg_tok = max(1.0, self.workload.avg_total_tokens())
+        rpm_60s = self.quota.queue_rps
+        rpm_2s = self.quota.rpm_2s_cap / self.short_window_sec
+        tpm_lim = self.quota.queue_tpm_rate / avg_tok
         overhead_lim = 1000.0 / self.dispatch_overhead_ms
         mn = min(rpm_60s, rpm_2s, tpm_lim, overhead_lim)
         # Overhead binds only when it is strictly tighter than the quota limits.
@@ -433,6 +450,7 @@ class SimConfig:
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
+
 
 def build_config(
     profile: str = "prod",
@@ -480,9 +498,15 @@ def build_config(
     quota = SimQuota(
         rpm=rpm_override if rpm_override is not None else base.rpm,
         tpm=tpm_override if tpm_override is not None else base.tpm,
-        burst_fraction=burst_fraction   if burst_fraction   is not None else base.burst_fraction,
-        queue_fraction=queue_fraction   if queue_fraction   is not None else base.queue_fraction,
-        buffer_fraction=buffer_fraction if buffer_fraction  is not None else base.buffer_fraction,
+        burst_fraction=(
+            burst_fraction if burst_fraction is not None else base.burst_fraction
+        ),
+        queue_fraction=(
+            queue_fraction if queue_fraction is not None else base.queue_fraction
+        ),
+        buffer_fraction=(
+            buffer_fraction if buffer_fraction is not None else base.buffer_fraction
+        ),
         notes=base.notes,
     )
 
