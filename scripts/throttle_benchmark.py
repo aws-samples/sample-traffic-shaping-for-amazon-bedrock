@@ -67,6 +67,7 @@ FEASIBLE = [
     # Larger-model data points. nova-2-pro has no callable us. CRIS profile (invalid
     # model id) so nova-pro stands in for the mid-size Nova point.
     ("nova-pro",        "us.amazon.nova-pro-v1:0"),
+    ("grok-4-6",        "us.xai.grok-4.6"),  # real 10M TPM quota, verified 2026-09-21
     ("gpt-5.6-sol",     "us.openai.gpt-5.6-sol"),
     ("gpt-5.6-luna",    "us.openai.gpt-5.6-luna"),
     ("gpt-5.6-terra",   "us.openai.gpt-5.6-terra"),
