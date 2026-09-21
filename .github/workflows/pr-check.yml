@@ -1,0 +1,81 @@
+name: PR Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-gate:
+    name: PR Gate
+    runs-on: ubuntu-latest
+    env:
+      # queue_processor.py, budget_manager.py, bedrock_processor.py, and result_fn.py
+      # construct boto3 clients at import time (fine in the real Lambda runtime, which
+      # always has a region) - pytest importing them for pure-function tests needs a
+      # region to exist too, even though no AWS call is ever made. No credentials
+      # needed, just enough for boto3 to build a client object.
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "18"
+
+      # Floor set by the aws-cdk-lib pin in requirements.txt, not chosen freely -
+      # see the README prerequisites table and CONTRIBUTING.md.
+      - name: Install AWS CDK CLI
+        run: npm install -g aws-cdk@2.1139.0
+
+      # A real .venv at repo root, not a bare pip install - the make targets below
+      # (test-queue-processor-sim, test-budget-manager-sim) hardcode
+      # `source .venv/bin/activate`, matching the local dev workflow in CONTRIBUTING.md.
+      # Appending its bin/ to GITHUB_PATH makes plain `pytest`/`cdk synth` use it too.
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.lock
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Unit tests (pytest)
+        run: pytest
+
+      # SHELL=/bin/bash overrides make's own recipe-execution shell (hardcoded to
+      # /bin/sh by GNU Make, independent of the shell running this step). ubuntu-latest's
+      # /bin/sh is dash, which has no `source` builtin (only `.`) - these targets'
+      # `source .venv/bin/activate` recipe fails there with "source: not found",
+      # even though the identical make invocation succeeds locally on macOS, where
+      # /bin/sh is bash-backed and tolerates `source`.
+      - name: Offline algorithm simulations
+        run: |
+          make SHELL=/bin/bash test-queue-processor-sim
+          make SHELL=/bin/bash test-budget-manager-sim
+
+      - name: Detect infrastructure changes
+        id: infra-changes
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            infra:
+              - 'infrastructure/**'
+              - 'requirements.txt'
+              - 'requirements.lock'
+              - 'cdk.json'
+
+      # cdk-nag's AwsSolutionsChecks Aspect is wired in infrastructure/app.py;
+      # a security violation fails synth. Must run from repo root - cdk.json
+      # lives there, not under infrastructure/.
+      - name: CDK synth (cdk-nag security gate)
+        if: steps.infra-changes.outputs.infra == 'true'
+        run: cdk synth
