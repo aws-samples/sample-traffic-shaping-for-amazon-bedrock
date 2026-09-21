@@ -45,22 +45,45 @@ _CFG = Config(retries={"total_max_attempts": 1, "mode": "standard"}, read_timeou
 _THROTTLE = {"ThrottlingException", "TooManyRequestsException", "ServiceQuotaExceededException"}
 _UNAVAIL = {"ServiceUnavailableException", "ModelTimeoutException", "InternalServerException"}
 
-# (alias, model_id, real_tpm_quota) — AWS Service Quotas 2026-08-24.
+# (alias, model_id). Real TPM quota is resolved live from .bedrock_quota_cache.json
+# at run time (see resolve_live_tpm below) -- NOT a hardcoded snapshot. A prior
+# version of this table hardcoded quotas "as of 2026-08-24"; verified 2026-09-21
+# that two of those numbers had drifted from the live account (nova-lite 4M ->
+# live 8M, gpt-5.6-sol 20M -> live 10M) and two were unresolvable in the current
+# quota-name matcher (llama4-maverick/scout), which silently produced a shaper cap
+# set from the wrong number in both directions -- too low (throttling load Bedrock
+# would have accepted directly) and too high (admitting load Bedrock then rejects).
+# This repo's own thesis (get_bedrock_quotas.py / create_model_config.py) is that a
+# hardcoded quota table is exactly the defect to avoid; this benchmark now follows
+# the same rule.
 FEASIBLE = [
-    ("llama4-maverick", "us.meta.llama4-maverick-17b-instruct-v1:0", 600_000),
-    ("llama4-scout",    "us.meta.llama4-scout-17b-instruct-v1:0",    600_000),
-    ("nova-lite",       "us.amazon.nova-lite-v1:0",                  4_000_000),
-    ("fable-5",         "us.anthropic.claude-fable-5",               4_000_000),
-    ("haiku-4-5",       "us.anthropic.claude-haiku-4-5-20251001-v1:0", 5_000_000),
-    ("sonnet-5",        "us.anthropic.claude-sonnet-5",              6_000_000),
-    # Larger-model data points (added 2026-08-25). nova-2-pro has no callable us. CRIS
-    # profile (invalid model id) so nova-pro (2M) stands in for the mid-size Nova point.
-    ("nova-pro",        "us.amazon.nova-pro-v1:0",                   2_000_000),
-    ("gpt-5.6-sol",     "us.openai.gpt-5.6-sol",                     20_000_000),  # real bucket ~20M (mantle fig was 10M)
-    ("gpt-5.6-luna",    "us.openai.gpt-5.6-luna",                    20_000_000),
-    ("gpt-5.6-terra",   "us.openai.gpt-5.6-terra",                   20_000_000),
-    ("opus-5",          "us.anthropic.claude-opus-5",                30_000_000),  # LAST — burst disrupts this session's Opus quota
+    ("llama4-maverick", "us.meta.llama4-maverick-17b-instruct-v1:0"),
+    ("llama4-scout",    "us.meta.llama4-scout-17b-instruct-v1:0"),
+    ("nova-lite",       "us.amazon.nova-lite-v1:0"),
+    ("nova-2-lite",     "us.amazon.nova-2-lite-v1:0"),
+    ("fable-5",         "us.anthropic.claude-fable-5"),
+    ("haiku-4-5",       "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+    ("sonnet-5",        "us.anthropic.claude-sonnet-5"),
+    # Larger-model data points. nova-2-pro has no callable us. CRIS profile (invalid
+    # model id) so nova-pro stands in for the mid-size Nova point.
+    ("nova-pro",        "us.amazon.nova-pro-v1:0"),
+    ("gpt-5.6-sol",     "us.openai.gpt-5.6-sol"),
+    ("gpt-5.6-luna",    "us.openai.gpt-5.6-luna"),
+    ("gpt-5.6-terra",   "us.openai.gpt-5.6-terra"),
+    ("opus-5",          "us.anthropic.claude-opus-5"),  # LAST — burst disrupts this session's Opus quota
 ]
+
+
+def resolve_live_tpm(model_id):
+    """Look up model_id's current TPM straight from the quota cache -- same
+    resolve_tpm() every other script in this repo uses, so this benchmark can't
+    silently drift from what create_model_config.py would actually configure.
+    Returns None (never a guessed number) if the cache has no usable entry."""
+    try:
+        tpm, _source = cmc.resolve_tpm(model_id)
+        return tpm
+    except LookupError:
+        return None
 
 
 def big_prompt(approx_tokens):
@@ -230,7 +253,13 @@ def main():
           f"| region={REGION} | outcomes from terminal records (200/429/503)")
     print(f"{'='*140}\n")
 
-    for mi, (alias, mid, quota) in enumerate(models):
+    for mi, (alias, mid) in enumerate(models):
+        quota = resolve_live_tpm(mid)
+        if quota is None:
+            print(f"▶ {alias}  ({mid})  SKIPPED — no usable TPM entry in .bedrock_quota_cache.json "
+                  f"(run 'make refresh-quotas'; this benchmark refuses to guess a quota, same as "
+                  f"create_model_config.py)\n", flush=True)
+            continue
         # Cap request count so big-quota models still finish draining in-window; the
         # burst still exceeds ~2x quota (past onset) so the baseline throttles.
         n = min(args.max_reqs, max(4, int(round(quota * args.over / (args.prompt_tokens + 16)))))
