@@ -59,14 +59,27 @@ the alias:
   `--rpm`/`RPM=` explicitly, in which case that value is pinned verbatim.
 - **TPM** always comes from `--tpm`/`TPM=` when given, otherwise from
   `cache['profiles'][model_id]['tpm']` in `.bedrock_quota_cache.json`
-  (populated by `make refresh-quotas`). **There is no fallback value.** A
-  model with no usable cache entry — no matching profile, or a `tpm: null`
-  entry — is a hard error that tells you to run `make refresh-quotas` or pass
-  `--tpm` explicitly (see `resolve_tpm()` in the source). Mantle bare model
-  IDs and other on-demand bare IDs never have an inference profile and so can
-  never appear in the cache — they always require an explicit `--tpm`, or
-  (for `--backend mantle` with both `--itpm`/`--otpm` given) can omit `--tpm`
-  entirely — see [Mantle backend](#backend-fields-tier-2) below.
+  (populated by `make refresh-quotas`). **There is no general-purpose
+  fallback value.** A model with no usable cache entry — no matching profile,
+  or a `tpm: null` entry — is a hard error that tells you to run
+  `make refresh-quotas` or pass `--tpm` explicitly (see `resolve_tpm()` in the
+  source). Mantle bare model IDs and other on-demand bare IDs never have an
+  inference profile and so can never appear in the cache — they always
+  require an explicit `--tpm`, or (for `--backend mantle` with both
+  `--itpm`/`--otpm` given) can omit `--tpm` entirely — see
+  [Mantle backend](#backend-fields-tier-2) below.
+  - **One narrow, named exception:** `DOCUMENTED_QUOTA_DEFAULTS` in
+    `create_model_config.py` — a small, explicitly-sourced dict for a model
+    too new for AWS Service Quotas to have published a discoverable rate
+    quota yet (e.g. Kimi K3: 10M TPM, cited to an authoritative internal
+    Bedrock model-limits document, verified 2026-09-21 that Service Quotas
+    genuinely has zero rows for it). `resolve_tpm()` only consults this dict
+    *after* a real cache miss, tags the result `tpm_source='documented_default'`
+    (never confusable with `'cache'` in the printed summary), and it never
+    applies to any model not explicitly listed. This is not a return to the
+    old hardcoded-fallback design it replaced — every entry is scoped to one
+    named model with a cited source, meant to be deleted once AWS publishes
+    the real quota.
 
 Some aliases carry an inline comment in the source noting which backend/API
 style they're meant to be used with (e.g. a `-mantle` suffix alias), but that

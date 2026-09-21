@@ -91,7 +91,38 @@ MODEL_MAP = {
     'gpt-5.6-sol': 'us.openai.gpt-5.6-sol',
     'gpt-5.6-terra': 'us.openai.gpt-5.6-terra',
     'glm-5': 'zai.glm-5',                           # ON_DEMAND direct (no CRIS profile)
+    # Added 2026-09-21. Kimi K3 is INFERENCE_PROFILE-only (no ON_DEMAND, unlike the
+    # older Kimi K2.5/K2 Thinking) -- runtime CRIS, us. and global. both live.
+    'kimi-k3': 'us.moonshotai.kimi-k3',
+    'global-kimi-k3': 'global.moonshotai.kimi-k3',
 }
+
+# Models too new for AWS Service Quotas to have published a discoverable
+# rate-quota entry yet (confirmed live 2026-09-21: zero ListServiceQuotas rows
+# for either, unlike the older Kimi K2.5/K2 Thinking, which both have full
+# published RPM/TPM quotas). NOT a general-purpose fallback -- resolve_tpm()
+# only consults this after a real cache miss, tags the result
+# tpm_source='documented_default' (never confusable with 'cache'), and it is
+# scoped to exactly the entries below. Each is sourced from an authoritative
+# non-Service-Quotas document, cited in-line; re-verify against Service Quotas
+# periodically and delete the entry once AWS publishes it there.
+DOCUMENTED_QUOTA_DEFAULTS = {
+    # Kimi K3: 10M TPM, no RPM dimension (confirmed no RPM anywhere for it).
+    # Source: AWS-internal Highspot Bedrock model-limits page, cited by repo
+    # owner 2026-09-21.
+    'kimi-k3': 10_000_000,
+}
+
+
+def _documented_default_tpm(model_id: str):
+    """Last-resort, narrowly-scoped lookup for a model too new for Service
+    Quotas to have a discoverable entry. Returns None (never invents) for
+    anything not explicitly listed in DOCUMENTED_QUOTA_DEFAULTS."""
+    lowered = model_id.lower()
+    for key, tpm in DOCUMENTED_QUOTA_DEFAULTS.items():
+        if key in lowered:
+            return tpm
+    return None
 
 # Matches the Claude generation out of a model_id, e.g. "claude-opus-4-8" ->
 # ('4', '8'), "claude-sonnet-5" -> ('5', None). Used only by derive_default_burndown.
@@ -102,12 +133,16 @@ def derive_default_burndown(model_id: str, backend: str) -> float:
     """
     Output token burndown rate for a model, derived from its model ID and backend.
 
-    mantle backend, and every non-Anthropic/non-OpenAI provider, burn 1:1 (1.0).
+    mantle backend, and every provider not named below, burn 1:1 (1.0).
 
     OpenAI models on a non-mantle (runtime) backend are a blanket 10.0: the only
     runtime-CRIS-reachable OpenAI models today (gpt-5.6-luna/sol/terra) are 10x
     per the GPT-5.6 Sol model card, and every other OpenAI MODEL_MAP entry is
     mantle-only so it never reaches this branch.
+
+    Moonshot AI's Kimi K3 is also a blanket 10.0 (10M TPM at a 10x burndown
+    ratio -- "10M input tokens = 1M output TPM" -- per the AWS-internal
+    Highspot Bedrock model-limits page, cited by the repo owner 2026-09-21).
 
     Anthropic models on a non-mantle backend are NOT on a monotonic version
     curve (4.8 is higher than 5.0), so burndown is three literal buckets keyed
@@ -137,6 +172,8 @@ def derive_default_burndown(model_id: str, backend: str) -> float:
                 return 10.0
         return 5.0
     if 'openai' in lowered:
+        return 10.0
+    if 'moonshot' in lowered:
         return 10.0
     return 1.0
 
@@ -230,6 +267,9 @@ def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
 
     profile = cache.get('profiles', {}).get(model_id)
     if profile is None:
+        documented = _documented_default_tpm(model_id)
+        if documented is not None:
+            return documented, 'documented_default'
         raise LookupError(
             f"'{model_id}' has no entry in {QUOTA_CACHE_PATH}'s cached profiles. "
             f"Mantle and bare on-demand model IDs (e.g. a *-mantle alias's expansion, "
@@ -241,6 +281,9 @@ def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
 
     tpm = profile.get('tpm')
     if tpm is None:
+        documented = _documented_default_tpm(model_id)
+        if documented is not None:
+            return documented, 'documented_default'
         raise LookupError(
             f"'{model_id}' is in {QUOTA_CACHE_PATH}'s cached profiles but has "
             f"tpm: null (no matching Service Quotas value was found for it). Pass "

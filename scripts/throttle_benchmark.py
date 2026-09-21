@@ -71,6 +71,10 @@ FEASIBLE = [
     ("gpt-5.6-sol",     "us.openai.gpt-5.6-sol"),
     ("gpt-5.6-luna",    "us.openai.gpt-5.6-luna"),
     ("gpt-5.6-terra",   "us.openai.gpt-5.6-terra"),
+    # Kimi K3: no Service Quotas entry exists yet (confirmed live 2026-09-21).
+    # resolve_live_tpm() falls through to create_model_config's documented
+    # default (10M TPM, source: internal Highspot page) rather than skipping.
+    ("kimi-k3",         "us.moonshotai.kimi-k3"),
     ("opus-5",          "us.anthropic.claude-opus-5"),  # LAST — burst disrupts this session's Opus quota
 ]
 
