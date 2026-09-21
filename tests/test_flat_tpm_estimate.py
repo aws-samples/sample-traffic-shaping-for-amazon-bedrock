@@ -36,7 +36,7 @@ def test_explicit_max_tokens_takes_precedence():
     """When default_max_tokens is set, use it (× burndown) + nominal input."""
     cfg = {
         "default_max_tokens": 1200,
-        "output_token_burndown_rate": 1.0,
+        "output_token_burndown_rate": 1.0,  # nosec B105 - numeric config value, not a secret
         "nominal_input_tokens": 5000,
     }
     assert _flat_tpm_estimate(cfg, queue_target_tpm=5_520_000) == 6200
@@ -44,14 +44,17 @@ def test_explicit_max_tokens_takes_precedence():
 
 def test_max_tokens_per_request_alias():
     """max_tokens_per_request is honored when default_max_tokens is absent."""
-    cfg = {"max_tokens_per_request": 2000, "output_token_burndown_rate": 1.0}
+    cfg = {
+        "max_tokens_per_request": 2000,
+        "output_token_burndown_rate": 1.0,  # nosec B105 - numeric config value, not a secret
+    }
     assert _flat_tpm_estimate(cfg, queue_target_tpm=0) == 2000
 
 
 def test_burndown_multiplier_applied():
     cfg = {
         "default_max_tokens": 1000,
-        "output_token_burndown_rate": 5.0,
+        "output_token_burndown_rate": 5.0,  # nosec B105 - numeric config value, not a secret
         "nominal_input_tokens": 100,
     }
     assert _flat_tpm_estimate(cfg, queue_target_tpm=0) == 5100
@@ -81,8 +84,8 @@ def test_live_config_would_not_have_reproduced_the_bug():
         "tpm_queue_regeneration_rate": 92_000,
         "queue_capacity": 1380,
         "queue_regeneration_rate": 23,
-        "output_token_burndown_rate": 1,
-        "bytes_per_token": 4,
+        "output_token_burndown_rate": 1,  # nosec B105 - numeric config value, not a secret
+        "bytes_per_token": 4,  # nosec B105 - numeric config value, not a secret
         "backend": "runtime",
         # default_max_tokens / max_tokens_per_request / nominal_input_tokens ABSENT
     }
