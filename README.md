@@ -74,15 +74,31 @@ Every request resolves to exactly one terminal outcome, readable via `GET /resul
   DynamoDB, EventBridge, S3, SQS, and KMS resources).
 - AWS CLI installed and configured — verify with `aws sts get-caller-identity`. If you use AWS SSO
   and your session expired: `aws sso login --profile your-profile`.
-- Bedrock model access enabled in your account and region for at least one model (Nova, Jamba, or
-  Claude). The shaper calls Bedrock on your behalf.
+- Bedrock model access enabled in your account and region for at least one model (Nova, Claude, or
+  another supported model). The shaper calls Bedrock on your behalf.
 
 | Tool | Version | Notes |
 |------|---------|-------|
 | Python | 3.10+ | CDK app and `scripts/` tooling; a virtualenv is created by `make setup`. |
 | Node.js | 18+ | Required by the AWS CDK CLI. |
-| AWS CDK CLI | 2.1033.0+ | `deploy.sh` enforces this minimum (`npm install -g aws-cdk@2.1033.0`). |
+| AWS CDK CLI | **2.1139.0+** | `deploy.sh` enforces this minimum (`npm install -g aws-cdk@2.1139.0`). Required by the pinned `aws-cdk-lib` — see the note below. |
 | `jq` | any | Parses CDK outputs into `config.env`. |
+
+> **The CDK CLI minimum is not arbitrary — don't lower it.** `requirements.txt` pins
+> `aws-cdk-lib==2.266.0`, which emits cloud-assembly schema 54, and only CDK CLI 2.1139.0+ can read
+> schema 54. An older CLI passes a naive version check and synthesizes cleanly, then fails at deploy
+> with `Cloud assembly schema version mismatch`. If you bump `aws-cdk-lib`, re-check
+> `MIN_CDK_VERSION` in `deploy.sh` and this table.
+
+If `npm install -g aws-cdk@2.1139.0` fails with `EACCES`, npm's prefix is root-owned (the default
+for Homebrew and system Node installs). Rather than using `sudo`, install to a user-writable prefix:
+
+```bash
+npm install --prefix ~/.local/cdk-cli aws-cdk@2.1139.0
+export PATH="$HOME/.local/cdk-cli/node_modules/.bin:$PATH"
+```
+
+Or skip the install entirely and run the CLI on demand with `npx aws-cdk@2.1139.0`.
 
 ### First-time setup
 
@@ -96,6 +112,30 @@ make setup           # venv + deps + deploy SemaphoreRateLimiterStack + write co
 make deploy          # redeploy after a code change — regenerates config.env, preserves CONFIG records
 ```
 
+To deploy with a named AWS profile, export it first — every `make` target and `deploy.sh`
+inherit it:
+
+```bash
+export AWS_PROFILE=your-profile
+```
+
+### Tearing it down
+
+```bash
+make destroy         # delete the stack and remove the generated config.env (prompts for confirmation)
+```
+
+`make destroy` asks you to type `destroy` to confirm, then runs `cdk destroy` and deletes the
+generated `config.env`. It removes the API Gateway and regional WAF web ACL, the Step Functions
+state machine and Lambda functions, the DynamoDB single table (**including every model `CONFIG`
+record**), the S3 output bucket and its contents (auto-emptied), and the SQS DLQ. The customer-managed
+KMS key enters its pending-deletion window rather than disappearing immediately. Two free resources
+are retained by design and reused if you redeploy: the API Gateway CloudWatch role and the
+account-level API Gateway setting.
+
+Because the stack creates billable resources that are easy to forget — a WAFv2 web ACL and a KMS
+CMK in particular — run `make destroy` when you are done evaluating the sample.
+
 ### Configure a model, send traffic, inspect
 
 The shaper reads a per-model `CONFIG` record from DynamoDB for that model's quota and burst/queue
@@ -107,8 +147,8 @@ or a full Bedrock model ID.
 # 1. create a model config (low burst → watch requests queue; omit BURST_CAPACITY for defaults)
 make create-config MODEL=nova-2-lite RPM=10 BURST_CAPACITY=2
 
-# 2. send 5 test requests (with the config above: ~2 immediate, ~3 queued)
-make test
+# 2. send 5 test requests against that same model (with the config above: ~2 immediate, ~3 queued)
+make test MODEL=nova-2-lite
 
 # 3. query table state first (what happened), then logs (why)
 make inspect-config       MODEL=nova-2-lite
@@ -121,7 +161,9 @@ make clean
 ```
 
 > `make test` calls Bedrock for real — ensure the model behind your alias is enabled in your
-> account/region, or requests fail at the Bedrock call and land in the DLQ.
+> account/region, or requests fail at the Bedrock call and land in the DLQ. It defaults to
+> `MODEL=nova-2-lite`; pass `MODEL=` to test a different alias, and note that the alias you pass
+> must already have a `CONFIG` record from step 1.
 
 Additional knobs (`RPM`, `TPM`, `COUNTER_SHARDS`, `BURST_FRACTION`, `QUEUE_FRACTION`, …) are
 documented in the guide. All operations go through the [`Makefile`](Makefile) — run `make help` for

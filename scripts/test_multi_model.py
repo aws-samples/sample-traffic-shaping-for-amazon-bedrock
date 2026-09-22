@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Multi-Model Contention Test — ISC 15-22
-Sends requests for Opus, Jamba, and Nova Lite concurrently.
+Sends requests for Opus 5, Nova 2 Lite, and Nova Lite concurrently.
 Verifies per-model admission isolation and zero cross-model interference.
 """
 
@@ -21,11 +21,11 @@ sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
 
-MODEL_ALIASES = {
-    'opus': 'us.anthropic.claude-opus-5',
-    'jamba': 'us.amazon.nova-2-lite-v1:0',
-    'nova-lite': 'us.amazon.nova-lite-v1:0',
-}
+# Model aliases: reuse create_model_config's canonical MODEL_MAP (was a local
+# three-entry copy whose 'jamba' key pointed at the nova-2-lite ID).
+from create_model_config import MODEL_MAP
+
+MODEL_ALIASES = MODEL_MAP
 
 # Load configuration
 config = config_loader.get_config_with_aws_check()
@@ -89,7 +89,7 @@ def start_execution(sfn_client, model_alias, model_id, request_num):
 def run_multi_model_test(model_counts):
     """
     Run multi-model contention test.
-    model_counts: dict of {alias: count}, e.g. {'opus': 10, 'jamba': 30, 'nova-lite': 30}
+    model_counts: dict of {alias: count}, e.g. {'opus-5': 10, 'nova-2-lite': 30, 'nova-lite': 30}
     """
     print(f"\n{'='*70}")
     print(f"MULTI-MODEL CONTENTION TEST")
@@ -245,14 +245,17 @@ def run_multi_model_test(model_counts):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Multi-model contention test')
-    parser.add_argument('--opus', type=int, default=10, help='Number of Opus requests (default: 10)')
-    parser.add_argument('--jamba', type=int, default=30, help='Number of Jamba requests (default: 30)')
+    # Flag names are MODEL_MAP aliases. The old --opus / --jamba flags were
+    # misleading: --jamba resolved to the nova-2-lite model ID, so a flag named
+    # for one model billed another.
+    parser.add_argument('--opus-5', type=int, default=10, help='Number of Opus 5 requests (default: 10)')
+    parser.add_argument('--nova-2-lite', type=int, default=30, help='Number of Nova 2 Lite requests (default: 30)')
     parser.add_argument('--nova-lite', type=int, default=30, help='Number of Nova Lite requests (default: 30)')
     args = parser.parse_args()
 
     model_counts = {
-        'opus': args.opus,
-        'jamba': args.jamba,
+        'opus-5': args.opus_5,
+        'nova-2-lite': args.nova_2_lite,
         'nova-lite': args.nova_lite,
     }
 

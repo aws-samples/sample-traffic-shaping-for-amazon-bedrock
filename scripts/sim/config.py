@@ -246,18 +246,22 @@ QUOTA_PROFILES: Dict[str, SimQuota] = {
         ),
     ),
 
-    # ── Claude on-demand limits ────────────────────────────────────────────────
+    # ── Legacy Claude 3.x on-demand limits ─────────────────────────────────────
+    # These numbers are retired Claude 3-generation on-demand quota tiers, kept
+    # as small-quota test scenarios (not a claim about current Claude 5-family
+    # quotas, which are far higher on the runtime/CRIS path -- see MODEL_MAP in
+    # scripts/create_model_config.py for live values).
     "claude-haiku": SimQuota(
         rpm=1_000, tpm=100_000,
-        notes="Claude 3 Haiku on-demand",
+        notes="Legacy tier (retired Claude 3 Haiku on-demand quota)",
     ),
     "claude-sonnet": SimQuota(
         rpm=1_000, tpm=200_000,
-        notes="Claude 3.5 Sonnet on-demand",
+        notes="Legacy tier (retired Claude 3.5 Sonnet on-demand quota)",
     ),
     "claude-opus": SimQuota(
         rpm=100, tpm=10_000,
-        notes="Claude 3 Opus on-demand — very tight quotas, similar to smoke at small scale",
+        notes="Legacy tier (retired Claude 3 Opus on-demand quota) — very tight quotas, similar to smoke at small scale",
     ),
 
     # ── Amazon Nova on-demand limits ───────────────────────────────────────────

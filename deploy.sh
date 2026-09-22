@@ -51,21 +51,53 @@ else
     source .venv/bin/activate
 fi
 
-# Check if CDK is installed and meets minimum version
-MIN_CDK_VERSION="2.1033.0"
+# Check if the CDK CLI is installed and new enough to deploy this app.
+#
+# This floor is DICTATED BY the `aws-cdk-lib` pin in requirements.txt — it is not an
+# independent choice. aws-cdk-lib 2.266.0 emits cloud-assembly schema 54, and only
+# CDK CLI >= 2.1139.0 can read schema 54. A CLI below the floor passes this check's
+# older forms, synthesizes cleanly, and then fails at deploy time with:
+#     Cloud assembly schema version mismatch: Maximum schema version supported is
+#     53.x.x, but found 54.0.0. You need at least CLI version 2.1139.0
+# so the floor must be kept in lockstep with the library pin.
+#
+# If you bump aws-cdk-lib in requirements.txt, update BOTH:
+#   1. MIN_CDK_VERSION below
+#   2. the Tool/Version table under "Prerequisites" in README.md
+# (CONTRIBUTING.md deliberately links to that table instead of restating the number.)
+MIN_CDK_VERSION="2.1139.0"
+
+# Single source of truth for the install hint, so the version can't drift between messages.
+cdk_install_help() {
+    echo "   npm install -g aws-cdk@${MIN_CDK_VERSION}"
+    echo ""
+    echo "   If 'npm install -g' fails with EACCES (npm's prefix is root-owned, which is"
+    echo "   the default for Homebrew/system Node), install to a user-writable prefix:"
+    echo "     npm install --prefix ~/.local/cdk-cli aws-cdk@${MIN_CDK_VERSION}"
+    echo "     export PATH=\"\$HOME/.local/cdk-cli/node_modules/.bin:\$PATH\""
+    echo "   ...or skip installing entirely and use:  npx aws-cdk@${MIN_CDK_VERSION}"
+}
+
 if ! command -v cdk &> /dev/null; then
-    echo "❌ AWS CDK not found. Please install it first:"
-    echo "   npm install -g aws-cdk@2.1033.0"
+    echo "❌ AWS CDK CLI not found. Install it with:"
+    cdk_install_help
     exit 1
 fi
 
 CDK_VERSION=$(cdk --version | awk '{print $1}')
 if [ "$(printf '%s\n' "$MIN_CDK_VERSION" "$CDK_VERSION" | sort -V | head -n1)" != "$MIN_CDK_VERSION" ]; then
-    echo "❌ AWS CDK CLI version $CDK_VERSION is too old."
-    echo "   Minimum required: $MIN_CDK_VERSION"
-    echo "   Please update:  npm install -g aws-cdk@2.1033.0"
+    # The venv is active by this point, so report the library pin that sets the floor.
+    CDK_LIB_VERSION=$(python -c "import importlib.metadata as m; print(m.version('aws-cdk-lib'))" 2>/dev/null || echo "unknown")
+    echo "❌ AWS CDK CLI version $CDK_VERSION is too old to deploy this app."
+    echo "   Minimum required: $MIN_CDK_VERSION (set by the aws-cdk-lib ${CDK_LIB_VERSION} pin"
+    echo "   in requirements.txt, which emits cloud-assembly schema 54)."
+    echo ""
+    echo "   Update with:"
+    cdk_install_help
     exit 1
 fi
+
+echo "   CDK CLI $CDK_VERSION (minimum $MIN_CDK_VERSION)"
 
 # Check if AWS credentials are configured
 if ! aws sts get-caller-identity &> /dev/null; then
@@ -193,20 +225,33 @@ chmod +x scripts/test_reserve_release.sh
 echo "✅ Made test_reserve_release.sh executable"
 echo ""
 
-# Create default model configurations (only during init)
+# Refresh the quota cache and create the cache-driven starter package (only during
+# init). The `if <cmd>` form keeps either step from aborting setup under `set -e` --
+# a quota-refresh failure leaves the cache with tpm: null for every profile (or no
+# `profiles` key at all if no cache file exists yet), which makes the starter-package
+# step below fail outright (parser.error, zero configs written) rather than fall back
+# to an invented value -- resolve_tpm() has no hardcoded fallback tier. Capturing
+# success/failure of each step here lets the "Setup Complete" banner below report
+# what actually happened instead of assuming both steps succeeded.
+QUOTA_REFRESH_OK=false
+STARTER_PACKAGE_OK=false
 if [ "$INIT_MODE" = true ]; then
-    echo "Creating default model configurations..."
-    # `model` is a positional arg (not --model), and the `if <cmd>` form keeps a
-    # config failure from aborting under `set -e` so the warning path is reachable.
-    # Defaults are active models (nova-2-lite / sonnet-5 / opus-5); the prior
-    # opus-4-1 + jamba defaults were retired by AWS as Legacy (2026-08-24).
-    for DEFAULT_MODEL in nova-2-lite sonnet-5 opus-5; do
-        if python scripts/create_model_config.py "$DEFAULT_MODEL" > /dev/null 2>&1; then
-            echo "✅ Created $DEFAULT_MODEL model config"
-        else
-            echo "⚠️  Failed to create $DEFAULT_MODEL config (may need AWS credentials refresh or model access)"
-        fi
-    done
+    echo "Refreshing Bedrock quota cache..."
+    if python scripts/get_bedrock_quotas.py; then
+        echo "✅ Quota cache refreshed (.bedrock_quota_cache.json)"
+        QUOTA_REFRESH_OK=true
+    else
+        echo "⚠️  Quota cache refresh failed (may need AWS credentials refresh or model access) — the starter package below will have no usable TPM values and will fail to write any configs"
+    fi
+    echo ""
+
+    echo "Creating starter model configurations..."
+    if python scripts/create_model_config.py --starter-package; then
+        echo "✅ Starter package created"
+        STARTER_PACKAGE_OK=true
+    else
+        echo "⚠️  Failed to create starter package (may need AWS credentials refresh or model access)"
+    fi
     echo ""
 fi
 
@@ -214,23 +259,53 @@ fi
 rm -f cdk-outputs.json
 
 if [ "$INIT_MODE" = true ]; then
+    # config/starter_models.json is an explicit list of inference profile IDs --
+    # derive the counts from the file itself rather than a
+    # hardcoded "12 across 6", which would silently lie the moment the list
+    # changes (e.g. a base model with no global. profile on some account).
+    STARTER_PROFILE_COUNT=$(jq 'length' config/starter_models.json 2>/dev/null || echo "?")
+    STARTER_BASE_MODEL_COUNT=$(jq -r '.[] | sub("^(us\\.|global\\.)"; "")' config/starter_models.json 2>/dev/null | sort -u | wc -l | tr -d ' ')
+
     echo "============================================================"
     echo "Setup Complete!"
     echo "============================================================"
     echo ""
-    echo "✅ Default model configs created for Opus and Jamba"
+    if [ "$STARTER_PACKAGE_OK" = true ]; then
+        echo "✅ Starter package created: ${STARTER_PROFILE_COUNT} model configs across ${STARTER_BASE_MODEL_COUNT} starter models"
+        if [ "$QUOTA_REFRESH_OK" = true ]; then
+            echo "   (nova-2-lite, sonnet-5, opus-5, gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra) —"
+            echo "   one entry per ACTIVE us./global. inference profile listed in config/starter_models.json"
+        else
+            echo "   Note: the quota cache refresh above failed this run — these configs were resolved"
+            echo "   from a cache left over from a prior run, not a fresh refresh."
+        fi
+        echo ""
+        echo "Next steps:"
+        echo "  1. Inspect the starter package:"
+        echo "     make inspect-config MODEL=sonnet-5"
+    else
+        echo "⚠️  Starter package creation FAILED — 0 model configs written. See the warning above;"
+        echo "   run 'make refresh-quotas && make create-starter-configs' once the underlying issue"
+        echo "   (AWS credentials, IAM permissions, or model access) is resolved."
+        echo ""
+        echo "Next steps:"
+        echo "  1. Inspect a config after your first successful config creation:"
+        echo "     make inspect-config MODEL=<model>"
+    fi
     echo ""
-    echo "Next steps:"
-    echo "  1. (Optional) Override Opus config for queueing demo:"
+    echo "  2. Refresh quotas any time account limits change, then recreate configs:"
+    echo "     make refresh-quotas && make create-starter-configs"
+    echo ""
+    echo "  3. (Optional) Override a config for queueing demo:"
     echo "     make create-config MODEL=nova-2-lite RPM=10 BURST_CAPACITY=2"
     echo ""
-    echo "  2. Test the deployment:"
+    echo "  4. Test the deployment:"
     echo "     make test"
     echo ""
-    echo "  3. Monitor queue processing:"
+    echo "  5. Monitor queue processing:"
     echo "     make check-queue"
     echo ""
-    echo "  4. View logs:"
+    echo "  6. View logs:"
     echo "     make tail-budget"
     echo "     make tail-queue"
     echo ""

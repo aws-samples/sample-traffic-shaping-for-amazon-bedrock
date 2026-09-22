@@ -32,15 +32,8 @@ sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
 
-# Model ID aliases
-MODEL_ALIASES = {
-    'opus-5': 'us.anthropic.claude-opus-5',
-    'sonnet-5': 'us.anthropic.claude-sonnet-5',
-    'nova-2-lite': 'us.amazon.nova-2-lite-v1:0',
-    'nova-lite': 'us.amazon.nova-lite-v1:0',
-    'nova-lite-sr': 'amazon.nova-lite-v1:0',  # single-region: enforces per-region quotas
-    'nova-pro': 'us.amazon.nova-pro-v1:0',
-}
+# Model ID aliases: imports create_model_config's canonical MODEL_MAP directly.
+from create_model_config import MODEL_MAP
 
 # Retry configuration (typical customer implementation)
 MAX_RETRIES = 3
@@ -51,7 +44,7 @@ JITTER_RANGE = 1.0      # full jitter: uniform(0, computed_delay)
 
 def resolve_model_id(model_input: str) -> str:
     """Resolve model alias to full model ID."""
-    return MODEL_ALIASES.get(model_input.lower(), model_input)
+    return MODEL_MAP.get(model_input.lower(), model_input)
 
 
 def validate_model_config(dynamo_service: DynamoService, model_id: str) -> None:
@@ -323,7 +316,7 @@ def test_direct_bedrock_with_retry():
 
     # Summary comparison hint
     print(f"\n  Compare against Traffic Shaper:")
-    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'jamba'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
+    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'nova-2-lite'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
 
     if throttle_fail_count > 0:
         print(f"\n  {throttle_fail_count} requests exhausted all {MAX_RETRIES_ACTUAL} retries and still failed.")

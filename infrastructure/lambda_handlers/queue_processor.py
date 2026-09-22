@@ -190,10 +190,7 @@ def try_reserve_queue_capacity_batch(
     """
     # Step 1: Get model config (required)
     try:
-        config = dynamo_service.get_effective_capacity(model_id)
-        adaptive_shift = config.get('_adaptive_shift', 0)
-        if adaptive_shift:
-            logger.info(f"Adaptive capacity: shifted {adaptive_shift} tokens from burst to queue for model={model_id}")
+        config = dynamo_service.get_model_config(model_id)
         queue_capacity = int(config['queue_capacity'])
         queue_regen_rate = float(config['queue_regeneration_rate'])
         # TPM config (optional)
@@ -488,10 +485,7 @@ def handler(event, context):
 
     # Load configuration from DynamoDB (with fallbacks)
     try:
-        config = dynamo_service.get_effective_capacity(model_id)
-        adaptive_shift = config.get('_adaptive_shift', 0)
-        if adaptive_shift:
-            logger.info(f"Adaptive capacity: shifted {adaptive_shift} tokens from burst to queue for model={model_id}")
+        config = dynamo_service.get_model_config(model_id)
         batch_size = int(config.get('queue_batch_size', 10))
         queue_capacity = int(config.get('queue_capacity', 100))
         queue_regen_rate = float(config.get('queue_regeneration_rate', 0.75))
@@ -824,7 +818,7 @@ def handler(event, context):
                     # Reload config to pick up any operator changes to circuit_breaker_disabled
                     # (config at handler start may be minutes stale in the 13-min processing loop)
                     try:
-                        fresh_config = dynamo_service.get_effective_capacity(model_id)
+                        fresh_config = dynamo_service.get_model_config(model_id)
                     except Exception:
                         fresh_config = config  # Fall back to stale config if reload fails
                     if fresh_config.get('circuit_breaker_disabled'):

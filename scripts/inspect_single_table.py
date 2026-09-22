@@ -16,16 +16,27 @@ sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
 
+# Single source of truth for model aliases. This module used to carry its own
+# three-entry copy, which drifted: it had no 'nova-2-lite' key (so the alias every
+# doc uses failed) and its 'jamba' key pointed at the nova-2-lite ID.
+from create_model_config import MODEL_MAP
+
 # Load configuration and verify AWS access
 config = config_loader.get_config_with_aws_check()
 AWS_REGION = config.get('AWS_REGION', 'us-east-1')
 SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
 
+DEFAULT_MODEL = 'nova-2-lite'
 
-# Common model IDs
-MODEL_OPUS = 'us.anthropic.claude-opus-5'
-MODEL_JAMBA = 'us.amazon.nova-2-lite-v1:0'
-MODEL_NOVA_LITE = 'us.amazon.nova-lite-v1:0'
+
+def resolve_model_id(model_id: str) -> str:
+    """Resolve a short alias to a full Bedrock model ID; pass full IDs through."""
+    return MODEL_MAP.get(model_id.lower(), model_id)
+
+
+def available_aliases_hint() -> str:
+    """Render the real alias list so the hint can't drift from MODEL_MAP."""
+    return ', '.join(sorted(MODEL_MAP))
 
 
 def inspect_model_config(model_id: str):
@@ -33,18 +44,10 @@ def inspect_model_config(model_id: str):
     Inspect model configuration using targeted query (no scan).
     
     Args:
-        model_id: Model ID to inspect (e.g., 'opus', 'jamba', or full model ID)
+        model_id: Model ID to inspect (e.g., 'nova-2-lite', 'opus-5', or full model ID)
     """
-    # Map short names to full model IDs
-    model_map = {
-        'opus': MODEL_OPUS,
-        'jamba': MODEL_JAMBA,
-        'nova-lite': MODEL_NOVA_LITE,
-    }
-    
-    # Use mapped name if available, otherwise use as-is
-    full_model_id = model_map.get(model_id.lower(), model_id)
-    
+    full_model_id = resolve_model_id(model_id)
+
     print(f"\n{'='*70}")
     print(f"MODEL CONFIGURATION")
     print(f"{'='*70}\n")
@@ -98,7 +101,8 @@ def inspect_model_config(model_id: str):
 
     except KeyError as e:
         print(f"❌ Model config not found: {e}")
-        print(f"\nTip: Available models might be 'opus' or 'jamba'")
+        print(f"\nTip: create it first with 'make create-config MODEL={model_id}'.")
+        print(f"Known aliases: {available_aliases_hint()}")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Error inspecting config: {e}")
@@ -112,21 +116,13 @@ def inspect_consumption_records(model_id: str, capacity_mode='BURST', limit=10, 
     Inspect consumption records using DynamoService (1:1 with Lambda code).
 
     Args:
-        model_id: Model ID to query (e.g., 'opus', 'jamba', or full model ID)
+        model_id: Model ID to query (e.g., 'nova-2-lite', 'opus-5', or full model ID)
         capacity_mode: 'BURST' or 'QUEUE'
         limit: Max records to show
         show_tpm: If True, show TPM token estimates and totals
     """
-    # Map short names to full model IDs
-    model_map = {
-        'opus': MODEL_OPUS,
-        'jamba': MODEL_JAMBA,
-        'nova-lite': MODEL_NOVA_LITE,
-    }
-    
-    # Use mapped name if available, otherwise use as-is
-    full_model_id = model_map.get(model_id.lower(), model_id)
-    
+    full_model_id = resolve_model_id(model_id)
+
     print(f"\n{'='*70}")
     print(f"CONSUMPTION RECORDS INSPECTION")
     print(f"{'='*70}\n")
@@ -186,19 +182,11 @@ def inspect_queue_items(model_id: str, limit=10):
     Inspect queue items using targeted query (no scan).
     
     Args:
-        model_id: Model ID to query (e.g., 'opus', 'jamba', or full model ID)
+        model_id: Model ID to query (e.g., 'nova-2-lite', 'opus-5', or full model ID)
         limit: Max items to show
     """
-    # Map short names to full model IDs
-    model_map = {
-        'opus': MODEL_OPUS,
-        'jamba': MODEL_JAMBA,
-        'nova-lite': MODEL_NOVA_LITE,
-    }
-    
-    # Use mapped name if available, otherwise use as-is
-    full_model_id = model_map.get(model_id.lower(), model_id)
-    
+    full_model_id = resolve_model_id(model_id)
+
     print(f"\n{'='*70}")
     print(f"QUEUE ITEMS INSPECTION")
     print(f"{'='*70}\n")
@@ -258,29 +246,27 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   # View model configuration
-  python scripts/inspect_single_table.py --config --model opus
-  python scripts/inspect_single_table.py --config --model jamba
+  python scripts/inspect_single_table.py --config --model nova-2-lite
+  python scripts/inspect_single_table.py --config --model opus-5
 
   # View queue items
-  python scripts/inspect_single_table.py --queue --model opus
+  python scripts/inspect_single_table.py --queue --model nova-2-lite
 
   # View burst consumption
-  python scripts/inspect_single_table.py --consumption --model opus --capacity-mode BURST
+  python scripts/inspect_single_table.py --consumption --model nova-2-lite --capacity-mode BURST
 
   # View queue consumption
-  python scripts/inspect_single_table.py --consumption --model opus --capacity-mode QUEUE
+  python scripts/inspect_single_table.py --consumption --model nova-2-lite --capacity-mode QUEUE
 
-Supported models:
-  - opus: Claude Opus (us.anthropic.claude-opus-5)
-  - jamba: Jamba Mini (us.amazon.nova-2-lite-v1:0)
-  - Or use full model ID directly
+Model aliases come from create_model_config.MODEL_MAP (the single source of truth) —
+e.g. nova-2-lite, sonnet-5, opus-5, haiku-4-5. A full Bedrock model ID also works.
         """
     )
 
     parser.add_argument(
         '--model',
-        default='opus',
-        help='Model ID (short name like "opus"/"jamba" or full model ID)'
+        default=DEFAULT_MODEL,
+        help=f'Model alias from MODEL_MAP or a full model ID (default: {DEFAULT_MODEL})'
     )
     parser.add_argument(
         '--limit',

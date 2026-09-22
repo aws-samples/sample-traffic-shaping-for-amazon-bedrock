@@ -14,12 +14,20 @@ Usage:
 
     # Override RPM for custom models
     python scripts/create_model_config.py custom-model --rpm 75
+
+    # Mantle bare model with split token quotas -- --tpm is optional here:
+    # when omitted, --itpm supplies the informational tpm_limit value.
+    python scripts/create_model_config.py opus-47-mantle --backend mantle \\
+        --itpm 10000000 --otpm 2000000
 """
 
 import sys
 import os
+import json
+import re
 import argparse
 import boto3
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 # Add scripts directory for config_loader
@@ -31,14 +39,23 @@ import config_loader
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
 SINGLE_TABLE_NAME = os.environ.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
 
-# Model ID mappings
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+QUOTA_CACHE_PATH = os.path.join(_SCRIPT_DIR, '..', '.bedrock_quota_cache.json')
+STARTER_MODELS_PATH = os.path.join(_SCRIPT_DIR, '..', 'config', 'starter_models.json')
+
+# Model ID mappings. Ergonomic input-alias table ONLY -- lets a human type
+# `make create-config MODEL=opus-5` instead of the full inference profile ID.
+# It must NEVER gate correctness: no quota or capacity value is looked up
+# through this dict. Every quota value comes from cache['profiles'][model_id]
+# (see resolve_tpm()), keyed by the model_id this table expands an alias to --
+# never by the alias itself.
 MODEL_MAP = {
     # Next-gen Claude — runtime CRIS forms (no -v1 suffix on 4.7+).
-    'opus-47': 'us.anthropic.claude-opus-4-7',
     # Mantle bare form — use with --backend mantle --itpm 10000000 --otpm 2000000
+    # (--tpm is optional here: omitted, itpm supplies the informational tpm_limit).
     'opus-47-mantle': 'anthropic.claude-opus-4-7',
     'opus-48': 'us.anthropic.claude-opus-4-8',
-    # Global CRIS form of Opus 4.7 — token-only, same as opus-47.
+    # Global CRIS form of Opus 4.7 — token-only.
     'global-opus-47': 'global.anthropic.claude-opus-4-7',
     'opus-5': 'us.anthropic.claude-opus-5',
     'sonnet-46': 'us.anthropic.claude-sonnet-4-6',
@@ -62,7 +79,6 @@ MODEL_MAP = {
     'mythos-5': 'anthropic.claude-mythos-5',        # mantle messages (client supported)
     'fable-5': 'us.anthropic.claude-fable-5',       # runtime Converse + mantle messages
     'opus-4-8': 'us.anthropic.claude-opus-4-8',     # runtime Converse (VERIFIED quotas)
-    'opus-4-7': 'us.anthropic.claude-opus-4-7',     # runtime Converse (VERIFIED quotas)
     'gemma-4-31b': 'google.gemma-4-31b',            # mantle responses (client not implemented)
     'gemma-4-26b-a4b': 'google.gemma-4-26b-a4b',    # mantle responses (client not implemented)
     'gemma-4-e2b': 'google.gemma-4-e2b',            # mantle responses (client not implemented)
@@ -75,182 +91,210 @@ MODEL_MAP = {
     'gpt-5.6-sol': 'us.openai.gpt-5.6-sol',
     'gpt-5.6-terra': 'us.openai.gpt-5.6-terra',
     'glm-5': 'zai.glm-5',                           # ON_DEMAND direct (no CRIS profile)
+    # Added 2026-09-21. Kimi K3 is INFERENCE_PROFILE-only (no ON_DEMAND, unlike the
+    # older Kimi K2.5/K2 Thinking) -- runtime CRIS, us. and global. both live.
+    'kimi-k3': 'us.moonshotai.kimi-k3',
+    'global-kimi-k3': 'global.moonshotai.kimi-k3',
 }
 
-# Default RPM limits per model
-# Next-gen Claude (Opus 4.7/4.8, Sonnet 4.6) are token-quota-only on
-# bedrock-runtime — no RPM quota. None ⇒ create-config writes a TPM-only config.
-DEFAULT_RPM = {
-    'opus-47': None,
-    'opus-47-mantle': None,   # token-only; iTPM/oTPM via --itpm/--otpm
-    'opus-48': None,
-    'global-opus-47': None,
-    'opus-5': None,
-    'sonnet-46': None,
-    'sonnet-5': None,
-    'sonnet-5-mantle': None,
-    'nova-lite': 2000,
-    'nova-lite-sr': 2000,
-    'nova-micro': 2000,
-    'nova-2-lite': 2000,
-    'nova-pro': 500,
-    'haiku-4-5': None,
-    # New models (added 2026-08-21) — all token-quota-only (no RPM on their cards).
-    'grok-4-6': None,
-    'grok-4-3': None,
-    'gpt-5.6-cyber': None,
-    'gpt-5.6-daybreak-blue-sol': None,
-    'gpt-5.5': None,
-    'gpt-5.4': None,
-    'mythos-5': None,
-    'fable-5': None,
-    'opus-4-8': None,
-    'opus-4-7': None,
-    'gemma-4-31b': None,
-    'gemma-4-26b-a4b': None,
-    'gemma-4-e2b': None,
-    'nemotron-3-super-120b': None,
-    'minimax-m2-5': None,
-    # Added 2026-08-24 — token-quota-only shape (no RPM gate).
-    'llama4-maverick': None,
-    'llama4-scout': None,
-    'gpt-5.6-luna': None,
-    'gpt-5.6-sol': None,
-    'gpt-5.6-terra': None,
-    'glm-5': None,
+# Models too new for AWS Service Quotas to have published a discoverable
+# rate-quota entry yet (confirmed live 2026-09-21: zero ListServiceQuotas rows
+# for either, unlike the older Kimi K2.5/K2 Thinking, which both have full
+# published RPM/TPM quotas). NOT a general-purpose fallback -- resolve_tpm()
+# only consults this after a real cache miss, tags the result
+# tpm_source='documented_default' (never confusable with 'cache'), and it is
+# scoped to exactly the entries below. Each is sourced from an authoritative
+# non-Service-Quotas document, cited in-line; re-verify against Service Quotas
+# periodically and delete the entry once AWS publishes it there.
+DOCUMENTED_QUOTA_DEFAULTS = {
+    # Kimi K3: 10M TPM, no RPM dimension (confirmed no RPM anywhere for it).
+    # Cited by repo owner 2026-09-21; re-verify against Service Quotas once
+    # AWS publishes a discoverable entry for this model.
+    'kimi-k3': 10_000_000,
 }
 
-# Default TPM limits per model (account-specific — check Service Quotas for your account)
-# These are conservative defaults; request increases via Service Quotas console
-DEFAULT_TPM = {
-    'opus-47': 15000000,   # 15M consolidated TPM (runtime), per gap analysis §2
-    'opus-48': 30000000,   # 30M consolidated TPM (runtime), per coauthor blog edit
-    'opus-5': 30000000,
-    'sonnet-46': 6000000,  # 6M TPM — confirmed against Service Quotas 2026-07-06 (was 1M placeholder)
-    'sonnet-5': 6000000,
-    'sonnet-5-mantle': 3000000,
-    'nova-lite': 8000000,
-    'nova-lite-sr': 4000000,  # single-region quota (check Service Quotas for your account)
-    'nova-micro': 4000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'nova-2-lite': 8000000,
-    'nova-pro': 2000000,
-    'haiku-4-5': 2000000,  # PLACEHOLDER — refresh from account Service Quotas
-    # New models (added 2026-08-21). Opus 4.8 / 4.7 are VERIFIED (30M consolidated
-    # runtime TPM, from the model cards). Every other new model has NO numeric
-    # quota on its card — the values below are PLACEHOLDERS, not real quotas.
-    'opus-4-8': 30000000,   # 30M consolidated TPM (runtime) — VERIFIED from model card
-    'opus-4-7': 30000000,   # 30M consolidated TPM (runtime) — VERIFIED from model card
-    'grok-4-6': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'grok-4-3': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'gpt-5.6-cyber': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'gpt-5.6-daybreak-blue-sol': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'gpt-5.5': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'gpt-5.4': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'mythos-5': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'fable-5': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'gemma-4-31b': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'gemma-4-26b-a4b': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'gemma-4-e2b': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'nemotron-3-super-120b': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    'minimax-m2-5': 1000000,  # PLACEHOLDER — refresh from account Service Quotas
-    # Added 2026-08-24 — PLACEHOLDER quotas; refresh from account Service Quotas.
-    'llama4-maverick': 1000000,
-    'llama4-scout': 1000000,
-    'gpt-5.6-luna': 1000000,
-    'gpt-5.6-sol': 1000000,
-    'gpt-5.6-terra': 1000000,
-    'glm-5': 1000000,
-}
 
-# Output token burndown rate per model family
-# Claude 3.7+: 5x (1 output token = 5 TPM tokens)
-# All other models: 1x
-OUTPUT_BURNDOWN_RATE = {
-    'opus-47': 5.0,    # runtime path; mantle config overrides to 1.0
-    'opus-48': 5.0,    # runtime path; mantle config overrides to 1.0
-    'opus-5': 10.0,
-    'sonnet-46': 5.0,  # Claude 4.x family
-    'sonnet-5': 10.0,
-    'sonnet-5-mantle': 1.0,
-    'nova-lite': 1.0,  # Standard 1:1 burndown
-    'nova-lite-sr': 1.0,
-    'nova-micro': 1.0,
-    'nova-2-lite': 1.0,
-    'nova-pro': 1.0,   # Standard 1:1 burndown
-    'haiku-4-5': 5.0,  # Claude 4.x family
-    # New models (added 2026-08-21).
-    'opus-4-8': 10.0,  # runtime path; mantle config overrides to 1.0 (matches opus-5)
-    'opus-4-7': 10.0,  # runtime path; mantle config overrides to 1.0 (matches opus-5)
-    'fable-5': 10.0,   # next-gen Claude runtime family (matches sonnet-5/opus-5); mantle overrides to 1.0
-    'mythos-5': 1.0,   # mantle-only (messages) — mantle enforces actual oTPM, burndown disabled
-    'grok-4-6': 1.0,   # non-Claude — standard 1:1 burndown
-    'grok-4-3': 1.0,
-    'gpt-5.6-cyber': 1.0,
-    'gpt-5.6-daybreak-blue-sol': 1.0,
-    'gpt-5.5': 1.0,
-    'gpt-5.4': 1.0,
-    'gemma-4-31b': 1.0,
-    'gemma-4-26b-a4b': 1.0,
-    'gemma-4-e2b': 1.0,
-    'nemotron-3-super-120b': 1.0,
-    'minimax-m2-5': 1.0,
-    # Added 2026-08-24 — non-Claude, standard 1:1 burndown.
-    'llama4-maverick': 1.0,
-    'llama4-scout': 1.0,
-    'gpt-5.6-luna': 1.0,
-    'gpt-5.6-sol': 1.0,
-    'gpt-5.6-terra': 1.0,
-    'glm-5': 1.0,
-}
+def _documented_default_tpm(model_id: str):
+    """Last-resort, narrowly-scoped lookup for a model too new for Service
+    Quotas to have a discoverable entry. Returns None (never invents) for
+    anything not explicitly listed in DOCUMENTED_QUOTA_DEFAULTS."""
+    lowered = model_id.lower()
+    for key, tpm in DOCUMENTED_QUOTA_DEFAULTS.items():
+        if key in lowered:
+            return tpm
+    return None
 
-# Bytes per token ratio per model family
-# Claude: ~3.5 bytes/token, others: ~4.0 bytes/token
-BYTES_PER_TOKEN = {
-    'opus-47': 3.5,
-    'opus-48': 3.5,
-    'opus-5': 3.5,
-    'sonnet-46': 3.5,
-    'sonnet-5': 3.5,
-    'sonnet-5-mantle': 3.5,
-    'haiku-4-5': 3.5,  # Claude family
-    # Nova tokenizer runs ~3.0 bytes/token (more tokens per byte than the 4.0 default).
-    # A 4.0 estimate under-counts input ~18%, so admission over-hands Bedrock and a 3x
-    # finite burst leaked ~15% TPM throttles (2026-07-10 validation). 3.0 + the 1.1
-    # safety margin over-counts slightly — the safe direction for a rate limiter.
-    'nova-lite': 3.0,
-    'nova-lite-sr': 3.0,
-    'nova-micro': 3.0,
-    'nova-2-lite': 3.0,
-    'nova-pro': 3.0,
-    # New models (added 2026-08-21) — mirrors estimation.bytes_per_input_token in
-    # config/models.yml (Claude family 3.5, all others 4.0).
-    'opus-4-8': 3.5,
-    'opus-4-7': 3.5,
-    'fable-5': 3.5,
-    'mythos-5': 3.5,
-    'grok-4-6': 4.0,
-    'grok-4-3': 4.0,
-    'gpt-5.6-cyber': 4.0,
-    'gpt-5.6-daybreak-blue-sol': 4.0,
-    'gpt-5.5': 4.0,
-    'gpt-5.4': 4.0,
-    'gemma-4-31b': 4.0,
-    'gemma-4-26b-a4b': 4.0,
-    'gemma-4-e2b': 4.0,
-    'nemotron-3-super-120b': 4.0,
-    'minimax-m2-5': 4.0,
-    # Added 2026-08-24 — non-Claude, ~4.0 bytes/token.
-    'llama4-maverick': 4.0,
-    'llama4-scout': 4.0,
-    'gpt-5.6-luna': 4.0,
-    'gpt-5.6-sol': 4.0,
-    'gpt-5.6-terra': 4.0,
-    'glm-5': 4.0,
-}
+# Matches the Claude generation out of a model_id, e.g. "claude-opus-4-8" ->
+# ('4', '8'), "claude-sonnet-5" -> ('5', None). Used only by derive_default_burndown.
+_CLAUDE_VERSION_RE = re.compile(r'claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?')
+
+
+def derive_default_burndown(model_id: str, backend: str) -> float:
+    """
+    Output token burndown rate for a model, derived from its model ID and backend.
+
+    mantle backend, and every provider not named below, burn 1:1 (1.0).
+
+    OpenAI models on a non-mantle (runtime) backend are a blanket 10.0: the only
+    runtime-CRIS-reachable OpenAI models today (gpt-5.6-luna/sol/terra) are 10x
+    per the GPT-5.6 Sol model card, and every other OpenAI MODEL_MAP entry is
+    mantle-only so it never reaches this branch.
+
+    Moonshot AI's Kimi K3 is also a blanket 10.0 (10M TPM at a 10x burndown
+    ratio -- "10M input tokens = 1M output TPM" -- cited by the repo owner
+    2026-09-21).
+
+    Anthropic models on a non-mantle backend are NOT on a monotonic version
+    curve (4.8 is higher than 5.0), so burndown is three literal buckets keyed
+    off the Claude generation in model_id, per AWS's token-burndown doc
+    (docs.aws.amazon.com/bedrock/latest/userguide/quotas-token-burndown.html,
+    checked 2026-09-21):
+      - major==4 and minor==8 (Claude 4.8)                       -> 15.0
+      - major>=5 (Claude Sonnet 5, Claude Opus 5, Claude Fable 5.1) -> 10.0
+      - everything else Anthropic (4.7 and below, or a model_id whose
+        Claude generation this regex can't parse -- the safe default
+        for an unrecognized shape, never the most-favorable 10x)   -> 5.0
+
+    Called unconditionally by process_model() -- there is no per-alias override
+    table.
+    """
+    if backend == 'mantle':
+        return 1.0
+    lowered = model_id.lower()
+    if 'anthropic' in lowered:
+        match = _CLAUDE_VERSION_RE.search(lowered)
+        if match:
+            major = int(match.group(1))
+            minor = int(match.group(2)) if match.group(2) else 0
+            if major == 4 and minor == 8:
+                return 15.0
+            if major >= 5:
+                return 10.0
+        return 5.0
+    if 'openai' in lowered:
+        return 10.0
+    if 'moonshot' in lowered:
+        return 10.0
+    return 1.0
+
+
+def derive_default_bytes_per_token(model_id: str) -> float:
+    """
+    Fallback bytes_per_token ratio for an alias with no explicit --bytes-per-token
+    override.
+
+    Nova tokenizer runs ~3.0 bytes/token (more tokens per byte than the 4.0 default).
+    A 4.0 estimate under-counts input ~18%, so admission over-hands Bedrock and a 3x
+    finite burst leaked ~15% TPM throttles (2026-07-10 validation). 3.0 + the 1.1
+    safety margin over-counts slightly — the safe direction for a rate limiter. Every
+    other model (including Claude) gets the standard 4.0 estimate. An explicit
+    --bytes-per-token CLI override, when passed, always wins over this -- see
+    process_model()'s args.bytes_per_token check.
+    """
+    if 'nova' in model_id.lower():
+        return 3.0
+    return 4.0
+
+
+def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
+    """
+    Resolve TPM for a model: explicit --tpm > cache['profiles'][model_id]['tpm'].
+
+    cache['profiles'] (written by scripts/get_bedrock_quotas.py) is keyed directly by
+    inferenceProfileId, already joined to its Service Quotas TPM value -- model_id IS
+    the key. No prefix stripping (us./global.) and no variant re-derivation happens
+    here; the cache writer already resolved that. There is no third (hardcoded) tier:
+    a model with no usable cache entry is an error, not an invented number.
+
+    Mantle bare IDs and on-demand bare IDs (e.g. a `*-mantle` alias's expansion, or
+    glm-5) have no inference profile and so can never appear in cache['profiles'] --
+    they only ever resolve via explicit_tpm (--tpm, or --itpm/--otpm for
+    --backend mantle). That is a legitimate, permanent gap, not a broken cache.
+
+    Returns (tpm, source) where source is 'explicit' or 'cache'. Raises LookupError
+    (with a message identifying the cause and the fix) when no --tpm was given and
+    the model has no usable cache entry, or when the given --tpm is not positive --
+    callers must surface this via parser.error(), never invent a fallback.
+    """
+    if explicit_tpm is not None:
+        # Tested against None, not truthiness: a bare `if explicit_tpm` would let --tpm 0
+        # fall silently through to the cache, so the run would succeed with a TPM the user
+        # never asked for. Unlike --rpm 0 (a documented "no RPM quota" sentinel, see main()),
+        # 0 is never a meaningful TPM -- TPM is the dimension every model paces on, so a 0
+        # limit gates the model to zero throughput rather than disabling the gate.
+        if explicit_tpm <= 0:
+            raise LookupError(
+                f"--tpm must be a positive tokens-per-minute value (got {explicit_tpm}). "
+                f"There is no 'disable the TPM gate' sentinel: a 0 limit would gate "
+                f"'{model_id}' to zero throughput, not remove the limit. Omit --tpm to use "
+                f"the cached quota value."
+            )
+        return explicit_tpm, 'explicit'
+
+    if not os.path.exists(QUOTA_CACHE_PATH):
+        raise LookupError(
+            f"{QUOTA_CACHE_PATH} not found, so '{model_id}' cannot be resolved. Run "
+            f"'make refresh-quotas' to populate it, or pass --tpm explicitly."
+        )
+
+    try:
+        with open(QUOTA_CACHE_PATH, encoding='utf-8') as f:
+            cache = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        raise LookupError(
+            f"could not read {QUOTA_CACHE_PATH} ({e}), so '{model_id}' cannot be "
+            f"resolved. Run 'make refresh-quotas' to regenerate it, or pass --tpm "
+            f"explicitly."
+        )
+
+    last_refreshed = cache.get('lastRefreshedAt')
+    if last_refreshed:
+        try:
+            refreshed_dt = datetime.fromisoformat(last_refreshed)
+            if datetime.now(timezone.utc) - refreshed_dt > timedelta(days=7):
+                print(
+                    f"WARNING: .bedrock_quota_cache.json was last refreshed {last_refreshed} "
+                    f"(>7 days ago). Run 'make refresh-quotas' for fresh data; proceeding with "
+                    f"the stale cached value anyway.",
+                    file=sys.stderr,
+                )
+        except (ValueError, TypeError):
+            # ValueError: lastRefreshedAt isn't ISO-8601 at all. TypeError: it parsed but
+            # is timezone-naive, so subtracting an aware datetime raises. Either way this
+            # is only a freshness advisory -- a malformed timestamp must never be fatal to
+            # a run whose quota values are otherwise fine.
+            pass
+
+    profile = cache.get('profiles', {}).get(model_id)
+    if profile is None:
+        documented = _documented_default_tpm(model_id)
+        if documented is not None:
+            return documented, 'documented_default'
+        raise LookupError(
+            f"'{model_id}' has no entry in {QUOTA_CACHE_PATH}'s cached profiles. "
+            f"Mantle and bare on-demand model IDs (e.g. a *-mantle alias's expansion, "
+            f"or glm-5) have no inference profile and can NEVER appear here -- they "
+            f"require an explicit --tpm (or --itpm/--otpm for --backend mantle). If "
+            f"'{model_id}' does have an inference profile, run 'make refresh-quotas' "
+            f"to populate/refresh the cache instead."
+        )
+
+    tpm = profile.get('tpm')
+    if tpm is None:
+        documented = _documented_default_tpm(model_id)
+        if documented is not None:
+            return documented, 'documented_default'
+        raise LookupError(
+            f"'{model_id}' is in {QUOTA_CACHE_PATH}'s cached profiles but has "
+            f"tpm: null (no matching Service Quotas value was found for it). Pass "
+            f"--tpm explicitly, or run 'make refresh-quotas' once the quota is "
+            f"visible in your account."
+        )
+
+    return int(tpm), 'cache'
 
 
 def calculate_config(rpm, tpm: int, burndown_rate: float, burst_capacity_override: int = None,
-                     adaptive_shift_max: float = 0, adaptive_queue_threshold: int = 50,
                      bytes_per_token: float = 4.0,
                      short_window_sec: int = 2, long_window_sec: int = 15,
                      burst_fraction: float = 0.0, queue_fraction: float = 0.85,
@@ -274,11 +318,15 @@ def calculate_config(rpm, tpm: int, burndown_rate: float, burst_capacity_overrid
              (next-gen Claude on bedrock-runtime). When None, no RPM dimension is
              written and the admission gate paces purely on TPM.
         tpm: Tokens per minute limit
-        burndown_rate: Output token burndown multiplier (5 for Claude 3.7+, 1 for others)
+        burndown_rate: Output token burndown multiplier. Callers pass what
+             derive_default_burndown() returns -- 10.0 for Anthropic/OpenAI models on the
+             runtime backend, 1.0 for everything else (including all of mantle). See that
+             function for the derivation; do not restate the numbers elsewhere.
         burst_capacity_override: Optional override for burst capacity (for testing)
-        adaptive_shift_max: Max fraction of burst capacity to shift to queue (0=disabled)
-        adaptive_queue_threshold: Queue depth at which max shift applies
-        bytes_per_token: Bytes per token ratio for token estimation (3.5 for Claude, 4.0 default)
+        bytes_per_token: Bytes per token ratio for token estimation. Callers pass what
+             derive_default_bytes_per_token() returns -- 3.0 for Nova, 4.0 for every other
+             model (Claude included). The signature default of 4.0 applies only to direct
+             callers such as tests.
         burst_fraction: Fraction of quota allocated to burst bucket (default 0.00)
         queue_fraction: Fraction of quota allocated to queue bucket (default 0.85)
         buffer_fraction: Fraction of quota held back as safety buffer (default 0.15)
@@ -347,9 +395,6 @@ def calculate_config(rpm, tpm: int, burndown_rate: float, burst_capacity_overrid
         'tpm_queue_regeneration_rate': Decimal(str(round(tpm_queue_regen_rate, 4))),
         'tpm_buffer_capacity': tpm_buffer_capacity,
         'output_token_burndown_rate': Decimal(str(burndown_rate)),
-        # Adaptive capacity (disabled by default — set adaptive_shift_max > 0 to enable)
-        'adaptive_shift_max': Decimal(str(adaptive_shift_max)),
-        'adaptive_queue_threshold': adaptive_queue_threshold,
         'bytes_per_token': Decimal(str(bytes_per_token)),
         # Sliding-window admission horizons (consumption-record read gate).
         #   short_window_sec — rate smoothing (2s): caps instantaneous dispatch
@@ -398,17 +443,18 @@ def configure_mantle_queue_only(config_values: dict, itpm: int, otpm: int,
     return config_values
 
 
-def create_model_config(model_id: str, config_values: dict):
+def create_model_config(model_id: str, config_values: dict, dry_run: bool = False):
     """
     Create or update model configuration in DynamoDB.
 
     Args:
         model_id: Full Bedrock model ID
         config_values: Configuration values from calculate_config()
+        dry_run: When True, resolve and return the item without ever constructing
+            a boto3 DynamoDB resource or calling put_item. This must skip resource
+            construction itself, not just the write -- constructing the resource is
+            what fails without credentials/a deployed table.
     """
-    dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
-    table = dynamodb.Table(SINGLE_TABLE_NAME)
-
     item = {
         'pk': f'MODEL#{model_id}',
         'sk': 'CONFIG',
@@ -417,18 +463,161 @@ def create_model_config(model_id: str, config_values: dict):
         **config_values
     }
 
+    if dry_run:
+        return item
+
+    dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+    table = dynamodb.Table(SINGLE_TABLE_NAME)
     table.put_item(Item=item)
     return item
 
 
+def process_model(model_arg: str, args, parser, model_id_override: str = None) -> dict:
+    """
+    Resolve, calculate, print, and write the DynamoDB config for one model.
+
+    Shared by the single-model path and --starter-package batch mode so both go
+    through identical TPM-sourcing/calculation/backend logic.
+
+    model_id_override lets a caller supply the actual model_id to write (e.g. a
+    specific inference profile's inferenceProfileId) so --starter-package can pass
+    each profile ID through directly. TPM, burndown rate, and bytes_per_token are
+    all resolved from model_id itself (resolve_tpm, derive_default_burndown,
+    derive_default_bytes_per_token) -- model_short only feeds the MODEL_MAP alias
+    expansion below and the printed/returned summary; it plays no role in any
+    quota or capacity value.
+
+    Returns a summary dict: {model_short, model_id, tpm, tpm_source}.
+    """
+    # Resolve model ID
+    model_short = model_arg.lower()
+    model_id = model_id_override if model_id_override is not None else MODEL_MAP.get(model_short, model_arg)
+
+    # Determine RPM.
+    #   RPM is retired as a default dimension (owner decision 2026-09-16): every
+    #   model resolves to rpm=None (token-quota-only shape) unless --rpm is passed
+    #   explicitly, in which case it pins a live RPM gate.
+    #   --rpm 0 explicitly means "no RPM gate" (mapped to None), NOT a zero-throughput
+    #   gate. Using an `is not None` test alone would let 0 flow to the else branch and
+    #   compute queue_capacity=int(0*frac)=0, gating the model to ZERO drain — strictly
+    #   worse than no gate at all. Any positive --rpm is honored verbatim.
+    rpm = (args.rpm if args.rpm != 0 else None) if args.rpm is not None else None
+
+    # Determine TPM: explicit --tpm > cache['profiles'][model_id]['tpm']. No third
+    # (hardcoded) tier -- a model with no usable cache entry is a hard error.
+    #
+    # Exception: --backend mantle with both --itpm and --otpm supplied needs no
+    # cache lookup at all. configure_mantle_queue_only() gates admission purely
+    # on itpm/otpm and ignores every tpm-derived burst/queue field -- tpm_limit
+    # is stored on the record as informational/legacy only. Mantle bare model
+    # IDs never have an inference-profile cache entry, so requiring
+    # resolve_tpm() to succeed here would hard-fail this documented invocation
+    # before ever reaching the mantle-specific itpm/otpm check below. --itpm
+    # doubles as the informational tpm_limit value when --tpm is omitted --
+    # it's a real value the caller supplied, not an invented one.
+    if args.backend == 'mantle' and args.itpm is not None and args.otpm is not None:
+        tpm, tpm_source = (args.tpm, 'explicit') if args.tpm is not None else (args.itpm, 'mantle-itpm')
+    else:
+        try:
+            tpm, tpm_source = resolve_tpm(model_id, explicit_tpm=args.tpm)
+        except LookupError as e:
+            parser.error(str(e))
+
+    # Determine burndown rate: derive from provider+backend (see derive_default_burndown).
+    burndown_rate = derive_default_burndown(model_id, args.backend)
+
+    # Determine bytes per token ratio: explicit --bytes-per-token wins; otherwise
+    # derive from the model ID (see derive_default_bytes_per_token).
+    bytes_per_token = (
+        args.bytes_per_token
+        if args.bytes_per_token is not None
+        else derive_default_bytes_per_token(model_id)
+    )
+
+    # Calculate configuration
+    config_values = calculate_config(rpm, tpm, burndown_rate, args.burst_capacity,
+                                     bytes_per_token=bytes_per_token,
+                                     short_window_sec=args.short_window_sec,
+                                     long_window_sec=args.long_window_sec,
+                                     burst_fraction=args.burst_fraction,
+                                     queue_fraction=args.queue_fraction,
+                                     buffer_fraction=args.buffer_fraction)
+
+    # Tier 2: backend + split-quota fields. Runtime configs get backend='runtime'
+    # and are byte-identical to pre-Tier-2 behavior aside from the explicit marker.
+    api_style = args.api_style or ('messages' if args.backend == 'mantle' else 'converse')
+    config_values['backend'] = args.backend
+    config_values['api_style'] = api_style
+    # Even-spacing pacer target (queue processor). Only written when provided so
+    # existing configs are unaffected; queue_processor reads 0/absent as "disabled".
+    if args.queue_target_tpm is not None:
+        config_values['queue_target_tpm'] = args.queue_target_tpm
+    if args.backend == 'mantle':
+        if args.itpm is None or args.otpm is None:
+            parser.error("--backend mantle requires --itpm and --otpm")
+        configure_mantle_queue_only(
+            config_values, args.itpm, args.otpm,
+            queue_fraction=args.queue_fraction,
+            buffer_fraction=args.buffer_fraction,
+        )
+
+    if args.dry_run:
+        print(f"\n{'#'*60}")
+        print(f"# DRY RUN — resolving only. No boto3 DynamoDB resource will be")
+        print(f"# constructed and nothing will be written.")
+        print(f"{'#'*60}")
+
+    print(f"\nCreating model configuration...")
+    print(f"  backend: {config_values['backend']} | api_style: {config_values['api_style']}")
+    if args.backend == 'mantle':
+        print(f"  itpm_limit: {config_values['itpm_limit']} (burst {config_values['itpm_burst_capacity']})")
+        print(f"  otpm_limit: {config_values['otpm_limit']} (burst {config_values['otpm_burst_capacity']})")
+    print(f"{'='*60}")
+    print(f"Table: {SINGLE_TABLE_NAME}")
+    print(f"Model ID: {model_id}")
+    print(f"{'='*60}")
+    print(f"\nRPM Configuration:")
+    print(f"  rpm_limit: {config_values['rpm_limit']}")
+    print(f"  burst_capacity: {config_values['burst_capacity']}")
+    print(f"  burst_regeneration_rate: {config_values['burst_regeneration_rate']}")
+    print(f"  queue_capacity: {config_values['queue_capacity']}")
+    print(f"  queue_regeneration_rate: {config_values['queue_regeneration_rate']}")
+    print(f"  buffer_capacity: {config_values['buffer_capacity']}")
+    print(f"  queue_batch_size: {config_values['queue_batch_size']}")
+    print(f"\nTPM Configuration:")
+    print(f"  tpm_limit: {config_values['tpm_limit']} (source: {tpm_source})")
+    print(f"  tpm_burst_capacity: {config_values['tpm_burst_capacity']}")
+    print(f"  tpm_burst_regeneration_rate: {config_values['tpm_burst_regeneration_rate']}")
+    print(f"  tpm_queue_capacity: {config_values['tpm_queue_capacity']}")
+    print(f"  tpm_queue_regeneration_rate: {config_values['tpm_queue_regeneration_rate']}")
+    print(f"  tpm_buffer_capacity: {config_values['tpm_buffer_capacity']}")
+    print(f"  output_token_burndown_rate: {config_values['output_token_burndown_rate']}")
+    print(f"  bytes_per_token: {config_values['bytes_per_token']}")
+    print(f"\nAdmission Control (sliding-window read gate):")
+    print(f"  short_window_sec: {config_values['short_window_sec']} (rate smoothing)")
+    print(f"  long_window_sec: {config_values['long_window_sec']} (accuracy horizon; reconciled actuals dominate)")
+
+    # Create config (or, under --dry-run, only resolve it -- no AWS resource is
+    # constructed and nothing is written).
+    item = create_model_config(model_id, config_values, dry_run=args.dry_run)
+
+    if args.dry_run:
+        print(f"\nDRY RUN — config resolved successfully; nothing written")
+    else:
+        print(f"\nConfig created/updated successfully")
+    print(f"  PK: {item['pk']}")
+    print(f"  SK: {item['sk']}")
+
+    return {
+        'model_short': model_short,
+        'model_id': model_id,
+        'tpm': tpm,
+        'tpm_source': tpm_source,
+    }
+
+
 def main():
     global AWS_REGION, SINGLE_TABLE_NAME
-
-    # Deployment commands require live AWS access, while calculation helpers remain
-    # importable for offline tests.
-    config = config_loader.get_config_with_aws_check()
-    AWS_REGION = config.get('AWS_REGION', 'us-east-1')
-    SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
 
     parser = argparse.ArgumentParser(
         description='Create or update model configuration in the single table',
@@ -448,7 +637,7 @@ Examples:
     python scripts/create_model_config.py nova-2-lite --rpm 30
 
 Model short names:
-    nova-2-lite -> us.amazon.nova-2-lite-v1:0 (default RPM: 2000)
+    nova-2-lite -> us.amazon.nova-2-lite-v1:0 (token-only)
     sonnet-5    -> us.anthropic.claude-sonnet-5 (token-only)
     opus-5      -> us.anthropic.claude-opus-5 (token-only)
 
@@ -458,35 +647,48 @@ Model short names:
 
     parser.add_argument(
         'model',
-        help='Model short name (nova-2-lite, sonnet-5, opus-5, ...) or full model ID'
+        nargs='?',
+        default=None,
+        help='Model short name (nova-2-lite, sonnet-5, opus-5, ...) or full model ID. '
+             'Not required with --starter-package.'
+    )
+    parser.add_argument(
+        '--starter-package',
+        action='store_true',
+        help='Create/overwrite configs for every model in config/starter_models.json '
+             'instead of a single model. No positional model argument required.'
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Resolve and print the full config exactly as the real path would, but '
+             'never construct a boto3 DynamoDB resource or call put_item -- nothing '
+             'is written. Skips the config.env/AWS-access check entirely, so this '
+             'works with no deployed table and no SINGLE_TABLE_NAME set. Works for '
+             'both the single-model and --starter-package paths. Exits non-zero if '
+             'resolution itself fails.'
     )
     parser.add_argument(
         '--burst-capacity',
         type=int,
-        help='Override burst capacity (for testing). Default: 50%% of RPM'
+        help='Override burst capacity (for testing). Default: RPM * --burst-fraction, '
+             'which is 0 under the default --burst-fraction 0.0 (queue-only). Set >0 here '
+             'to re-enable the immediate path without changing the fractions.'
     )
     parser.add_argument(
         '--rpm',
         type=int,
-        help='Override RPM limit (opus=50, jamba=100, ...). --rpm 0 = no RPM gate. '
-             'Models absent from DEFAULT_RPM default to NO RPM gate (token-quota-only).'
+        help='Pin an explicit RPM gate. --rpm 0 = no RPM gate. RPM is retired as a '
+             'default dimension: every model resolves to NO RPM gate (token-quota-only) '
+             'unless --rpm is passed explicitly.'
     )
     parser.add_argument(
         '--tpm',
         type=int,
-        help='Override TPM limit. Default: model-specific (opus=40000, jamba=100000)'
-    )
-    parser.add_argument(
-        '--adaptive-shift-max',
-        type=float,
-        default=0,
-        help='Max fraction of burst capacity to shift to queue (0=disabled, 0.2=20%%). Default: 0'
-    )
-    parser.add_argument(
-        '--adaptive-queue-threshold',
-        type=int,
-        default=50,
-        help='Queue depth at which max shift applies. Default: 50'
+        help='Override TPM limit. Default: looked up from cache[\'profiles\'][model_id] '
+             '(.bedrock_quota_cache.json, populated by \'make refresh-quotas\'). REQUIRED '
+             'for mantle/bare on-demand model IDs, which have no inference profile and so '
+             'have no cache entry.'
     )
     parser.add_argument(
         '--short-window-sec',
@@ -554,126 +756,69 @@ Model short names:
 
     args = parser.parse_args()
 
-    # Resolve model ID
-    model_short = args.model.lower()
-    model_id = MODEL_MAP.get(model_short, args.model)
+    # Deployment commands require live AWS access, while --dry-run stays fully
+    # offline: no config.env read, no bedrock access check, and (in
+    # create_model_config) no boto3 DynamoDB resource construction at all.
+    if not args.dry_run:
+        config = config_loader.get_config_with_aws_check()
+        AWS_REGION = config.get('AWS_REGION', 'us-east-1')
+        SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
 
-    # Determine RPM.
-    #   Precedence: explicit --rpm wins; otherwise the per-model DEFAULT_RPM entry.
-    #   An unknown model (absent from DEFAULT_RPM) now resolves to None => NO RPM gate
-    #   (token-quota-only shape), NOT the old silent 50 fallback. The 50 fallback
-    #   derived queue_capacity=int(50*queue_fraction)=22 and queue_regen=0.375/s, which
-    #   Gate 3 reads as a ~0.375 rps 60s request cap — this crippled GPT-5.6 Luna/Sol
-    #   by 63x regardless of token headroom (B-019).
-    #   --rpm 0 explicitly means "no RPM gate" (mapped to None), NOT a zero-throughput
-    #   gate. Using an `is not None` test alone would let 0 flow to the else branch and
-    #   compute queue_capacity=int(0*frac)=0, gating the model to ZERO drain — strictly
-    #   worse than the bug. Any positive --rpm is honored verbatim.
-    if args.rpm is not None:
-        rpm = args.rpm if args.rpm != 0 else None
-    else:
-        rpm = DEFAULT_RPM.get(model_short, None)  # unknown model => no RPM gate
+    if args.starter_package:
+        if args.model is not None:
+            parser.error("--starter-package takes no positional model argument")
+        try:
+            with open(STARTER_MODELS_PATH, encoding='utf-8') as f:
+                starter_profile_ids = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            parser.error(f"could not read {STARTER_MODELS_PATH}: {e}")
 
-    # Determine TPM
-    if args.tpm:
-        tpm = args.tpm
-    else:
-        tpm = DEFAULT_TPM.get(model_short, 40000)  # Default to 40K if unknown model
+        try:
+            with open(QUOTA_CACHE_PATH, encoding='utf-8') as f:
+                cache = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            cache = {}
+        cached_profiles = cache.get('profiles', {})
 
-    # Warn (never error) when the model is unknown to the lookup tables so the operator
-    # knows invented defaults were applied rather than model-specific values. TPM keeps
-    # its historical 40000 fallback (behavior unchanged) — the warning just surfaces it.
-    if args.tpm is None and model_short not in DEFAULT_TPM:
+        # config/starter_models.json is now an explicit list of inference profile
+        # IDs (regional + global) -- no MODEL_MAP lookup and no ACTIVE-profile
+        # fan-out. With an explicit list there is nothing to fall back to: a
+        # listed profile ID absent from the per-profile cache (cache['profiles'],
+        # populated by get_bedrock_quotas.py), or present with tpm: null, means the
+        # cache refresh silently dropped/never joined it, and that must fail loudly
+        # -- and up front, before any config is written -- rather than let
+        # resolve_tpm() raise mid-loop after earlier profiles already wrote.
+        unresolved = [
+            pid for pid in starter_profile_ids
+            if pid not in cached_profiles or cached_profiles[pid].get('tpm') is None
+        ]
+        if unresolved:
+            parser.error(
+                "the following starter profile IDs have no usable tpm in "
+                f"{QUOTA_CACHE_PATH}'s cached profiles (missing entry or tpm: null): "
+                f"{', '.join(unresolved)}. Run 'make refresh-quotas' to refresh the "
+                "cache, or remove the ID from config/starter_models.json if it is no "
+                "longer ACTIVE."
+            )
+
         print(
-            f"WARNING: model '{model_short}' is absent from DEFAULT_TPM; using invented "
-            f"default tpm={tpm}. Pass --tpm N to set the real quota.",
-            file=sys.stderr,
+            f"Starter package: creating/overwriting configs for "
+            f"{len(starter_profile_ids)} inference profiles..."
         )
-    if args.rpm is None and model_short not in DEFAULT_RPM:
-        print(
-            f"WARNING: model '{model_short}' is absent from DEFAULT_RPM; applying NO RPM "
-            f"gate (rpm=None, token-quota-only shape). Pass --rpm N for an explicit RPM quota.",
-            file=sys.stderr,
-        )
+        summaries = []
+        for profile_id in starter_profile_ids:
+            summaries.append(process_model(profile_id, args, parser, model_id_override=profile_id))
 
-    # Determine burndown rate
-    burndown_rate = OUTPUT_BURNDOWN_RATE.get(model_short, 1.0)
+        print(f"\n{'='*60}")
+        print(f"Starter package summary: {len(summaries)} entries")
+        for s in summaries:
+            print(f"  {s['model_id']}: tpm={s['tpm']} (source: {s['tpm_source']})")
+        return
 
-    # Determine bytes per token ratio
-    bytes_per_token = (
-        args.bytes_per_token
-        if args.bytes_per_token is not None
-        else BYTES_PER_TOKEN.get(model_short, 4.0)
-    )
+    if args.model is None:
+        parser.error("model is required unless --starter-package is passed")
 
-    # Calculate configuration
-    config_values = calculate_config(rpm, tpm, burndown_rate, args.burst_capacity,
-                                     adaptive_shift_max=args.adaptive_shift_max,
-                                     adaptive_queue_threshold=args.adaptive_queue_threshold,
-                                     bytes_per_token=bytes_per_token,
-                                     short_window_sec=args.short_window_sec,
-                                     long_window_sec=args.long_window_sec,
-                                     burst_fraction=args.burst_fraction,
-                                     queue_fraction=args.queue_fraction,
-                                     buffer_fraction=args.buffer_fraction)
-
-    # Tier 2: backend + split-quota fields. Runtime configs get backend='runtime'
-    # and are byte-identical to pre-Tier-2 behavior aside from the explicit marker.
-    api_style = args.api_style or ('messages' if args.backend == 'mantle' else 'converse')
-    config_values['backend'] = args.backend
-    config_values['api_style'] = api_style
-    # Even-spacing pacer target (queue processor). Only written when provided so
-    # existing configs are unaffected; queue_processor reads 0/absent as "disabled".
-    if args.queue_target_tpm is not None:
-        config_values['queue_target_tpm'] = args.queue_target_tpm
-    if args.backend == 'mantle':
-        if args.itpm is None or args.otpm is None:
-            parser.error("--backend mantle requires --itpm and --otpm")
-        configure_mantle_queue_only(
-            config_values, args.itpm, args.otpm,
-            queue_fraction=args.queue_fraction,
-            buffer_fraction=args.buffer_fraction,
-        )
-
-    print(f"\nCreating model configuration...")
-    print(f"  backend: {config_values['backend']} | api_style: {config_values['api_style']}")
-    if args.backend == 'mantle':
-        print(f"  itpm_limit: {config_values['itpm_limit']} (burst {config_values['itpm_burst_capacity']})")
-        print(f"  otpm_limit: {config_values['otpm_limit']} (burst {config_values['otpm_burst_capacity']})")
-    print(f"{'='*60}")
-    print(f"Table: {SINGLE_TABLE_NAME}")
-    print(f"Model ID: {model_id}")
-    print(f"{'='*60}")
-    print(f"\nRPM Configuration:")
-    print(f"  rpm_limit: {config_values['rpm_limit']}")
-    print(f"  burst_capacity: {config_values['burst_capacity']}")
-    print(f"  burst_regeneration_rate: {config_values['burst_regeneration_rate']}")
-    print(f"  queue_capacity: {config_values['queue_capacity']}")
-    print(f"  queue_regeneration_rate: {config_values['queue_regeneration_rate']}")
-    print(f"  buffer_capacity: {config_values['buffer_capacity']}")
-    print(f"  queue_batch_size: {config_values['queue_batch_size']}")
-    print(f"\nTPM Configuration:")
-    print(f"  tpm_limit: {config_values['tpm_limit']}")
-    print(f"  tpm_burst_capacity: {config_values['tpm_burst_capacity']}")
-    print(f"  tpm_burst_regeneration_rate: {config_values['tpm_burst_regeneration_rate']}")
-    print(f"  tpm_queue_capacity: {config_values['tpm_queue_capacity']}")
-    print(f"  tpm_queue_regeneration_rate: {config_values['tpm_queue_regeneration_rate']}")
-    print(f"  tpm_buffer_capacity: {config_values['tpm_buffer_capacity']}")
-    print(f"  output_token_burndown_rate: {config_values['output_token_burndown_rate']}")
-    print(f"  bytes_per_token: {config_values['bytes_per_token']}")
-    print(f"\nAdmission Control (sliding-window read gate):")
-    print(f"  short_window_sec: {config_values['short_window_sec']} (rate smoothing)")
-    print(f"  long_window_sec: {config_values['long_window_sec']} (accuracy horizon; reconciled actuals dominate)")
-    print(f"\nAdaptive Capacity:")
-    print(f"  adaptive_shift_max: {config_values['adaptive_shift_max']} (0=disabled, 0.2=shift up to 20%)")
-    print(f"  adaptive_queue_threshold: {config_values['adaptive_queue_threshold']}")
-
-    # Create config
-    item = create_model_config(model_id, config_values)
-
-    print(f"\nConfig created/updated successfully")
-    print(f"  PK: {item['pk']}")
-    print(f"  SK: {item['sk']}")
+    process_model(args.model, args, parser)
 
 
 if __name__ == '__main__':
