@@ -227,21 +227,28 @@ echo ""
 
 # Refresh the quota cache and create the cache-driven starter package (only during
 # init). The `if <cmd>` form keeps either step from aborting setup under `set -e` --
-# get_bedrock_quotas.py already degrades gracefully on AccessDeniedException (empty
-# quotas/profiles, hardcoded fallback downstream), but this also protects against any
-# other unexpected failure so the starter package still gets a chance to run.
+# a quota-refresh failure leaves the cache with tpm: null for every profile (or no
+# `profiles` key at all if no cache file exists yet), which makes the starter-package
+# step below fail outright (parser.error, zero configs written) rather than fall back
+# to an invented value -- resolve_tpm() has no hardcoded fallback tier. Capturing
+# success/failure of each step here lets the "Setup Complete" banner below report
+# what actually happened instead of assuming both steps succeeded.
+QUOTA_REFRESH_OK=false
+STARTER_PACKAGE_OK=false
 if [ "$INIT_MODE" = true ]; then
     echo "Refreshing Bedrock quota cache..."
     if python scripts/get_bedrock_quotas.py; then
         echo "✅ Quota cache refreshed (.bedrock_quota_cache.json)"
+        QUOTA_REFRESH_OK=true
     else
-        echo "⚠️  Quota cache refresh failed (may need AWS credentials refresh or model access) — starter package will use hardcoded fallback values"
+        echo "⚠️  Quota cache refresh failed (may need AWS credentials refresh or model access) — the starter package below will have no usable TPM values and will fail to write any configs"
     fi
     echo ""
 
     echo "Creating starter model configurations..."
     if python scripts/create_model_config.py --starter-package; then
         echo "✅ Starter package created"
+        STARTER_PACKAGE_OK=true
     else
         echo "⚠️  Failed to create starter package (may need AWS credentials refresh or model access)"
     fi
@@ -263,13 +270,28 @@ if [ "$INIT_MODE" = true ]; then
     echo "Setup Complete!"
     echo "============================================================"
     echo ""
-    echo "✅ Starter package created: ${STARTER_PROFILE_COUNT} model configs across ${STARTER_BASE_MODEL_COUNT} starter models"
-    echo "   (nova-2-lite, sonnet-5, opus-5, gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra) —"
-    echo "   one entry per ACTIVE us./global. inference profile listed in config/starter_models.json"
-    echo ""
-    echo "Next steps:"
-    echo "  1. Inspect the starter package:"
-    echo "     make inspect-config MODEL=sonnet-5"
+    if [ "$STARTER_PACKAGE_OK" = true ]; then
+        echo "✅ Starter package created: ${STARTER_PROFILE_COUNT} model configs across ${STARTER_BASE_MODEL_COUNT} starter models"
+        if [ "$QUOTA_REFRESH_OK" = true ]; then
+            echo "   (nova-2-lite, sonnet-5, opus-5, gpt-5.6-luna, gpt-5.6-sol, gpt-5.6-terra) —"
+            echo "   one entry per ACTIVE us./global. inference profile listed in config/starter_models.json"
+        else
+            echo "   Note: the quota cache refresh above failed this run — these configs were resolved"
+            echo "   from a cache left over from a prior run, not a fresh refresh."
+        fi
+        echo ""
+        echo "Next steps:"
+        echo "  1. Inspect the starter package:"
+        echo "     make inspect-config MODEL=sonnet-5"
+    else
+        echo "⚠️  Starter package creation FAILED — 0 model configs written. See the warning above;"
+        echo "   run 'make refresh-quotas && make create-starter-configs' once the underlying issue"
+        echo "   (AWS credentials, IAM permissions, or model access) is resolved."
+        echo ""
+        echo "Next steps:"
+        echo "  1. Inspect a config after your first successful config creation:"
+        echo "     make inspect-config MODEL=<model>"
+    fi
     echo ""
     echo "  2. Refresh quotas any time account limits change, then recreate configs:"
     echo "     make refresh-quotas && make create-starter-configs"

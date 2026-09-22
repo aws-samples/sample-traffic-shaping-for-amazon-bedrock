@@ -13,7 +13,10 @@ LOCK_HEARTBEAT_INTERVAL = 30  # seconds between heartbeat refreshes
 
 # Token estimation constants
 DEFAULT_BYTES_PER_TOKEN = 4.0  # Conservative default for most models
-CLAUDE_BYTES_PER_TOKEN = 3.5   # Claude models use ~3.5 bytes per token
+# Unused: no import/reference anywhere in the repo (verified by repo-wide search).
+# Kept for reference/future use; the live per-model value comes from the CONFIG
+# record's bytes_per_token field, resolved at request time.
+CLAUDE_BYTES_PER_TOKEN = 3.5
 SAFETY_MARGIN = 1.1            # 10% over-estimation for rate limiting safety
 
 
@@ -36,14 +39,17 @@ def estimate_request_tokens(
     over-estimation is preferable to under-estimation for rate limiting.
 
     At request start, Bedrock deducts: input_tokens + (max_tokens * burndown_rate)
-    For Claude 3.7+: burndown_rate = 5 (output tokens cost 5x)
-    For all other models: burndown_rate = 1
+    burndown_rate and bytes_per_token are caller-supplied, per-model values --
+    this function does not compute or hardcode them. See
+    scripts/create_model_config.py's derive_default_burndown() and
+    derive_default_bytes_per_token() for how they're resolved per model, and
+    AWS's token-burndown documentation for the underlying per-model-family rule.
 
     Args:
         prompt: The input prompt text (None/empty = 0 input tokens)
         max_tokens: Maximum output tokens requested
-        burndown_rate: Output token multiplier (5 for Claude 3.7+, 1 for others)
-        bytes_per_token: Bytes per token ratio (3.5 for Claude, 4.0 default)
+        burndown_rate: Output token multiplier, resolved elsewhere per model
+        bytes_per_token: Bytes per token ratio, resolved elsewhere per model
 
     Returns:
         Estimated total TPM tokens consumed by this request
@@ -79,7 +85,8 @@ def estimate_request_tokens_split(
     Args:
         prompt: The input prompt text (None/empty = 0 input tokens)
         max_tokens: Maximum output tokens requested (1:1 oTPM estimate)
-        bytes_per_token: Bytes per token ratio (3.5 for Claude, 4.0 default)
+        bytes_per_token: Bytes per token ratio, resolved elsewhere per model
+            (see estimate_request_tokens() above)
 
     Returns:
         (input_tokens, output_tokens) tuple of ints

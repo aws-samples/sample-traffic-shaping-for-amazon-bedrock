@@ -14,11 +14,17 @@ Usage:
 
     # Override RPM for custom models
     python scripts/create_model_config.py custom-model --rpm 75
+
+    # Mantle bare model with split token quotas -- --tpm is optional here:
+    # when omitted, --itpm supplies the informational tpm_limit value.
+    python scripts/create_model_config.py opus-47-mantle --backend mantle \\
+        --itpm 10000000 --otpm 2000000
 """
 
 import sys
 import os
 import json
+import re
 import argparse
 import boto3
 from datetime import datetime, timezone, timedelta
@@ -46,6 +52,7 @@ STARTER_MODELS_PATH = os.path.join(_SCRIPT_DIR, '..', 'config', 'starter_models.
 MODEL_MAP = {
     # Next-gen Claude — runtime CRIS forms (no -v1 suffix on 4.7+).
     # Mantle bare form — use with --backend mantle --itpm 10000000 --otpm 2000000
+    # (--tpm is optional here: omitted, itpm supplies the informational tpm_limit).
     'opus-47-mantle': 'anthropic.claude-opus-4-7',
     'opus-48': 'us.anthropic.claude-opus-4-8',
     # Global CRIS form of Opus 4.7 — token-only.
@@ -84,21 +91,89 @@ MODEL_MAP = {
     'gpt-5.6-sol': 'us.openai.gpt-5.6-sol',
     'gpt-5.6-terra': 'us.openai.gpt-5.6-terra',
     'glm-5': 'zai.glm-5',                           # ON_DEMAND direct (no CRIS profile)
+    # Added 2026-09-21. Kimi K3 is INFERENCE_PROFILE-only (no ON_DEMAND, unlike the
+    # older Kimi K2.5/K2 Thinking) -- runtime CRIS, us. and global. both live.
+    'kimi-k3': 'us.moonshotai.kimi-k3',
+    'global-kimi-k3': 'global.moonshotai.kimi-k3',
 }
+
+# Models too new for AWS Service Quotas to have published a discoverable
+# rate-quota entry yet (confirmed live 2026-09-21: zero ListServiceQuotas rows
+# for either, unlike the older Kimi K2.5/K2 Thinking, which both have full
+# published RPM/TPM quotas). NOT a general-purpose fallback -- resolve_tpm()
+# only consults this after a real cache miss, tags the result
+# tpm_source='documented_default' (never confusable with 'cache'), and it is
+# scoped to exactly the entries below. Each is sourced from an authoritative
+# non-Service-Quotas document, cited in-line; re-verify against Service Quotas
+# periodically and delete the entry once AWS publishes it there.
+DOCUMENTED_QUOTA_DEFAULTS = {
+    # Kimi K3: 10M TPM, no RPM dimension (confirmed no RPM anywhere for it).
+    # Cited by repo owner 2026-09-21; re-verify against Service Quotas once
+    # AWS publishes a discoverable entry for this model.
+    'kimi-k3': 10_000_000,
+}
+
+
+def _documented_default_tpm(model_id: str):
+    """Last-resort, narrowly-scoped lookup for a model too new for Service
+    Quotas to have a discoverable entry. Returns None (never invents) for
+    anything not explicitly listed in DOCUMENTED_QUOTA_DEFAULTS."""
+    lowered = model_id.lower()
+    for key, tpm in DOCUMENTED_QUOTA_DEFAULTS.items():
+        if key in lowered:
+            return tpm
+    return None
+
+# Matches the Claude generation out of a model_id, e.g. "claude-opus-4-8" ->
+# ('4', '8'), "claude-sonnet-5" -> ('5', None). Used only by derive_default_burndown.
+_CLAUDE_VERSION_RE = re.compile(r'claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?')
+
 
 def derive_default_burndown(model_id: str, backend: str) -> float:
     """
     Output token burndown rate for a model, derived from its model ID and backend.
 
-    Anthropic/OpenAI models on a non-mantle (runtime) backend burn output tokens
-    at ~10x their TPM weight; every other case (mantle backend, or any other
-    provider) is the standard 1:1 burndown. Called unconditionally by
-    process_model() -- there is no per-alias override table.
+    mantle backend, and every provider not named below, burn 1:1 (1.0).
+
+    OpenAI models on a non-mantle (runtime) backend are a blanket 10.0: the only
+    runtime-CRIS-reachable OpenAI models today (gpt-5.6-luna/sol/terra) are 10x
+    per the GPT-5.6 Sol model card, and every other OpenAI MODEL_MAP entry is
+    mantle-only so it never reaches this branch.
+
+    Moonshot AI's Kimi K3 is also a blanket 10.0 (10M TPM at a 10x burndown
+    ratio -- "10M input tokens = 1M output TPM" -- cited by the repo owner
+    2026-09-21).
+
+    Anthropic models on a non-mantle backend are NOT on a monotonic version
+    curve (4.8 is higher than 5.0), so burndown is three literal buckets keyed
+    off the Claude generation in model_id, per AWS's token-burndown doc
+    (docs.aws.amazon.com/bedrock/latest/userguide/quotas-token-burndown.html,
+    checked 2026-09-21):
+      - major==4 and minor==8 (Claude 4.8)                       -> 15.0
+      - major>=5 (Claude Sonnet 5, Claude Opus 5, Claude Fable 5.1) -> 10.0
+      - everything else Anthropic (4.7 and below, or a model_id whose
+        Claude generation this regex can't parse -- the safe default
+        for an unrecognized shape, never the most-favorable 10x)   -> 5.0
+
+    Called unconditionally by process_model() -- there is no per-alias override
+    table.
     """
     if backend == 'mantle':
         return 1.0
     lowered = model_id.lower()
-    if 'anthropic' in lowered or 'openai' in lowered:
+    if 'anthropic' in lowered:
+        match = _CLAUDE_VERSION_RE.search(lowered)
+        if match:
+            major = int(match.group(1))
+            minor = int(match.group(2)) if match.group(2) else 0
+            if major == 4 and minor == 8:
+                return 15.0
+            if major >= 5:
+                return 10.0
+        return 5.0
+    if 'openai' in lowered:
+        return 10.0
+    if 'moonshot' in lowered:
         return 10.0
     return 1.0
 
@@ -192,6 +267,9 @@ def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
 
     profile = cache.get('profiles', {}).get(model_id)
     if profile is None:
+        documented = _documented_default_tpm(model_id)
+        if documented is not None:
+            return documented, 'documented_default'
         raise LookupError(
             f"'{model_id}' has no entry in {QUOTA_CACHE_PATH}'s cached profiles. "
             f"Mantle and bare on-demand model IDs (e.g. a *-mantle alias's expansion, "
@@ -203,6 +281,9 @@ def resolve_tpm(model_id: str, explicit_tpm: int = None) -> tuple:
 
     tpm = profile.get('tpm')
     if tpm is None:
+        documented = _documented_default_tpm(model_id)
+        if documented is not None:
+            return documented, 'documented_default'
         raise LookupError(
             f"'{model_id}' is in {QUOTA_CACHE_PATH}'s cached profiles but has "
             f"tpm: null (no matching Service Quotas value was found for it). Pass "
@@ -424,10 +505,23 @@ def process_model(model_arg: str, args, parser, model_id_override: str = None) -
 
     # Determine TPM: explicit --tpm > cache['profiles'][model_id]['tpm']. No third
     # (hardcoded) tier -- a model with no usable cache entry is a hard error.
-    try:
-        tpm, tpm_source = resolve_tpm(model_id, explicit_tpm=args.tpm)
-    except LookupError as e:
-        parser.error(str(e))
+    #
+    # Exception: --backend mantle with both --itpm and --otpm supplied needs no
+    # cache lookup at all. configure_mantle_queue_only() gates admission purely
+    # on itpm/otpm and ignores every tpm-derived burst/queue field -- tpm_limit
+    # is stored on the record as informational/legacy only. Mantle bare model
+    # IDs never have an inference-profile cache entry, so requiring
+    # resolve_tpm() to succeed here would hard-fail this documented invocation
+    # before ever reaching the mantle-specific itpm/otpm check below. --itpm
+    # doubles as the informational tpm_limit value when --tpm is omitted --
+    # it's a real value the caller supplied, not an invented one.
+    if args.backend == 'mantle' and args.itpm is not None and args.otpm is not None:
+        tpm, tpm_source = (args.tpm, 'explicit') if args.tpm is not None else (args.itpm, 'mantle-itpm')
+    else:
+        try:
+            tpm, tpm_source = resolve_tpm(model_id, explicit_tpm=args.tpm)
+        except LookupError as e:
+            parser.error(str(e))
 
     # Determine burndown rate: derive from provider+backend (see derive_default_burndown).
     burndown_rate = derive_default_burndown(model_id, args.backend)

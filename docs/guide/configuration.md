@@ -28,8 +28,8 @@ which map to `create_model_config.py` flags:
 | `BURST_CAPACITY` | `--burst-capacity` | Override the burst-bucket size (see [Capacity split](#capacity-split-burst--queue--buffer)). |
 | `RPM` | `--rpm` | Override the requests-per-minute quota. `RPM=0` means "no RPM gate" (token-quota-only). |
 | `TPM` | `--tpm` | Override the tokens-per-minute quota. |
-| `BURST_FRACTION` | `--burst-fraction` | Fraction of quota in the burst bucket (default `0.50`). |
-| `QUEUE_FRACTION` | `--queue-fraction` | Fraction of quota in the queue bucket (default `0.45`). |
+| `BURST_FRACTION` | `--burst-fraction` | Fraction of quota in the burst bucket (default `0.00` — queue-only). |
+| `QUEUE_FRACTION` | `--queue-fraction` | Fraction of quota in the queue bucket (default `0.85`). |
 | `QUEUE_TARGET_TPM` | `--queue-target-tpm` | Even-spacing pacer target for the queue drain (tokens/min). Omitted = disabled. |
 
 Flags accepted directly by `create_model_config.py` but **not** wired as make
@@ -47,27 +47,48 @@ variables (use them by editing the command, or extend the Makefile):
 
 ## Model aliases
 
-`MODEL` accepts these aliases (from the `MODEL_MAP` in `create_model_config.py`),
-or you can pass a full Bedrock model ID. Each alias carries model-specific default
-RPM, TPM, output-token burndown, and bytes-per-token values.
+`MODEL` accepts an alias from the `MODEL_MAP` table in `create_model_config.py`,
+or you can pass a full Bedrock model ID directly. `MODEL_MAP` is a pure
+ergonomic alias-to-model-ID table — see its own comment in the source — it
+carries **no** per-alias RPM, TPM, burndown, or bytes-per-token values. Every
+quota and capacity value is resolved at run time from the model ID, never from
+the alias:
 
-| Alias | Resolves to | Default RPM | Default TPM |
-|-------|-------------|-------------|-------------|
-| `opus-5` | `us.anthropic.claude-opus-5` | — (token-only) | 30,000,000 |
-| `sonnet-5` | `us.anthropic.claude-sonnet-5` | — (token-only) | 6,000,000 |
-| `nova-2-lite` | `us.amazon.nova-2-lite-v1:0` | 2,000 | 8,000,000 |
-| `nova-lite` | `us.amazon.nova-lite-v1:0` | 2,000 | 8,000,000 |
-| `nova-2-lite` | `us.amazon.nova-2-lite-v1:0` | 2,000 | 8,000,000 |
-| `nova-pro` | `us.amazon.nova-pro-v1:0` | 500 | 2,000,000 |
-| `opus-47` | `us.anthropic.claude-opus-4-7` | none (TPM-only) | 15,000,000 |
-| `sonnet-5` | `us.anthropic.claude-sonnet-5` | none (TPM-only) | 6,000,000 |
+- **RPM** is retired as a default dimension (owner decision 2026-09-16):
+  every model resolves to `rpm=None` (token-quota-only) unless you pass
+  `--rpm`/`RPM=` explicitly, in which case that value is pinned verbatim.
+- **TPM** always comes from `--tpm`/`TPM=` when given, otherwise from
+  `cache['profiles'][model_id]['tpm']` in `.bedrock_quota_cache.json`
+  (populated by `make refresh-quotas`). **There is no general-purpose
+  fallback value.** A model with no usable cache entry — no matching profile,
+  or a `tpm: null` entry — is a hard error that tells you to run
+  `make refresh-quotas` or pass `--tpm` explicitly (see `resolve_tpm()` in the
+  source). Mantle bare model IDs and other on-demand bare IDs never have an
+  inference profile and so can never appear in the cache — they always
+  require an explicit `--tpm`, or (for `--backend mantle` with both
+  `--itpm`/`--otpm` given) can omit `--tpm` entirely — see
+  [Mantle backend](#backend-fields-tier-2) below.
+  - **One narrow, named exception:** `DOCUMENTED_QUOTA_DEFAULTS` in
+    `create_model_config.py` — a small, explicitly-sourced dict for a model
+    too new for AWS Service Quotas to have published a discoverable rate
+    quota yet (e.g. Kimi K3: 10M TPM, cited by the repo owner — verified
+    2026-09-22 that Service Quotas genuinely has zero rows for K3 itself).
+    `resolve_tpm()` only consults this dict
+    *after* a real cache miss, tags the result `tpm_source='documented_default'`
+    (never confusable with `'cache'` in the printed summary), and it never
+    applies to any model not explicitly listed. This is not a return to the
+    old hardcoded-fallback design it replaced — every entry is scoped to one
+    named model with a cited source, meant to be deleted once AWS publishes
+    the real quota.
 
-The alias table in the script is the source of truth and includes additional
-entries (single-region and Mantle variants). Unknown models default to no RPM gate
-(token-quota-only) and a 40,000 TPM fallback, with a warning printed to stderr.
+Some aliases carry an inline comment in the source noting which backend/API
+style they're meant to be used with (e.g. a `-mantle` suffix alias), but that
+is documentation, not a value the script looks up.
 
-> **These TPM/RPM defaults are conservative placeholders.** Real per-account quotas
-> vary — check Service Quotas for your account and override with `TPM=` / `RPM=`.
+> **Real quota values live in your account, not in this repo.** Check Service
+> Quotas for your account, or read `.bedrock_quota_cache.json` after running
+> `make refresh-quotas`, for the current TPM figures — don't expect a fixed
+> number here to still be right.
 
 ---
 
@@ -103,8 +124,8 @@ RPM gate never binds and admission paces purely on TPM.
 | `tpm_queue_capacity` | TPM queue-bucket size (`tpm * queue_fraction`). |
 | `tpm_queue_regeneration_rate` | TPM queue refill rate (tokens/sec). |
 | `tpm_buffer_capacity` | TPM safety holdback (`tpm * buffer_fraction`). |
-| `output_token_burndown_rate` | Output-token multiplier for TPM accounting (e.g. `5.0` for the Claude 3.7+ family, `1.0` for most others). |
-| `bytes_per_token` | Bytes-per-token ratio used to estimate input tokens before the call (Claude ~3.5, Nova ~3.0, default 4.0). |
+| `output_token_burndown_rate` | Output-token multiplier for TPM accounting. Derived per-model by `derive_default_burndown()` in the script — see that function's docstring for the current per-model-family rates, and AWS's [token-burndown documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/quotas-token-burndown.html) for the underlying rule. As of this writing it's three buckets on the runtime backend: a specific Anthropic point release at the top rate, the rest of the current Anthropic + all runtime-reachable OpenAI models at a middle rate, and older Anthropic models at a lower rate; `mantle` backend is always `1.0` (Mantle gates oTPM directly, so burndown accounting is unnecessary). |
+| `bytes_per_token` | Bytes-per-token ratio used to estimate input tokens before the call. Derived by `derive_default_bytes_per_token()`: `3.0` for Nova, `4.0` for every other model including Claude. The Nova value is empirically validated (a 2026-07-10 load-test finding, cited in the function's docstring); the Claude/default `4.0` value is **not independently validated** anywhere in this repo or in public AWS documentation — treat it as an open question, not a settled fact, until someone runs that validation. |
 
 ### Queue and admission window
 
@@ -126,6 +147,13 @@ For `--backend mantle`, `--itpm` and `--otpm` are **required**; the config is
 forced queue-only (burst zeroed) and adds `itpm_limit`/`otpm_limit` plus their
 queue capacities and regeneration rates.
 
+`--tpm` is **optional** when `--backend mantle` is combined with both `--itpm`
+and `--otpm`: `configure_mantle_queue_only()` gates admission purely on
+iTPM/oTPM, so the generic `tpm_limit` field is informational/legacy only in
+this case. When `--tpm` is omitted, `tpm_limit` defaults to the `--itpm` value
+instead of requiring a (nonexistent) quota-cache entry for a mantle bare model
+ID. If `--tpm` is passed explicitly, it wins as usual.
+
 > **Runtime fields set by the Lambdas, not by `create-config`.** The operator
 > runbook references `max_tokens_per_request` (per-request output cap, default
 > 4096) and `circuit_breaker_disabled`. These are read at request time with
@@ -139,11 +167,13 @@ queue capacities and regeneration rates.
 
 Both the RPM and the TPM quotas are split the same way, using three fractions:
 
-- **burst** (`burst_fraction`, default `0.50`) — capacity for requests admitted
-  immediately and sent straight to Bedrock.
-- **queue** (`queue_fraction`, default `0.45`) — capacity for overflow that gets
+- **burst** (`burst_fraction`, default `0.00`) — capacity for requests admitted
+  immediately and sent straight to Bedrock. Zero by default: `calculate_config()`
+  ships queue-only, with `burst_capacity` resolving to `0` (the admission gate's
+  "burst disabled — route everything to the queue" state).
+- **queue** (`queue_fraction`, default `0.85`) — capacity for overflow that gets
   enqueued and drained at pace.
-- **buffer** (`buffer_fraction`, default `0.05`) — a safety holdback.
+- **buffer** (`buffer_fraction`, default `0.15`) — a safety holdback.
 
 The three fractions do **not** have to sum to 1.0; the buffer is an independent
 holdback and does not need to sum with the other two. `burst_fraction` and
@@ -178,7 +208,10 @@ used by the README Quick start walkthrough and `make test`.
 make create-config MODEL=nova-2-lite
 ```
 
-Uses Jamba's default RPM (100) and TPM (100,000), split 0/85/15.
+`nova-2-lite` gets no `--rpm`, so `rpm_limit` resolves to `None` (token-quota-only).
+`tpm_limit` comes from `cache['profiles'][<model_id>]['tpm']` in
+`.bedrock_quota_cache.json` — run `make refresh-quotas` first if that entry is
+missing or stale. Split 0/85/15 (queue-only, the script's default fractions).
 
 ### Set an explicit RPM and TPM
 

@@ -74,8 +74,8 @@ Every request resolves to exactly one terminal outcome, readable via `GET /resul
   DynamoDB, EventBridge, S3, SQS, and KMS resources).
 - AWS CLI installed and configured — verify with `aws sts get-caller-identity`. If you use AWS SSO
   and your session expired: `aws sso login --profile your-profile`.
-- Bedrock model access enabled in your account and region for at least one model (Nova, Jamba, or
-  Claude). The shaper calls Bedrock on your behalf.
+- Bedrock model access enabled in your account and region for at least one model (Nova, Claude, or
+  another supported model). The shaper calls Bedrock on your behalf.
 
 | Tool | Version | Notes |
 |------|---------|-------|
