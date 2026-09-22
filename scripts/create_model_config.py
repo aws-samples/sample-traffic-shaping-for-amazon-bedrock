@@ -107,14 +107,10 @@ MODEL_MAP = {
 # non-Service-Quotas document, cited in-line; re-verify against Service Quotas
 # periodically and delete the entry once AWS publishes it there.
 DOCUMENTED_QUOTA_DEFAULTS = {
-    # Kimi K3: 100M TPM, no RPM dimension (confirmed no RPM anywhere for it).
-    # Source: AWS-internal Highspot Bedrock model-limits page, cited by repo
-    # owner 2026-09-22 -- matches the published Kimi K2.5 family figure
-    # (100M TPM in Service Quotas); revised up from an initial 10M citation
-    # (2026-09-21) once the family precedent was checked. A live baseline
-    # burst at 3x the 10M figure never throttled at all, consistent with the
-    # true ceiling being higher.
-    'kimi-k3': 100_000_000,
+    # Kimi K3: 10M TPM, no RPM dimension (confirmed no RPM anywhere for it).
+    # Cited by repo owner 2026-09-21; re-verify against Service Quotas once
+    # AWS publishes a discoverable entry for this model.
+    'kimi-k3': 10_000_000,
 }
 
 
@@ -145,8 +141,8 @@ def derive_default_burndown(model_id: str, backend: str) -> float:
     mantle-only so it never reaches this branch.
 
     Moonshot AI's Kimi K3 is also a blanket 10.0 (10M TPM at a 10x burndown
-    ratio -- "10M input tokens = 1M output TPM" -- per the AWS-internal
-    Highspot Bedrock model-limits page, cited by the repo owner 2026-09-21).
+    ratio -- "10M input tokens = 1M output TPM" -- cited by the repo owner
+    2026-09-21).
 
     Anthropic models on a non-mantle backend are NOT on a monotonic version
     curve (4.8 is higher than 5.0), so burndown is three literal buckets keyed

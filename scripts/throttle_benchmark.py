@@ -73,7 +73,7 @@ FEASIBLE = [
     ("gpt-5.6-terra",   "us.openai.gpt-5.6-terra"),
     # Kimi K3: no Service Quotas entry exists yet (confirmed live 2026-09-21).
     # resolve_live_tpm() falls through to create_model_config's documented
-    # default (10M TPM, source: internal Highspot page) rather than skipping.
+    # default (10M TPM) rather than skipping.
     ("kimi-k3",         "us.moonshotai.kimi-k3"),
     ("opus-5",          "us.anthropic.claude-opus-5"),  # LAST — burst disrupts this session's Opus quota
 ]
@@ -248,9 +248,9 @@ def main():
     ap.add_argument("--drain-cap-s", type=int, default=300,
                      help="max seconds to wait for the shaper's queue to fully drain before "
                           "counting the rest as still-queued (not failed). Raise this for a "
-                          "high-quota model at a real multiplier -- e.g. Kimi K3 at 100M TPM "
-                          "and --over 3 needs ~7500 requests, which the default 300s window "
-                          "cannot fully drain at the observed ~5-8 req/s pace.")
+                          "high-quota model at a real multiplier -- a large request count "
+                          "can outrun the default 300s window at the observed ~5-8 req/s "
+                          "drain pace.")
     args = ap.parse_args()
 
     sel = set(args.models.split(",")) if args.models else None
