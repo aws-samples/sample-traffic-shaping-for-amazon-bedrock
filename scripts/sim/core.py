@@ -109,11 +109,7 @@ class SimResult:
     @property
     def effective_actual_tps(self) -> float:
         """Bedrock-charged tokens per second over the full run."""
-        return (
-            self.total_actual_tokens / self.total_sim_time
-            if self.total_sim_time > 0
-            else 0.0
-        )
+        return self.total_actual_tokens / self.total_sim_time if self.total_sim_time > 0 else 0.0
 
     def max_actual_tokens_in_rolling_window(self, window_sec: float) -> int:
         """Peak ACTUAL (Bedrock-charged) token sum in any rolling window."""
@@ -145,19 +141,13 @@ class SimResult:
 
     @property
     def effective_rps(self) -> float:
-        return (
-            self.total_dispatched / self.total_sim_time
-            if self.total_sim_time > 0
-            else 0.0
-        )
+        return self.total_dispatched / self.total_sim_time if self.total_sim_time > 0 else 0.0
 
     @property
     def effective_tps(self) -> float:
         """Tokens per second (token throughput over the full sim duration)."""
         return (
-            self.total_tokens_dispatched / self.total_sim_time
-            if self.total_sim_time > 0
-            else 0.0
+            self.total_tokens_dispatched / self.total_sim_time if self.total_sim_time > 0 else 0.0
         )
 
     def total_sleep_time(self) -> float:
@@ -259,9 +249,7 @@ def make_uniform(n: int, tokens: int) -> List[Item]:
 def make_mixed(n: int, low: int, high: int, seed: int = 42) -> List[Item]:
     """n items with token count drawn uniformly from [low, high]."""
     rng = random.Random(seed)
-    return [
-        Item(tokens=min(rng.randint(low, high), MAX_TOTAL_TOKENS)) for _ in range(n)
-    ]
+    return [Item(tokens=min(rng.randint(low, high), MAX_TOTAL_TOKENS)) for _ in range(n)]
 
 
 def make_heavy_tail_ranged(
@@ -311,6 +299,4 @@ def make_items_for_preset(
             large_pct=preset.spike_pct,
             seed=seed,
         )
-    return make_mixed(
-        num_items, low=preset.total_low, high=preset.total_high, seed=seed
-    )
+    return make_mixed(num_items, low=preset.total_low, high=preset.total_high, seed=seed)

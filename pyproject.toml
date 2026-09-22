@@ -49,6 +49,18 @@ skips = [
   "*/sim/*",
 ]
 
+# black configuration.
+#
+# Defaults (88-char lines, quote normalization to double) turn a mechanical
+# reformat into a much noisier diff than the actual style question warrants:
+# every single-quoted string flips quote marks, and any def/call that doesn't
+# fit in 88 chars explodes to one-argument-per-line. Widening to 100 and
+# keeping existing quote style cuts that diff substantially while still
+# giving `black --check` a real, enforced answer.
+[tool.black]
+line-length = 100
+skip-string-normalization = true
+
 # mypy configuration.
 #
 # This repo doesn't import its own modules through the `infrastructure`/`scripts`

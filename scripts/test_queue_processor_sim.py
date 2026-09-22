@@ -104,9 +104,7 @@ def run_current_algo(
 
         result._db_reads += 1
         now = clock.now
-        recent_2s = sum(
-            1 for ts, _ in result.dispatch_events if now - ts < short_window_sec
-        )
+        recent_2s = sum(1 for ts, _ in result.dispatch_events if now - ts < short_window_sec)
         headroom = max(0, short_window_cap - recent_2s)
 
         if headroom <= 0:
@@ -114,9 +112,7 @@ def run_current_algo(
             clock.sleep(1.0)
             continue
 
-        avail_60s = queue_capacity - sum(
-            1 for ts, _ in result.dispatch_events if now - ts < 60.0
-        )
+        avail_60s = queue_capacity - sum(1 for ts, _ in result.dispatch_events if now - ts < 60.0)
         if avail_60s <= 0:
             result.sleep_events.append((clock.now, 1.0))
             clock.sleep(1.0)
@@ -196,9 +192,7 @@ def run_proposed_algo(
 
             r2 = recent_count(short_window_sec)
             if r2 >= short_window_cap:
-                in_win = [
-                    ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec
-                ]
+                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 sleep_for = max(0.001, (oldest + short_window_sec) - clock.now + 0.005)
                 result.sleep_events.append((clock.now, sleep_for))
@@ -327,9 +321,7 @@ def run_proposed_token_aware(
             # ── Gate 1: RPM 2s window ─────────────────────────────────────────
             r2 = recent_count(short_window_sec)
             if r2 >= short_window_cap:
-                in_win = [
-                    ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec
-                ]
+                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 sleep_for = max(0.001, (oldest + short_window_sec) - clock.now + 0.005)
                 result.sleep_events.append((clock.now, sleep_for))
@@ -350,13 +342,9 @@ def run_proposed_token_aware(
                             if ts >= clock.now - short_window_sec
                         ]
                         newest = (
-                            max(ts for ts, _ in in_win)
-                            if in_win
-                            else clock.now - short_window_sec
+                            max(ts for ts, _ in in_win) if in_win else clock.now - short_window_sec
                         )
-                        sleep_for = max(
-                            0.001, (newest + short_window_sec) - clock.now + 0.005
-                        )
+                        sleep_for = max(0.001, (newest + short_window_sec) - clock.now + 0.005)
                         if verbose:
                             print(
                                 f"  t={clock.now:.2f}  Oversized item "
@@ -493,8 +481,7 @@ def print_result_summary(result: SimResult, cfg: SimConfig) -> None:
         v = result.token_window_violations(60.0, q.tpm_capacity)
         flag = "  ⚠ VIOLATIONS" if v > 0 else ""
         print(
-            f"  Peak tok  / 60s window  : {peak_tok_60s:>10,}  "
-            f"(cap={q.tpm_capacity:,}){flag}"
+            f"  Peak tok  / 60s window  : {peak_tok_60s:>10,}  " f"(cap={q.tpm_capacity:,}){flag}"
         )
 
 
@@ -654,11 +641,7 @@ def run_scenario(cfg: SimConfig, verbose: bool = False) -> bool:
     print(f"  {'Algorithm':<44} {'2s tok violations':>18} {'60s tok violations':>18}")
     print(f"  {'─'*44} {'─'*18} {'─'*18}")
     for r in (r_current, r_proposed, r_token):
-        v2s = (
-            r.token_window_violations(cfg.short_window_sec, q.tpm_2s_cap)
-            if q.tpm_2s_cap
-            else 0
-        )
+        v2s = r.token_window_violations(cfg.short_window_sec, q.tpm_2s_cap) if q.tpm_2s_cap else 0
         v60s = r.token_window_violations(60.0, q.tpm_capacity) if q.tpm_capacity else 0
         i2 = "⚠ " if v2s > 0 else "✅"
         i60 = "⚠ " if v60s > 0 else "✅"

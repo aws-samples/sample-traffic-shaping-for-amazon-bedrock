@@ -143,9 +143,7 @@ def run_burst_test(count=5, model_id=None):
                 r["request_index"] = idx
                 results.append(r)
             except Exception as e:
-                results.append(
-                    {"request_index": idx, "status": 0, "body": str(e), "elapsed_ms": 0}
-                )
+                results.append({"request_index": idx, "status": 0, "body": str(e), "elapsed_ms": 0})
     results.sort(key=lambda r: r.get("request_index", 0))
     return results
 
@@ -788,12 +786,8 @@ DASHBOARD_HTML_BYTES = DASHBOARD_HTML.encode()
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Bedrock Traffic Shaper — Test Dashboard"
-    )
-    parser.add_argument(
-        "--port", type=int, default=8080, help="Port to listen on (default: 8080)"
-    )
+    parser = argparse.ArgumentParser(description="Bedrock Traffic Shaper — Test Dashboard")
+    parser.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
     parser.add_argument(
         "--host",
         default=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),

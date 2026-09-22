@@ -133,12 +133,8 @@ Examples:
     parser.add_argument(
         "--model", type=str, help="Model ID or alias (nova-2-lite, sonnet-5, opus-5)"
     )
-    parser.add_argument(
-        "--num-requests", type=int, help="Number of requests (default: config.env)"
-    )
-    parser.add_argument(
-        "--max-workers", type=int, help="Concurrent threads (default: config.env)"
-    )
+    parser.add_argument("--num-requests", type=int, help="Number of requests (default: config.env)")
+    parser.add_argument("--max-workers", type=int, help="Concurrent threads (default: config.env)")
     parser.add_argument(
         "--submission-duration",
         type=int,
@@ -194,12 +190,8 @@ BEDROCK_MODEL_ID = (
     else config.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
 )
 SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
-NUM_REQUESTS = (
-    args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
-)
-MAX_WORKERS = (
-    args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
-)
+NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
+MAX_WORKERS = args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
 SUBMISSION_DURATION = (
     args.submission_duration
     if args.submission_duration is not None
@@ -211,9 +203,7 @@ MAX_WAIT = args.max_wait
 HEADROOM = args.headroom
 
 if args.tpm_limit is None and args.rpm_limit is None:
-    print(
-        "ERROR: one of --tpm-limit or --rpm-limit is required (the quota to pace against)."
-    )
+    print("ERROR: one of --tpm-limit or --rpm-limit is required (the quota to pace against).")
     sys.exit(1)
 
 PACE_MODE = "TPM" if args.tpm_limit is not None else "RPM"
@@ -344,9 +334,7 @@ def test_direct_bedrock_leaky():
                 )
 
         if SUBMISSION_DURATION > 0:
-            print(
-                f"\n\nAll requests submitted. Waiting for bucket drain + completion..."
-            )
+            print(f"\n\nAll requests submitted. Waiting for bucket drain + completion...")
 
         completed = 0
         for future in as_completed(futures):
@@ -371,9 +359,7 @@ def test_direct_bedrock_leaky():
 
     def pct(sorted_list, p):
         return (
-            sorted_list[min(len(sorted_list) - 1, int(len(sorted_list) * p))]
-            if sorted_list
-            else 0
+            sorted_list[min(len(sorted_list) - 1, int(len(sorted_list) * p))] if sorted_list else 0
         )
 
     print(f"\n\n{'='*60}")
@@ -383,15 +369,9 @@ def test_direct_bedrock_leaky():
     print(f"  Success Rate")
     print(f"  {'-'*40}")
     print(f"  Total requests:       {NUM_REQUESTS}")
-    print(
-        f"  Successful:           {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)"
-    )
-    print(
-        f"  Throttled (429):      {throttle_count} ({throttle_count/NUM_REQUESTS*100:.1f}%)"
-    )
-    print(
-        f"  Dropped (bucket wait):{timeout_count} ({timeout_count/NUM_REQUESTS*100:.1f}%)"
-    )
+    print(f"  Successful:           {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)")
+    print(f"  Throttled (429):      {throttle_count} ({throttle_count/NUM_REQUESTS*100:.1f}%)")
+    print(f"  Dropped (bucket wait):{timeout_count} ({timeout_count/NUM_REQUESTS*100:.1f}%)")
     print(f"  Other errors:         {other_errors}")
     print(f"")
     print(f"  API call amplification: 1x (no retries — same as no-retry and shaper)")
@@ -417,12 +397,8 @@ def test_direct_bedrock_leaky():
         f"  make test-budget-manager ARGS=\"--model {args.model or 'nova-2-lite'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\""
     )
     if throttle_count > 0:
-        print(
-            f"\n  {throttle_count} requests STILL throttled despite pacing — client-side buckets"
-        )
-        print(
-            f"  drift from Bedrock's real quota clock and can't coordinate across clients."
-        )
+        print(f"\n  {throttle_count} requests STILL throttled despite pacing — client-side buckets")
+        print(f"  drift from Bedrock's real quota clock and can't coordinate across clients.")
     if timeout_count > 0:
         print(
             f"  {timeout_count} requests dropped after waiting {MAX_WAIT:.0f}s — no durable queue, unlike the shaper."

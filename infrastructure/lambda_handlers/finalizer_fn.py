@@ -121,9 +121,7 @@ def _finalize_one(dynamo, detail):
         # dependence, no control-plane call.
         current_state = None
         try:
-            resp = dynamo.single_table.get_item(
-                Key={"pk": f"REQUEST#{request_id}", "sk": "STATUS"}
-            )
+            resp = dynamo.single_table.get_item(Key={"pk": f"REQUEST#{request_id}", "sk": "STATUS"})
             current_state = (resp.get("Item") or {}).get("state")
         except Exception as e:  # noqa: BLE001 — degrade to timed_out on read failure
             print(f"WARNING: finalizer GetItem failed for request_id={request_id}: {e}")
@@ -166,8 +164,7 @@ def _finalize_one(dynamo, detail):
         # A per-request writer already committed a terminal — expected on the
         # happy-ish path where a real reason was recorded before timeout fired.
         print(
-            f"Finalizer no-op (already terminal): request_id={request_id}, "
-            f"sfn_status={status}"
+            f"Finalizer no-op (already terminal): request_id={request_id}, " f"sfn_status={status}"
         )
 
     return {
@@ -189,9 +186,7 @@ def handler(event, context):
     if records:
         results = []
         for rec in records:
-            detail = (
-                rec.get("detail") or _load_json(rec.get("body")).get("detail") or {}
-            )
+            detail = rec.get("detail") or _load_json(rec.get("body")).get("detail") or {}
             results.append(_finalize_one(dynamo, detail))
         return {"status": "ok", "results": results}
 

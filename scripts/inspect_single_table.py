@@ -73,12 +73,8 @@ def inspect_model_config(model_id: str):
         print(f"    buffer_capacity: {config.get('buffer_capacity', 'N/A')}")
         print(f"\n  RPM Rate Limits:")
         print(f"    rpm_limit: {config.get('rpm_limit', 'N/A')}")
-        print(
-            f"    burst_regeneration_rate: {config.get('burst_regeneration_rate', 'N/A')}"
-        )
-        print(
-            f"    queue_regeneration_rate: {config.get('queue_regeneration_rate', 'N/A')}"
-        )
+        print(f"    burst_regeneration_rate: {config.get('burst_regeneration_rate', 'N/A')}")
+        print(f"    queue_regeneration_rate: {config.get('queue_regeneration_rate', 'N/A')}")
         print(f"\n  TPM Rate Limits:")
         print(f"    tpm_limit: {config.get('tpm_limit', 'N/A')}")
         print(f"    tpm_burst_capacity: {config.get('tpm_burst_capacity', 'N/A')}")
@@ -90,9 +86,7 @@ def inspect_model_config(model_id: str):
             f"    tpm_queue_regeneration_rate: {config.get('tpm_queue_regeneration_rate', 'N/A')}"
         )
         print(f"    tpm_buffer_capacity: {config.get('tpm_buffer_capacity', 'N/A')}")
-        print(
-            f"    output_token_burndown_rate: {config.get('output_token_burndown_rate', 'N/A')}"
-        )
+        print(f"    output_token_burndown_rate: {config.get('output_token_burndown_rate', 'N/A')}")
         print(f"\n  Queue Settings:")
         print(f"    queue_batch_size: {config.get('queue_batch_size', 'N/A')}")
 
@@ -137,9 +131,7 @@ def inspect_model_config(model_id: str):
         sys.exit(1)
 
 
-def inspect_consumption_records(
-    model_id: str, capacity_mode="BURST", limit=10, show_tpm=False
-):
+def inspect_consumption_records(model_id: str, capacity_mode="BURST", limit=10, show_tpm=False):
     """
     Inspect consumption records using DynamoService (1:1 with Lambda code).
 
@@ -239,9 +231,7 @@ def inspect_queue_items(model_id: str, limit=10):
             table = dynamodb.Table(SINGLE_TABLE_NAME)
 
             response = table.query(
-                KeyConditionExpression=Key("pk").eq(
-                    f"MODEL#{full_model_id}#QUEUE#ITEMS"
-                ),
+                KeyConditionExpression=Key("pk").eq(f"MODEL#{full_model_id}#QUEUE#ITEMS"),
                 Limit=limit,
                 ScanIndexForward=True,  # Oldest first (FIFO order)
             )
@@ -300,18 +290,12 @@ e.g. nova-2-lite, sonnet-5, opus-5, haiku-4-5. A full Bedrock model ID also work
         default=DEFAULT_MODEL,
         help=f"Model alias from MODEL_MAP or a full model ID (default: {DEFAULT_MODEL})",
     )
-    parser.add_argument(
-        "--limit", type=int, default=10, help="Max items to show (default: 10)"
-    )
+    parser.add_argument("--limit", type=int, default=10, help="Max items to show (default: 10)")
 
     # Action flags (mutually exclusive)
     action_group = parser.add_mutually_exclusive_group(required=True)
-    action_group.add_argument(
-        "--config", action="store_true", help="Inspect model configuration"
-    )
-    action_group.add_argument(
-        "--queue", action="store_true", help="Inspect queue items"
-    )
+    action_group.add_argument("--config", action="store_true", help="Inspect model configuration")
+    action_group.add_argument("--queue", action="store_true", help="Inspect queue items")
     action_group.add_argument(
         "--consumption", action="store_true", help="Inspect consumption records"
     )

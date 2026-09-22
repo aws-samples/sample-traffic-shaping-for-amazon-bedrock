@@ -16,17 +16,10 @@ import pathlib
 from collections import deque
 
 # Import the queue processor handler from the Lambda handlers path.
-HANDLERS = (
-    pathlib.Path(__file__).resolve().parents[1] / "infrastructure" / "lambda_handlers"
-)
+HANDLERS = pathlib.Path(__file__).resolve().parents[1] / "infrastructure" / "lambda_handlers"
 sys.path.insert(0, str(HANDLERS))
 # The handler imports the shared layer at module load.
-LAYER = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "infrastructure"
-    / "lambda_layer"
-    / "python"
-)
+LAYER = pathlib.Path(__file__).resolve().parents[1] / "infrastructure" / "lambda_layer" / "python"
 sys.path.insert(0, str(LAYER))
 
 from queue_processor import _flat_tpm_estimate, _token_gate_sleep  # noqa: E402

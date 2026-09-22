@@ -85,12 +85,7 @@ def test_burndown_claude_5_plus_is_10x():
 def test_burndown_claude_4_7_and_below_is_5x():
     assert derive_default_burndown("anthropic.claude-opus-4-7", "runtime") == 5.0
     assert derive_default_burndown("us.anthropic.claude-sonnet-4-6", "runtime") == 5.0
-    assert (
-        derive_default_burndown(
-            "us.anthropic.claude-haiku-4-5-20251001-v1:0", "runtime"
-        )
-        == 5.0
-    )
+    assert derive_default_burndown("us.anthropic.claude-haiku-4-5-20251001-v1:0", "runtime") == 5.0
 
 
 def test_burndown_unrecognized_anthropic_shape_defaults_to_5x_not_10x():
@@ -142,9 +137,7 @@ def test_mantle_backend_resolves_tpm_from_itpm_without_explicit_tpm():
     assert summary["tpm_source"] == "mantle-itpm"
 
 
-def test_resolve_tpm_falls_through_to_documented_default_on_cache_miss(
-    tmp_path, monkeypatch
-):
+def test_resolve_tpm_falls_through_to_documented_default_on_cache_miss(tmp_path, monkeypatch):
     """Kimi K3 has no Service Quotas entry yet (verified live 2026-09-21), so
     it's absent from cache['profiles'] entirely -- resolve_tpm must fall
     through to the documented default rather than raising, and tag the
@@ -159,9 +152,7 @@ def test_resolve_tpm_falls_through_to_documented_default_on_cache_miss(
     assert source == "documented_default"
 
 
-def test_resolve_tpm_documented_default_also_covers_a_present_but_null_entry(
-    tmp_path, monkeypatch
-):
+def test_resolve_tpm_documented_default_also_covers_a_present_but_null_entry(tmp_path, monkeypatch):
     """Same fallback, but for the shape where get_bedrock_quotas.py DID join a
     profile but couldn't match a quota name (tpm: null), not just a missing key."""
     cache_path = tmp_path / "quota_cache.json"

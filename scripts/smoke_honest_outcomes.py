@@ -47,9 +47,7 @@ def _load_api_url(explicit):
                     return line.split("=", 1)[1].strip().rstrip("/")
     except FileNotFoundError:
         pass
-    sys.exit(
-        "API_GATEWAY_URL not found — pass --api-url or generate config.env (make deploy)."
-    )
+    sys.exit("API_GATEWAY_URL not found — pass --api-url or generate config.env (make deploy).")
 
 
 def _signed_request(method, url, body=None):
@@ -63,9 +61,7 @@ def _signed_request(method, url, body=None):
         headers={"Content-Type": "application/json"} if data else {},
     )
     SigV4Auth(creds, SERVICE, REGION).add_auth(req)
-    urllib_req = urllib.request.Request(
-        url, data=data, headers=dict(req.headers), method=method
-    )
+    urllib_req = urllib.request.Request(url, data=data, headers=dict(req.headers), method=method)
     try:
         resp = urllib.request.urlopen(
             urllib_req, timeout=30
@@ -140,9 +136,7 @@ def main():
 
     submissions = []
     for arm in arms:
-        submissions.append(
-            _submit(api_url, arm, args.model, f"Smoke test via {arm}. Reply OK.")
-        )
+        submissions.append(_submit(api_url, arm, args.model, f"Smoke test via {arm}. Reply OK."))
 
     print("\nPolling /result for each request...\n")
     results = []
@@ -191,9 +185,7 @@ def main():
             f"⚠ {len(unresolved)} request(s) did NOT resolve a terminal outcome (still pending / no id)."
         )
         sys.exit(1)
-    print(
-        "All requests resolved a terminal outcome — honest-outcomes contract is live."
-    )
+    print("All requests resolved a terminal outcome — honest-outcomes contract is live.")
 
 
 if __name__ == "__main__":

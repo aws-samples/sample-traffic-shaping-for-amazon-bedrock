@@ -138,13 +138,9 @@ class RuntimeConverseClient(BedrockClient):
 
     def __init__(self, model_config: Optional[Dict[str, Any]] = None, client=None):
         self._config = model_config or {}
-        self._client = client or boto3.client(
-            "bedrock-runtime", config=_NO_RETRY_CONFIG
-        )
+        self._client = client or boto3.client("bedrock-runtime", config=_NO_RETRY_CONFIG)
         self._burndown = float(self._config.get("output_token_burndown_rate", 1.0))
-        self._bytes_per_token = float(
-            self._config.get("bytes_per_token", DEFAULT_BYTES_PER_TOKEN)
-        )
+        self._bytes_per_token = float(self._config.get("bytes_per_token", DEFAULT_BYTES_PER_TOKEN))
 
     def estimate_tokens(self, prompt: Optional[str], max_tokens: int) -> TokenEstimate:
         input_tokens = _estimate_input_tokens(prompt, self._bytes_per_token)
@@ -196,9 +192,7 @@ class RuntimeConverseClient(BedrockClient):
             actual_in = usage.get("inputTokens")
             actual_out = usage.get("outputTokens")
 
-            print(
-                f"Bedrock invocation successful: model={model_id}, duration={duration_ms:.2f}ms"
-            )
+            print(f"Bedrock invocation successful: model={model_id}, duration={duration_ms:.2f}ms")
             return BedrockResponse(
                 success=True,
                 response_body=response,
@@ -266,15 +260,11 @@ class MantleMessagesClient(BedrockClient):
     ):
         self._config = model_config or {}
         self._session = session or boto3.Session()
-        self._region = (
-            self._config.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
-        )
+        self._region = self._config.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
         self._endpoint = self._config.get("endpoint_override") or (
             f"https://{MANTLE_SERVICE_NAME}.{self._region}.api.aws/anthropic/v1/messages"
         )
-        self._bytes_per_token = float(
-            self._config.get("bytes_per_token", DEFAULT_BYTES_PER_TOKEN)
-        )
+        self._bytes_per_token = float(self._config.get("bytes_per_token", DEFAULT_BYTES_PER_TOKEN))
 
     def estimate_tokens(self, prompt: Optional[str], max_tokens: int) -> TokenEstimate:
         # Mantle: no burndown on output estimation. Pre-call estimate is a 1:1
@@ -359,9 +349,7 @@ class MantleMessagesClient(BedrockClient):
                 duration_ms=(time.time() - start_time) * 1000,
             )
 
-        aws_request = AWSRequest(
-            method="POST", url=self._endpoint, data=payload, headers=headers
-        )
+        aws_request = AWSRequest(method="POST", url=self._endpoint, data=payload, headers=headers)
         SigV4Auth(credentials, MANTLE_SERVICE_NAME, self._region).add_auth(aws_request)
         signed_headers = dict(aws_request.headers)
 
@@ -454,24 +442,18 @@ class OpenAIResponsesClient(BedrockClient):
     ):
         self._config = model_config or {}
         self._session = session or boto3.Session()
-        self._region = (
-            self._config.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
-        )
+        self._region = self._config.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
         self._endpoint = self._config.get("endpoint_override") or (
             f"https://{MANTLE_SERVICE_NAME}.{self._region}.api.aws{MANTLE_OPENAI_RESPONSES_PATH}"
         )
         # GPT tokenizer differs from Claude's ~3.5 bytes/token; default 4.0 is the
         # conservative estimate. Tune per-model via config bytes_per_token; the
         # post-call usage reconciliation corrects any estimate drift regardless.
-        self._bytes_per_token = float(
-            self._config.get("bytes_per_token", DEFAULT_BYTES_PER_TOKEN)
-        )
+        self._bytes_per_token = float(self._config.get("bytes_per_token", DEFAULT_BYTES_PER_TOKEN))
 
     def estimate_tokens(self, prompt: Optional[str], max_tokens: int) -> TokenEstimate:
         input_tokens = _estimate_input_tokens(prompt, self._bytes_per_token)
-        output_tokens = int(
-            max_tokens
-        )  # 1:1 pre-call ceiling; reconciled to usage after.
+        output_tokens = int(max_tokens)  # 1:1 pre-call ceiling; reconciled to usage after.
         return TokenEstimate(
             input_tokens=input_tokens,
             output_tokens=output_tokens,

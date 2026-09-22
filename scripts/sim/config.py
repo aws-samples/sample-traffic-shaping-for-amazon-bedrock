@@ -502,15 +502,9 @@ def build_config(
     quota = SimQuota(
         rpm=rpm_override if rpm_override is not None else base.rpm,
         tpm=tpm_override if tpm_override is not None else base.tpm,
-        burst_fraction=(
-            burst_fraction if burst_fraction is not None else base.burst_fraction
-        ),
-        queue_fraction=(
-            queue_fraction if queue_fraction is not None else base.queue_fraction
-        ),
-        buffer_fraction=(
-            buffer_fraction if buffer_fraction is not None else base.buffer_fraction
-        ),
+        burst_fraction=(burst_fraction if burst_fraction is not None else base.burst_fraction),
+        queue_fraction=(queue_fraction if queue_fraction is not None else base.queue_fraction),
+        buffer_fraction=(buffer_fraction if buffer_fraction is not None else base.buffer_fraction),
         notes=base.notes,
     )
 

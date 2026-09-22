@@ -67,9 +67,7 @@ def suppress(
         raise ValueError("suppress() called with no entries.")
     for entry in entries:
         _assert_justified(entry)
-    NagSuppressions.add_resource_suppressions(
-        construct, list(entries), apply_to_children
-    )
+    NagSuppressions.add_resource_suppressions(construct, list(entries), apply_to_children)
 
 
 def suppress_by_path(stack: Stack, path: str, entries: Sequence[dict]) -> None:

@@ -216,10 +216,7 @@ def match_profile_driven_quotas(quotas, models, inference_profiles):
         if p.get("status") != "ACTIVE":
             continue
         base_model_id = p.get("baseModelId")
-        if (
-            base_model_id is None
-            or base_model_id in PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS
-        ):
+        if base_model_id is None or base_model_id in PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS:
             continue
         model = models_by_id.get(base_model_id)
         if model is None:
@@ -360,9 +357,7 @@ def resolve_region(session):
     which sys.exit(1)s if config.env is missing -- that would break `make refresh-quotas`
     run standalone before a first deploy.
     """
-    config_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "config.env"
-    )
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.env")
     if os.path.exists(config_path):
         with open(config_path, encoding="utf-8") as f:
             for line in f:

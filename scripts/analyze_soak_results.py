@@ -112,9 +112,7 @@ def analyze_results_file(filepath):
             f"  QUALIFIED PASS: {data['success_rate']:.2f}% success, {data['max_dlq_depth']} DLQ (check if Bedrock transient)"
         )
     else:
-        print(
-            f"  FAIL: {data['success_rate']:.2f}% success, {data['max_dlq_depth']} DLQ"
-        )
+        print(f"  FAIL: {data['success_rate']:.2f}% success, {data['max_dlq_depth']} DLQ")
 
     print(f"{'=' * 70}\n")
 
@@ -239,9 +237,7 @@ def analyze_cloudwatch(hours, region="us-east-1"):
         datapoints = sorted(response["Datapoints"], key=lambda x: x["Timestamp"])
         if datapoints:
             for dp in datapoints:
-                print(
-                    f"  {dp['Timestamp'].strftime('%Y-%m-%d %H:%M')}: {dp['Maximum']:.0f} items"
-                )
+                print(f"  {dp['Timestamp'].strftime('%Y-%m-%d %H:%M')}: {dp['Maximum']:.0f} items")
             first = datapoints[0]["Maximum"]
             last = datapoints[-1]["Maximum"]
             if last > first * 1.5:
@@ -282,9 +278,7 @@ def analyze_cloudwatch(hours, region="us-east-1"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analyze soak test results")
     parser.add_argument("results_file", nargs="?", help="Soak results JSON file")
-    parser.add_argument(
-        "--cloudwatch", action="store_true", help="Pull CloudWatch metrics"
-    )
+    parser.add_argument("--cloudwatch", action="store_true", help="Pull CloudWatch metrics")
     parser.add_argument(
         "--hours", type=int, default=72, help="CloudWatch lookback hours (default: 72)"
     )

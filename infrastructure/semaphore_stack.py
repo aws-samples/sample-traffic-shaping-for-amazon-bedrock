@@ -126,9 +126,7 @@ class SemaphoreRateLimiterStack(Stack):
             self,
             "SingleTable",
             table_name="semaphore-single-table",
-            partition_key=dynamodb.Attribute(
-                name="pk", type=dynamodb.AttributeType.STRING
-            ),
+            partition_key=dynamodb.Attribute(name="pk", type=dynamodb.AttributeType.STRING),
             sort_key=dynamodb.Attribute(name="sk", type=dynamodb.AttributeType.STRING),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
@@ -267,9 +265,7 @@ class SemaphoreRateLimiterStack(Stack):
         # vCPU; 1024MB gives ~0.6 vCPU. Bump the admission gate to 1024MB and the
         # processors to 512MB so the compute tier is not the bottleneck the hot-partition
         # fix is trying to remove. Context-overridable.
-        budget_manager_memory = int(
-            self.node.try_get_context("budget_manager_memory_mb") or 1024
-        )
+        budget_manager_memory = int(self.node.try_get_context("budget_manager_memory_mb") or 1024)
         processor_memory = int(self.node.try_get_context("processor_memory_mb") or 512)
 
         bedrock_processor_lambda = lambda_.Function(
@@ -344,9 +340,7 @@ class SemaphoreRateLimiterStack(Stack):
         # the terminal-status item (via the shared DynamoService helper on the table
         # it already read/writes). Grant S3 write + expose the bucket name.
         outcome_output_bucket.grant_write(bedrock_processor_lambda)
-        bedrock_processor_lambda.add_environment(
-            "OUTPUT_BUCKET", outcome_output_bucket.bucket_name
-        )
+        bedrock_processor_lambda.add_environment("OUTPUT_BUCKET", outcome_output_bucket.bucket_name)
 
         # Grant Step Functions callback permissions to Bedrock Processor
         # Note: State machine is defined later in this stack, so we use an
@@ -354,9 +348,7 @@ class SemaphoreRateLimiterStack(Stack):
         bedrock_processor_lambda.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:SendTaskSuccess", "states:SendTaskFailure"],
-                resources=[
-                    f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"
-                ],
+                resources=[f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"],
             )
         )
         bedrock_processor_lambda.add_to_role_policy(
@@ -420,13 +412,9 @@ class SemaphoreRateLimiterStack(Stack):
         # Scoped to the default event bus ARN — EventBridge DOES support resource-level
         # permissions on PutEvents via the event-bus ARN (the earlier "no resource-level
         # support" comment was outdated).
-        default_event_bus_arn = (
-            f"arn:aws:events:{self.region}:{self.account}:event-bus/default"
-        )
+        default_event_bus_arn = f"arn:aws:events:{self.region}:{self.account}:event-bus/default"
         budget_manager_lambda.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["events:PutEvents"], resources=[default_event_bus_arn]
-            )
+            iam.PolicyStatement(actions=["events:PutEvents"], resources=[default_event_bus_arn])
         )
 
         # Grant permission to invoke Bedrock Processor
@@ -438,9 +426,7 @@ class SemaphoreRateLimiterStack(Stack):
         budget_manager_lambda.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:SendTaskSuccess", "states:SendTaskFailure"],
-                resources=[
-                    f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"
-                ],
+                resources=[f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"],
             )
         )
 
@@ -495,9 +481,7 @@ class SemaphoreRateLimiterStack(Stack):
         # Scoped to the default event bus ARN (EventBridge supports resource-level
         # PutEvents permissions via the event-bus ARN).
         queue_processor_lambda.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["events:PutEvents"], resources=[default_event_bus_arn]
-            )
+            iam.PolicyStatement(actions=["events:PutEvents"], resources=[default_event_bus_arn])
         )
 
         # Grant Bedrock permissions to Queue Processor (for invoking models)
@@ -525,9 +509,7 @@ class SemaphoreRateLimiterStack(Stack):
                 _lam.add_to_role_policy(
                     iam.PolicyStatement(
                         actions=["bedrock-mantle:CreateInference"],
-                        resources=[
-                            f"arn:aws:bedrock-mantle:*:{self.account}:project/*"
-                        ],
+                        resources=[f"arn:aws:bedrock-mantle:*:{self.account}:project/*"],
                     )
                 )
 
@@ -606,9 +588,7 @@ class SemaphoreRateLimiterStack(Stack):
         )
 
         # Add error handling for reserve task
-        reserve_budget_task.add_catch(
-            failure_state, errors=["States.ALL"], result_path="$.error"
-        )
+        reserve_budget_task.add_catch(failure_state, errors=["States.ALL"], result_path="$.error")
 
         # Define workflow - simplified with callback pattern
         # Both immediate and queued paths complete via Bedrock Processor callback
@@ -843,9 +823,7 @@ class SemaphoreRateLimiterStack(Stack):
             deploy_options=apigw.StageOptions(
                 stage_name="prod",
                 # AwsSolutions-APIG1: structured access logging.
-                access_log_destination=apigw.LogGroupLogDestination(
-                    api_access_log_group
-                ),
+                access_log_destination=apigw.LogGroupLogDestination(api_access_log_group),
                 access_log_format=apigw.AccessLogFormat.json_with_standard_fields(
                     caller=True,
                     http_method=True,
@@ -876,9 +854,7 @@ class SemaphoreRateLimiterStack(Stack):
                     request_templates={
                         "application/json": (
                             "{\n"
-                            '  "stateMachineArn": "'
-                            + state_machine.state_machine_arn
-                            + '",\n'
+                            '  "stateMachineArn": "' + state_machine.state_machine_arn + '",\n'
                             '  "input": "$util.escapeJavaScript($input.json(\'$\'))"\n'
                             "}"
                         ),
@@ -1091,9 +1067,7 @@ class SemaphoreRateLimiterStack(Stack):
             metric=cw.MathExpression(
                 expression="errors / invocations * 100",
                 using_metrics={
-                    "errors": budget_manager_lambda.metric_errors(
-                        period=Duration.minutes(1)
-                    ),
+                    "errors": budget_manager_lambda.metric_errors(period=Duration.minutes(1)),
                     "invocations": budget_manager_lambda.metric_invocations(
                         period=Duration.minutes(1)
                     ),
@@ -1333,15 +1307,11 @@ class SemaphoreRateLimiterStack(Stack):
             cw.GraphWidget(
                 title="Lambda Duration (P50/P95)",
                 left=[
-                    fn.metric_duration(
-                        period=period_1m, statistic="p50", label=f"{name} p50"
-                    )
+                    fn.metric_duration(period=period_1m, statistic="p50", label=f"{name} p50")
                     for name, fn in all_lambdas
                 ],
                 right=[
-                    fn.metric_duration(
-                        period=period_1m, statistic="p95", label=f"{name} p95"
-                    )
+                    fn.metric_duration(period=period_1m, statistic="p95", label=f"{name} p95")
                     for name, fn in all_lambdas
                 ],
                 width=12,
@@ -1349,10 +1319,7 @@ class SemaphoreRateLimiterStack(Stack):
             ),
             cw.GraphWidget(
                 title="Lambda Errors",
-                left=[
-                    fn.metric_errors(period=period_1m, label=name)
-                    for name, fn in all_lambdas
-                ],
+                left=[fn.metric_errors(period=period_1m, label=name) for name, fn in all_lambdas],
                 width=12,
                 height=6,
             ),
@@ -1400,9 +1367,7 @@ class SemaphoreRateLimiterStack(Stack):
         dashboard.add_widgets(
             cw.GraphWidget(
                 title="DLQ Depth + Orphaned Records",
-                left=[
-                    dlq.metric_approximate_number_of_messages_visible(period=period_1m)
-                ],
+                left=[dlq.metric_approximate_number_of_messages_visible(period=period_1m)],
                 # OrphanedRecordsSwept is emitted with ServiceName ONLY (no model_id),
                 # so it uses a plain single-dimension Metric, not the per-model SEARCH.
                 right=[
@@ -1419,12 +1384,8 @@ class SemaphoreRateLimiterStack(Stack):
             ),
             cw.GraphWidget(
                 title="DynamoDB Consumed Capacity",
-                left=[
-                    single_table.metric_consumed_read_capacity_units(period=period_1m)
-                ],
-                right=[
-                    single_table.metric_consumed_write_capacity_units(period=period_1m)
-                ],
+                left=[single_table.metric_consumed_read_capacity_units(period=period_1m)],
+                right=[single_table.metric_consumed_write_capacity_units(period=period_1m)],
                 width=12,
                 height=6,
             ),
@@ -1498,9 +1459,7 @@ class SemaphoreRateLimiterStack(Stack):
             description="Shared Service Layer ARN",
         )
 
-        CfnOutput(
-            self, "ApiGatewayUrl", value=api.url, description="API Gateway REST API URL"
-        )
+        CfnOutput(self, "ApiGatewayUrl", value=api.url, description="API Gateway REST API URL")
 
         CfnOutput(
             self,
@@ -1509,13 +1468,9 @@ class SemaphoreRateLimiterStack(Stack):
             description="WAF WebACL ARN (REGIONAL, associated to the API GW prod stage)",
         )
 
-        CfnOutput(
-            self, "DlqUrl", value=dlq.queue_url, description="Dead Letter Queue URL"
-        )
+        CfnOutput(self, "DlqUrl", value=dlq.queue_url, description="Dead Letter Queue URL")
 
-        CfnOutput(
-            self, "DlqArn", value=dlq.queue_arn, description="Dead Letter Queue ARN"
-        )
+        CfnOutput(self, "DlqArn", value=dlq.queue_arn, description="Dead Letter Queue ARN")
 
         CfnOutput(
             self,

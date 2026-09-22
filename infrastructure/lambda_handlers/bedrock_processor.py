@@ -17,9 +17,7 @@ OUTPUT_BUCKET = os.environ.get("OUTPUT_BUCKET")
 if not DLQ_URL:
     print("WARNING: DLQ_URL not configured — failed requests will not be captured")
 if not OUTPUT_BUCKET:
-    print(
-        "WARNING: OUTPUT_BUCKET not configured — success bodies cannot be persisted to S3"
-    )
+    print("WARNING: OUTPUT_BUCKET not configured — success bodies cannot be persisted to S3")
 
 # Disable boto3 client-side retries on the Bedrock call. boto3's default retry
 # mode silently absorbs throttles (~96% of Bedrock 429s never surfaced in the
@@ -138,9 +136,7 @@ def _write_terminal_with_retry(
     return False
 
 
-def send_to_dlq(
-    request_id, model_id, error_type, error_message, execution_arn, correlation_id=""
-):
+def send_to_dlq(request_id, model_id, error_type, error_message, execution_arn, correlation_id=""):
     """Send failed request details to the Dead Letter Queue. Fails silently if DLQ_URL is not set or SQS errors."""
     if not DLQ_URL:
         print(
@@ -316,10 +312,7 @@ def invoke_bedrock_model(model_id, request_payload):
         inference_config = {"maxTokens": request_payload.get("max_tokens", 1024)}
         # Only send temperature when the model accepts sampling params AND the
         # caller actually provided one. Next-gen Claude models 400 otherwise.
-        if (
-            not should_strip_sampling_params(model_id)
-            and "temperature" in request_payload
-        ):
+        if not should_strip_sampling_params(model_id) and "temperature" in request_payload:
             inference_config["temperature"] = request_payload["temperature"]
 
         response = bedrock_runtime.converse(
@@ -327,9 +320,7 @@ def invoke_bedrock_model(model_id, request_payload):
             messages=[
                 {
                     "role": "user",
-                    "content": [
-                        {"text": request_payload.get("prompt", "Hello, how are you?")}
-                    ],
+                    "content": [{"text": request_payload.get("prompt", "Hello, how are you?")}],
                 }
             ],
             inferenceConfig=inference_config,
@@ -337,9 +328,7 @@ def invoke_bedrock_model(model_id, request_payload):
 
         duration_ms = (time.time() - start_time) * 1000
 
-        print(
-            f"Bedrock invocation successful: model={model_id}, duration={duration_ms:.2f}ms"
-        )
+        print(f"Bedrock invocation successful: model={model_id}, duration={duration_ms:.2f}ms")
 
         return {
             "success": True,
@@ -412,9 +401,7 @@ def invoke_via_client(model_id, request_payload, model_config):
     """
     client = client_for(model_config)
     strip_sampling = bool(
-        model_config.get(
-            "strip_sampling_params", should_strip_sampling_params(model_id)
-        )
+        model_config.get("strip_sampling_params", should_strip_sampling_params(model_id))
     )
     prompt = request_payload.get("prompt", "Hello, how are you?")
     max_tokens = request_payload.get("max_tokens") or int(
@@ -469,9 +456,7 @@ def reconcile_consumption(
     if actual_input_tokens is None and actual_output_tokens is None:
         return
     if not allocation_id or "#" not in allocation_id:
-        print(
-            f"WARNING: cannot reconcile mantle consumption — bad allocation_id={allocation_id!r}"
-        )
+        print(f"WARNING: cannot reconcile mantle consumption — bad allocation_id={allocation_id!r}")
         return
     try:
         table = dynamo_service.single_table
@@ -554,10 +539,7 @@ def handler(event, context):
     # and fail the task; do NOT proceed to spend Bedrock quota on an untraceable
     # request.
     if not request_id or not tenant_id:
-        error_msg = (
-            f"missing propagation: request_id={request_id!r}, "
-            f"tenant_id={tenant_id!r}"
-        )
+        error_msg = f"missing propagation: request_id={request_id!r}, " f"tenant_id={tenant_id!r}"
         print(f"ERROR: {error_msg}")
         if request_id:
             _write_terminal_with_retry(
@@ -668,18 +650,14 @@ def handler(event, context):
         # second so they don't clump against Bedrock's sub-minute token bucket
         # (see BEDROCK_INVOKE_JITTER_MS). Applied immediately before the call.
         if BEDROCK_INVOKE_JITTER_MS > 0:
-            time.sleep(
-                random.uniform(0, BEDROCK_INVOKE_JITTER_MS / 1000.0)
-            )  # nosec B311
+            time.sleep(random.uniform(0, BEDROCK_INVOKE_JITTER_MS / 1000.0))  # nosec B311
 
         print(
             f"Invoking Bedrock: request_id={request_id}, model_id={model_id}, "
             f"backend={model_config.get('backend', 'runtime')}, correlation_id={correlation_id}"
         )
         if model_config:
-            bedrock_response = invoke_via_client(
-                model_id, request_payload, model_config
-            )
+            bedrock_response = invoke_via_client(model_id, request_payload, model_config)
         else:
             bedrock_response = invoke_bedrock_model(model_id, request_payload)
 
@@ -707,9 +685,7 @@ def handler(event, context):
                     bedrock_response.get("actual_output_tokens"),
                 )
             except Exception as rec_err:
-                print(
-                    f"WARNING: consumption reconciliation failed (non-fatal): {rec_err}"
-                )
+                print(f"WARNING: consumption reconciliation failed (non-fatal): {rec_err}")
 
         # Emit EMF metric for Bedrock latency (success or failure)
         emit_bedrock_latency_metric(
@@ -799,15 +775,13 @@ def handler(event, context):
                 s3_client.put_object(
                     Bucket=OUTPUT_BUCKET,
                     Key=output_key,
-                    Body=json.dumps(
-                        bedrock_response.get("response_body"), default=str
-                    ).encode("utf-8"),
+                    Body=json.dumps(bedrock_response.get("response_body"), default=str).encode(
+                        "utf-8"
+                    ),
                     ContentType="application/json",
                 )
                 output_ref = f"s3://{OUTPUT_BUCKET}/{output_key}"
-                print(
-                    f"Persisted inference body: request_id={request_id}, output_ref={output_ref}"
-                )
+                print(f"Persisted inference body: request_id={request_id}, output_ref={output_ref}")
             except Exception as s3_err:
                 # S3 body persistence failed — treat as a terminal-write failure:
                 # do not signal a success we cannot back with a retrievable body.

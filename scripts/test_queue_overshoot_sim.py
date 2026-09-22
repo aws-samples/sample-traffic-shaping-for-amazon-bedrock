@@ -86,9 +86,7 @@ DISPATCH_OVERHEAD_MS = 20.0
 # The two token numbers that drive the bug.
 ACTUAL_TOKENS = 6_000  # what Bedrock actually charges (~5000 in + ~1000 out)
 BROKEN_ESTIMATE = 1_024  # flat fallback when burst=0 and config omits max-token fields
-GOOD_ESTIMATE = (
-    6_753  # what budget_manager WOULD log with burst>0 (5500 in +1200 out est)
-)
+GOOD_ESTIMATE = 6_753  # what budget_manager WOULD log with burst>0 (5500 in +1200 out est)
 
 
 @dataclass
@@ -150,9 +148,7 @@ def run_five_gate_dispatch(
     clock = FakeClock()
 
     short_window_cap = max(1, int(queue_regen_rate * short_window_sec))
-    tpm_2s_cap = (
-        int(tpm_queue_regen_rate * short_window_sec) if tpm_queue_regen_rate > 0 else 0
-    )
+    tpm_2s_cap = int(tpm_queue_regen_rate * short_window_sec) if tpm_queue_regen_rate > 0 else 0
     queue_target_tps = queue_target_tpm / 60.0 if queue_target_tpm > 0 else 0.0
     dispatch_overhead = dispatch_overhead_ms / 1000.0
 
@@ -202,9 +198,7 @@ def run_five_gate_dispatch(
 
             # ── Gate 1: RPM 2s ────────────────────────────────────────────────
             if recent_count(short_window_sec) >= short_window_cap:
-                in_win = [
-                    ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec
-                ]
+                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 sleep_for = max(0.001, (oldest + short_window_sec) - clock.now + 0.005)
                 result.sleep_events.append((clock.now, sleep_for))
@@ -222,13 +216,9 @@ def run_five_gate_dispatch(
                             if ts >= clock.now - short_window_sec
                         ]
                         newest = (
-                            max(ts for ts, _ in in_win)
-                            if in_win
-                            else clock.now - short_window_sec
+                            max(ts for ts, _ in in_win) if in_win else clock.now - short_window_sec
                         )
-                        sleep_for = max(
-                            0.001, (newest + short_window_sec) - clock.now + 0.005
-                        )
+                        sleep_for = max(0.001, (newest + short_window_sec) - clock.now + 0.005)
                         result.sleep_events.append((clock.now, sleep_for))
                         clock.sleep(sleep_for)
                         prune(60.0)
@@ -307,19 +297,14 @@ def run_scenario(sc: Scenario, verbose: bool = False) -> dict:
         f"  estimate/item = {sc.estimate:,} tok   actual/item = {sc.actual:,} tok "
         f"(drift {sc.actual / sc.estimate:.2f}×)"
     )
-    print(
-        f"  drain time              : {r.total_sim_time:.1f}s   ({r.total_dispatched} items)"
-    )
+    print(f"  drain time              : {r.total_sim_time:.1f}s   ({r.total_dispatched} items)")
     print(f"  effective RPS           : {eff_rps:.2f}")
     print(
         f"  what Gate 5 THINKS (est): {est_sustained:,.0f} TPM sustained "
         f"(target {QUEUE_TARGET_TPM:,})"
     )
     print(f"  what Bedrock CHARGES    : {actual_sustained:,.0f} TPM sustained")
-    print(
-        f"  actual peak 60s window  : {actual_peak_60s:,.0f} TPM   "
-        f"(quota {QUOTA_TPM:,})"
-    )
+    print(f"  actual peak 60s window  : {actual_peak_60s:,.0f} TPM   " f"(quota {QUOTA_TPM:,})")
     over_target = actual_peak_60s > QUEUE_TARGET_TPM
     over_quota = actual_peak_60s > QUOTA_TPM
     print(
@@ -391,15 +376,9 @@ def main() -> None:
     ar.report()
     print()
     if ar.all_passed:
-        print(
-            "  ✅ Sim reproduces the live overshoot AND proves a correct estimate fixes it."
-        )
-        print(
-            "     Root cause: gates pace on item estimate; flat-1024 fallback collapses all"
-        )
-        print(
-            "     token gating, leaving only RPM-60s (23 req/s × 6000 real = 8.28M > quota)."
-        )
+        print("  ✅ Sim reproduces the live overshoot AND proves a correct estimate fixes it.")
+        print("     Root cause: gates pace on item estimate; flat-1024 fallback collapses all")
+        print("     token gating, leaving only RPM-60s (23 req/s × 6000 real = 8.28M > quota).")
     else:
         print("  ❌ Sim did not behave as expected — review output above.")
     sys.exit(0 if ar.all_passed else 1)

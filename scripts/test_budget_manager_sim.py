@@ -196,9 +196,7 @@ class AdmissionGate:
         tpm_effective = 0
         global_tpm_cap = 0
         if gate_tpm:
-            tpm_effective = self.tpm_burst_capacity + int(
-                elapsed * self.tpm_burst_regen_rate
-            )
+            tpm_effective = self.tpm_burst_capacity + int(elapsed * self.tpm_burst_regen_rate)
             global_tpm_cap = self.tpm_burst_capacity * minutes_elapsed
             # Oversized pre-check (Gate 6): a request that cannot fit even an empty
             # window/epoch is rejected up front — never admitted, always enqueued.
@@ -210,10 +208,7 @@ class AdmissionGate:
         # Reads admitted events over the last 2s (== _check_short_window_gate
         # querying consumption records). Rejects BEFORE the transaction on breach.
         self._prune_short_window(now)
-        if (
-            self.short_window_cap > 0
-            and len(self.dispatch_log) >= self.short_window_cap
-        ):
+        if self.short_window_cap > 0 and len(self.dispatch_log) >= self.short_window_cap:
             self._record_reject("short_window_rps")
             return False
         if self.short_window_tps_cap > 0 and tokens > 0:
@@ -638,9 +633,7 @@ def gate_internal_violations(gate: AdmissionGate) -> Tuple[int, int, int, int]:
         if c > max_rpm_global:
             rpm_g_over += 1
     if gate.tpm_burst_capacity > 0:
-        max_tpm_effective = gate.tpm_burst_capacity + int(
-            60 * gate.tpm_burst_regen_rate
-        )
+        max_tpm_effective = gate.tpm_burst_capacity + int(60 * gate.tpm_burst_regen_rate)
         for _, c in gate.tpm_window.items():
             if c > max_tpm_effective:
                 tpm_w_over += 1
@@ -678,12 +671,8 @@ def print_summary(
         f"  Burst slice (this)   : {q.burst_rpm:,} RPM ({q.burst_fraction*100:.0f}%) / "
         f"{q.burst_tpm:,} TPM"
     )
-    print(
-        f"  Burst 2s caps        : {q.burst_rpm_2s_cap:,} req / {q.burst_tpm_2s_cap:,} tok"
-    )
-    print(
-        f"  Sustained burst rate : {q.burst_rps:.2f} RPS / {q.burst_tpm_rate:,.0f} tok/s"
-    )
+    print(f"  Burst 2s caps        : {q.burst_rpm_2s_cap:,} req / {q.burst_tpm_2s_cap:,} tok")
+    print(f"  Sustained burst rate : {q.burst_rps:.2f} RPS / {q.burst_tpm_rate:,.0f} tok/s")
     print(SEP)
     print(
         f"  Offered load         : {offered_rps:.2f} RPS over {duration:.0f}s  "
@@ -691,18 +680,12 @@ def print_summary(
     )
     print(f"  Requests offered     : {result.total}")
     print(
-        f"  ADMITTED             : {result.admitted_count}  "
-        f"({result.admission_rate*100:.1f}%)"
+        f"  ADMITTED             : {result.admitted_count}  " f"({result.admission_rate*100:.1f}%)"
     )
-    print(
-        f"  ENQUEUED             : {result.enqueued}  "
-        f"({(1-result.admission_rate)*100:.1f}%)"
-    )
+    print(f"  ENQUEUED             : {result.enqueued}  " f"({(1-result.admission_rate)*100:.1f}%)")
     print(f"  Admitted tokens      : {result.admitted_tokens:,}")
     if result.reject_reasons:
-        reasons = ", ".join(
-            f"{k}={v}" for k, v in sorted(result.reject_reasons.items())
-        )
+        reasons = ", ".join(f"{k}={v}" for k, v in sorted(result.reject_reasons.items()))
         print(f"  Reject reasons       : {reasons}")
 
     peak_r2 = result.peak_req_in_window(2.0)
@@ -719,9 +702,7 @@ def print_summary(
         print(f"  Peak admitted tok/60s: {peak_t60:>10,}  (window cap≤{max_tpm_eff:,})")
 
 
-def assert_result(
-    cfg: SimConfig, result: AdmissionResult, gate: AdmissionGate
-) -> AssertionResult:
+def assert_result(cfg: SimConfig, result: AdmissionResult, gate: AdmissionGate) -> AssertionResult:
     """
     Assert the admitted stream respects the burst-slice windows. We assert against
     GATE-INTERNAL violations (final counter state vs the same effective/epoch cap
@@ -737,9 +718,7 @@ def assert_result(
         "Admitted RPM 60s window within effective cap",
         f"windows_over={rpm_w}",
     )
-    aa.check(
-        rpm_g == 0, "Admitted RPM 5-min epoch within global cap", f"epochs_over={rpm_g}"
-    )
+    aa.check(rpm_g == 0, "Admitted RPM 5-min epoch within global cap", f"epochs_over={rpm_g}")
     if gate.tpm_burst_capacity > 0:
         aa.check(
             tpm_w == 0,
@@ -797,9 +776,7 @@ def resolve_offered_rps(
     q = cfg.quota
     avg_tok = max(1.0, cfg.workload.avg_total_tokens())
     sustainable = (
-        min(q.burst_rps, q.burst_tpm_rate / avg_tok)
-        if q.burst_tpm_rate > 0
-        else q.burst_rps
+        min(q.burst_rps, q.burst_tpm_rate / avg_tok) if q.burst_tpm_rate > 0 else q.burst_rps
     )
     return max(0.1, sustainable * load_factor)
 
@@ -829,9 +806,7 @@ def run_scenario(
         f"#  Avg tokens : {cfg.workload.avg_total_tokens():,.0f}  "
         f"max={cfg.workload.max_total_tokens():,}"
     )
-    print(
-        f"#  Offered    : {offered_rps:.2f} RPS × {duration:.0f}s = {len(arrivals)} requests"
-    )
+    print(f"#  Offered    : {offered_rps:.2f} RPS × {duration:.0f}s = {len(arrivals)} requests")
     print(f"{'#' * 72}")
 
     gate = AdmissionGate(q, short_window_sec=cfg.short_window_sec)
@@ -901,12 +876,8 @@ def parse_args() -> argparse.Namespace:
         default=120.0,
         help="Offered-load duration in seconds (default 120)",
     )
-    p.add_argument(
-        "--no-smoke", action="store_true", help="Skip the smoke profile sanity check"
-    )
-    p.add_argument(
-        "--verbose", action="store_true", help="Print per-arrival admit/enqueue trace"
-    )
+    p.add_argument("--no-smoke", action="store_true", help="Skip the smoke profile sanity check")
+    p.add_argument("--verbose", action="store_true", help="Print per-arrival admit/enqueue trace")
     # Phase 0 GATE: side-by-side CURRENT counter (with contention) vs the PROPOSED
     # window-read gate, to prove the cutover recovers the sheds contention caused.
     p.add_argument(
@@ -1029,9 +1000,7 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
     # Natural overlap on the single item = arrival density in the conflict window.
     # `concurrency` raises the fan-out modestly (log scale): Step Functions bursts
     # cluster admits, but not all `concurrency` land in the SAME 50ms window.
-    expected_siblings = (
-        offered_rps * conflict_win * (1.0 + _math.log(max(1, args.concurrency)))
-    )
+    expected_siblings = offered_rps * conflict_win * (1.0 + _math.log(max(1, args.concurrency)))
     rng_c = random.Random(1234)
     for a in arrivals:
         if a.ts > counter_clock.now:
@@ -1094,8 +1063,7 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
         f"{window_result.admitted_count:>18,}"
     )
     print(
-        f"  {'Enqueued req':22}  {counter_result.enqueued:>22,}  "
-        f"{window_result.enqueued:>18,}"
+        f"  {'Enqueued req':22}  {counter_result.enqueued:>22,}  " f"{window_result.enqueued:>18,}"
     )
     print(
         f"  {'Admission rate':22}  {counter_result.admission_rate*100:>21.1f}%  "
@@ -1105,9 +1073,7 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
         f"  {'Admitted tokens':22}  {counter_result.admitted_tokens:>22,}  "
         f"{window_result.admitted_tokens:>18,}"
     )
-    print(
-        f"  {'Admitted tok/min':22}  {counter_tpm_min:>22,.0f}  {window_tpm_min:>18,.0f}"
-    )
+    print(f"  {'Admitted tok/min':22}  {counter_tpm_min:>22,.0f}  {window_tpm_min:>18,.0f}")
     print(SEP)
     print(
         f"  Burst slice budget       : {burst_budget_min:,.0f} tok/min "
@@ -1122,16 +1088,12 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
     if counter_result.reject_reasons:
         print(
             f"  Counter reject reasons   : "
-            + ", ".join(
-                f"{k}={v}" for k, v in sorted(counter_result.reject_reasons.items())
-            )
+            + ", ".join(f"{k}={v}" for k, v in sorted(counter_result.reject_reasons.items()))
         )
     if window_result.reject_reasons:
         print(
             f"  Window reject reasons    : "
-            + ", ".join(
-                f"{k}={v}" for k, v in sorted(window_result.reject_reasons.items())
-            )
+            + ", ".join(f"{k}={v}" for k, v in sorted(window_result.reject_reasons.items()))
         )
 
     # Peak over-admission check for the window gate (bounded damage).

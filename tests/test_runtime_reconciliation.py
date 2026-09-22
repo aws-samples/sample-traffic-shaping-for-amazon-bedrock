@@ -16,12 +16,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-LAYER = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "infrastructure"
-    / "lambda_layer"
-    / "python"
-)
+LAYER = pathlib.Path(__file__).resolve().parents[1] / "infrastructure" / "lambda_layer" / "python"
 sys.path.insert(0, str(LAYER))
 
 from shared_service import DynamoService  # noqa: E402
@@ -76,17 +71,11 @@ def test_runtime_reconcile_writes_burndown_weighted_combined():
         tpm_burst_regen_rate=0.0,
     )
     # Admit with an ESTIMATE (burndown-weighted): input 1000 + max_tokens*burndown.
-    res = svc.put_allocation(
-        "rt-model", "rc-1", estimated_tokens=1000 + 1200 * 5, **common
-    )
-    alloc_id = res["item"][
-        "sk"
-    ]  # '{now_ms}#{request_id}' — matches BURST#CONSUMPTION sort key
+    res = svc.put_allocation("rt-model", "rc-1", estimated_tokens=1000 + 1200 * 5, **common)
+    alloc_id = res["item"]["sk"]  # '{now_ms}#{request_id}' — matches BURST#CONSUMPTION sort key
 
     # Actuals came back smaller than the estimate; reconcile with burndown=5.
-    combined = _reconcile_runtime(
-        svc, "rt-model", alloc_id, ai=1200, ao=300, burndown=5
-    )
+    combined = _reconcile_runtime(svc, "rt-model", alloc_id, ai=1200, ao=300, burndown=5)
 
     # Contract: combined MUST be input + output*burndown (1200 + 300*5 = 2700),
     # NOT the raw sum (1500). Raw would under-weight output and worsen over-admission.
@@ -115,9 +104,7 @@ def test_burndown_1_reduces_to_raw_sum():
     )
     res = svc.put_allocation("nova-like", "rc-2", estimated_tokens=6000, **common)
     alloc_id = res["item"]["sk"]
-    combined = _reconcile_runtime(
-        svc, "nova-like", alloc_id, ai=1200, ao=300, burndown=1
-    )
+    combined = _reconcile_runtime(svc, "nova-like", alloc_id, ai=1200, ao=300, burndown=1)
     assert combined == 1500  # 1200 + 300*1
 
 

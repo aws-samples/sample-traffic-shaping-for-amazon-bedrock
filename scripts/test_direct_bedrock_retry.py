@@ -90,12 +90,8 @@ Examples:
     parser.add_argument(
         "--model", type=str, help="Model ID or alias (nova-2-lite, sonnet-5, opus-5)"
     )
-    parser.add_argument(
-        "--num-requests", type=int, help="Number of requests (default: config.env)"
-    )
-    parser.add_argument(
-        "--max-workers", type=int, help="Concurrent threads (default: config.env)"
-    )
+    parser.add_argument("--num-requests", type=int, help="Number of requests (default: config.env)")
+    parser.add_argument("--max-workers", type=int, help="Concurrent threads (default: config.env)")
     parser.add_argument(
         "--submission-duration",
         type=int,
@@ -135,12 +131,8 @@ BEDROCK_MODEL_ID = (
     else config.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
 )
 SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
-NUM_REQUESTS = (
-    args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
-)
-MAX_WORKERS = (
-    args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
-)
+NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
+MAX_WORKERS = args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
 SUBMISSION_DURATION = (
     args.submission_duration
     if args.submission_duration is not None
@@ -250,16 +242,12 @@ def test_direct_bedrock_with_retry():
     print(f"Model: {BEDROCK_MODEL_ID}")
     print(f"Total requests: {NUM_REQUESTS}")
     print(f"Concurrency: {MAX_WORKERS} threads")
-    print(
-        f"Max retries: {MAX_RETRIES_ACTUAL} (backoff: {BASE_DELAY}s * 2^attempt, jitter: full)"
-    )
+    print(f"Max retries: {MAX_RETRIES_ACTUAL} (backoff: {BASE_DELAY}s * 2^attempt, jitter: full)")
     print(f"Prompt size: {PROMPT_SIZE or '~30'} chars, max_tokens: {MAX_TOKENS}")
 
     if SUBMISSION_DURATION > 0:
         submission_rate = NUM_REQUESTS / SUBMISSION_DURATION
-        print(
-            f"Submission: {SUBMISSION_DURATION}s duration ({submission_rate:.1f} req/s)"
-        )
+        print(f"Submission: {SUBMISSION_DURATION}s duration ({submission_rate:.1f} req/s)")
     else:
         print(f"Submission: Instant spike (all at once)")
 
@@ -310,9 +298,7 @@ def test_direct_bedrock_with_retry():
     # Calculate statistics
     success_count = sum(1 for r in results if r["success"])
     fail_count = NUM_REQUESTS - success_count
-    throttle_fail_count = sum(
-        1 for r in results if not r["success"] and r["error"] == "429"
-    )
+    throttle_fail_count = sum(1 for r in results if not r["success"] and r["error"] == "429")
     other_fail_count = fail_count - throttle_fail_count
 
     total_attempts = sum(r["attempts"] for r in results)
@@ -342,9 +328,7 @@ def test_direct_bedrock_with_retry():
     print(f"  Success Rate")
     print(f"  {'─'*40}")
     print(f"  Total requests:       {NUM_REQUESTS}")
-    print(
-        f"  Successful:           {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)"
-    )
+    print(f"  Successful:           {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)")
     print(
         f"  Failed (throttled):   {throttle_fail_count} ({throttle_fail_count/NUM_REQUESTS*100:.1f}%)"
     )
@@ -391,9 +375,7 @@ def test_direct_bedrock_with_retry():
         print(
             f"\n  All succeeded but required {total_retries} retries ({total_attempts/NUM_REQUESTS:.1f}x API call amplification)."
         )
-        print(
-            f"  Each retry consumes quota, making throttling worse for other callers."
-        )
+        print(f"  Each retry consumes quota, making throttling worse for other callers.")
 
     print()
 

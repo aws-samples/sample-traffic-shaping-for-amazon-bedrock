@@ -128,9 +128,7 @@ def _documented_default_tpm(model_id: str):
 
 # Matches the Claude generation out of a model_id, e.g. "claude-opus-4-8" ->
 # ('4', '8'), "claude-sonnet-5" -> ('5', None). Used only by derive_default_burndown.
-_CLAUDE_VERSION_RE = re.compile(
-    r"claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?"
-)
+_CLAUDE_VERSION_RE = re.compile(r"claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?")
 
 
 def derive_default_burndown(model_id: str, backend: str) -> float:
@@ -377,9 +375,7 @@ def calculate_config(
             "rpm_limit": None,
             "rpm_quota_enabled": False,
             "burst_capacity": token_burst,
-            "burst_regeneration_rate": (
-                Decimal("0") if token_burst == 0 else Decimal("1000000")
-            ),
+            "burst_regeneration_rate": (Decimal("0") if token_burst == 0 else Decimal("1000000")),
             "queue_capacity": 1_000_000,
             "queue_regeneration_rate": Decimal("1000000"),
             "buffer_capacity": 0,
@@ -394,13 +390,9 @@ def calculate_config(
             "rpm_limit": rpm,
             "rpm_quota_enabled": True,
             "burst_capacity": burst_capacity,
-            "burst_regeneration_rate": Decimal(
-                str(round(rpm / 60.0 * burst_fraction, 4))
-            ),
+            "burst_regeneration_rate": Decimal(str(round(rpm / 60.0 * burst_fraction, 4))),
             "queue_capacity": int(rpm * queue_fraction),
-            "queue_regeneration_rate": Decimal(
-                str(round(rpm / 60.0 * queue_fraction, 4))
-            ),
+            "queue_regeneration_rate": Decimal(str(round(rpm / 60.0 * queue_fraction, 4))),
             "buffer_capacity": int(rpm * buffer_fraction),
         }
 
@@ -498,9 +490,7 @@ def create_model_config(model_id: str, config_values: dict, dry_run: bool = Fals
     return item
 
 
-def process_model(
-    model_arg: str, args, parser, model_id_override: Optional[str] = None
-) -> dict:
+def process_model(model_arg: str, args, parser, model_id_override: Optional[str] = None) -> dict:
     """
     Resolve, calculate, print, and write the DynamoDB config for one model.
 
@@ -549,9 +539,7 @@ def process_model(
     # it's a real value the caller supplied, not an invented one.
     if args.backend == "mantle" and args.itpm is not None and args.otpm is not None:
         tpm, tpm_source = (
-            (args.tpm, "explicit")
-            if args.tpm is not None
-            else (args.itpm, "mantle-itpm")
+            (args.tpm, "explicit") if args.tpm is not None else (args.itpm, "mantle-itpm")
         )
     else:
         try:
@@ -586,9 +574,7 @@ def process_model(
 
     # Tier 2: backend + split-quota fields. Runtime configs get backend='runtime'
     # and are byte-identical to pre-Tier-2 behavior aside from the explicit marker.
-    api_style = args.api_style or (
-        "messages" if args.backend == "mantle" else "converse"
-    )
+    api_style = args.api_style or ("messages" if args.backend == "mantle" else "converse")
     config_values["backend"] = args.backend
     config_values["api_style"] = api_style
     # Even-spacing pacer target (queue processor). Only written when provided so
@@ -613,9 +599,7 @@ def process_model(
         print(f"{'#'*60}")
 
     print(f"\nCreating model configuration...")
-    print(
-        f"  backend: {config_values['backend']} | api_style: {config_values['api_style']}"
-    )
+    print(f"  backend: {config_values['backend']} | api_style: {config_values['api_style']}")
     if args.backend == "mantle":
         print(
             f"  itpm_limit: {config_values['itpm_limit']} (burst {config_values['itpm_burst_capacity']})"
@@ -638,17 +622,11 @@ def process_model(
     print(f"\nTPM Configuration:")
     print(f"  tpm_limit: {config_values['tpm_limit']} (source: {tpm_source})")
     print(f"  tpm_burst_capacity: {config_values['tpm_burst_capacity']}")
-    print(
-        f"  tpm_burst_regeneration_rate: {config_values['tpm_burst_regeneration_rate']}"
-    )
+    print(f"  tpm_burst_regeneration_rate: {config_values['tpm_burst_regeneration_rate']}")
     print(f"  tpm_queue_capacity: {config_values['tpm_queue_capacity']}")
-    print(
-        f"  tpm_queue_regeneration_rate: {config_values['tpm_queue_regeneration_rate']}"
-    )
+    print(f"  tpm_queue_regeneration_rate: {config_values['tpm_queue_regeneration_rate']}")
     print(f"  tpm_buffer_capacity: {config_values['tpm_buffer_capacity']}")
-    print(
-        f"  output_token_burndown_rate: {config_values['output_token_burndown_rate']}"
-    )
+    print(f"  output_token_burndown_rate: {config_values['output_token_burndown_rate']}")
     print(f"  bytes_per_token: {config_values['bytes_per_token']}")
     print(f"\nAdmission Control (sliding-window read gate):")
     print(f"  short_window_sec: {config_values['short_window_sec']} (rate smoothing)")
@@ -875,9 +853,7 @@ Model short names:
         )
         summaries = []
         for profile_id in starter_profile_ids:
-            summaries.append(
-                process_model(profile_id, args, parser, model_id_override=profile_id)
-            )
+            summaries.append(process_model(profile_id, args, parser, model_id_override=profile_id))
 
         print(f"\n{'='*60}")
         print(f"Starter package summary: {len(summaries)} entries")

@@ -95,9 +95,7 @@ def _emit_request_outcome(new_image):
             "CloudWatchMetrics": [
                 {
                     "Namespace": EMF_NAMESPACE,
-                    "Dimensions": [
-                        ["ServiceName", "model_id", "source", "arm", "outcome"]
-                    ],
+                    "Dimensions": [["ServiceName", "model_id", "source", "arm", "outcome"]],
                     "Metrics": [{"Name": "RequestOutcome", "Unit": "Count"}],
                 }
             ],
@@ -174,9 +172,7 @@ def handler(event, context):
             if _should_emit(new_image, old_image, event_name):
                 _emit_request_outcome(new_image)
                 emitted += 1
-        except (
-            Exception
-        ) as e:  # noqa: BLE001 — one poison record must not wedge the shard
+        except Exception as e:  # noqa: BLE001 — one poison record must not wedge the shard
             print(f"WARNING: outcome stream record skipped (non-fatal): {e}")
             continue
 

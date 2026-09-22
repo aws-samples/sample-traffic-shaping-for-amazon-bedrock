@@ -296,9 +296,7 @@ def test_matching_resolves_provider_name_spelled_differently():
         },
     ]
 
-    results = match_profile_driven_quotas(
-        quotas, FIXER_MODELS, us_profiles(FIXER_MODELS)
-    )
+    results = match_profile_driven_quotas(quotas, FIXER_MODELS, us_profiles(FIXER_MODELS))
 
     assert results["writer.palmyra-x4-v1:0"]["tpm"]["cross_region"] == 150_000
     assert results["writer.palmyra-x5-v1:0"]["tpm"]["cross_region"] == 151_000

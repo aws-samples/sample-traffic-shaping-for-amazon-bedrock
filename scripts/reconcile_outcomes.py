@@ -85,9 +85,7 @@ def load_manifest(path):
     """Load {correlation_id, request_id, submit_ts} records. Accepts a bare list or {"requests": [...]}."""
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    records = (
-        data["requests"] if isinstance(data, dict) and "requests" in data else data
-    )
+    records = data["requests"] if isinstance(data, dict) and "requests" in data else data
     if not isinstance(records, list):
         sys.exit(
             f"❌ manifest must be a JSON list (or {{'requests': [...]}}); got {type(records).__name__}"
@@ -95,9 +93,7 @@ def load_manifest(path):
     out = []
     for i, r in enumerate(records):
         if not isinstance(r, dict) or "correlation_id" not in r:
-            print(
-                f"  ⚠ manifest entry {i} missing correlation_id — treated as malformed"
-            )
+            print(f"  ⚠ manifest entry {i} missing correlation_id — treated as malformed")
             out.append(
                 {
                     "correlation_id": None,
@@ -195,9 +191,7 @@ def reconcile_via_ddb(records, table_name, region):
         plain = {k: list(v.values())[0] for k, v in item.items()}
         result[cid] = outcome_from_ddb_item(plain)
     if missing_rid:
-        print(
-            f"  ⚠ {missing_rid} records had no request_id (no 202 recorded) → ingress_lost"
-        )
+        print(f"  ⚠ {missing_rid} records had no request_id (no 202 recorded) → ingress_lost")
     return result
 
 
@@ -299,9 +293,7 @@ def report(outcomes_by_cid, n_sent):
     succeeded = counts.get("succeeded", 0)
     honest_rate = (succeeded / n_sent * 100.0) if n_sent else 0.0
     print(f"\n  {'─' * 38}")
-    print(
-        f"  HONEST success rate = succeeded / N = {succeeded} / {n_sent} = {honest_rate:.3f}%"
-    )
+    print(f"  HONEST success rate = succeeded / N = {succeeded} / {n_sent} = {honest_rate:.3f}%")
     print(
         f"  (N includes ingress_lost + pending — the shaper cannot drop its own front-door failures)"
     )
@@ -317,9 +309,7 @@ def main():
         "manifest",
         help="Run manifest JSON: [{correlation_id, request_id, submit_ts}, ...]",
     )
-    ap.add_argument(
-        "--region", default="us-east-1", help="AWS region (default: us-east-1)"
-    )
+    ap.add_argument("--region", default="us-east-1", help="AWS region (default: us-east-1)")
     ap.add_argument(
         "--table",
         default="semaphore-single-table",
@@ -362,9 +352,7 @@ def main():
         print(f"\n--- Querying DynamoDB status items (read-only GetItem) ---")
         ddb_map = reconcile_via_ddb(records, args.table, args.region)
     if args.source in ("emf", "both"):
-        print(
-            f"\n--- Querying RequestOutcome EMF (read-only Logs Insights, {args.hours}h) ---"
-        )
+        print(f"\n--- Querying RequestOutcome EMF (read-only Logs Insights, {args.hours}h) ---")
         emf_map = reconcile_via_emf(records, args.region, args.hours, args.log_group)
 
     merged = merge_sources(ddb_map, emf_map, records)

@@ -111,9 +111,7 @@ class SoakMetrics:
         self.total_succeeded = 0
         self.total_queued = 0
         self.total_failed = 0
-        self.total_rejected = (
-            0  # Input validation rejections (expected for adversarial)
-        )
+        self.total_rejected = 0  # Input validation rejections (expected for adversarial)
         self.total_running = 0
         self.latencies = []  # (timestamp, latency_ms) tuples
         self.errors = defaultdict(int)  # error_type -> count
@@ -130,9 +128,7 @@ class SoakMetrics:
             if is_adversarial:
                 self.adversarial_sent += 1
 
-    def record_result(
-        self, status, latency_ms=None, error_type=None, is_adversarial=False
-    ):
+    def record_result(self, status, latency_ms=None, error_type=None, is_adversarial=False):
         with self.lock:
             if status == "succeeded":
                 self.total_succeeded += 1
@@ -161,9 +157,7 @@ class SoakMetrics:
         """Take a point-in-time snapshot for checkpoint reporting."""
         with self.lock:
             elapsed = time.time() - self.start_time
-            recent_latencies = [
-                lat for ts, lat in self.latencies if ts > time.time() - 300
-            ]
+            recent_latencies = [lat for ts, lat in self.latencies if ts > time.time() - 300]
             recent_latencies.sort()
 
             snap = {
@@ -180,23 +174,15 @@ class SoakMetrics:
                 / max(1, self.total_succeeded + self.total_queued + self.total_failed)
                 * 100,
                 "effective_rpm": self.total_sent / max(1, elapsed / 60),
-                "queue_depth": (
-                    self.queue_depth_samples[-1][1] if self.queue_depth_samples else 0
-                ),
-                "dlq_depth": (
-                    self.dlq_depth_samples[-1][1] if self.dlq_depth_samples else 0
-                ),
+                "queue_depth": (self.queue_depth_samples[-1][1] if self.queue_depth_samples else 0),
+                "dlq_depth": (self.dlq_depth_samples[-1][1] if self.dlq_depth_samples else 0),
                 "errors": dict(self.errors),
             }
 
             if recent_latencies:
                 snap["latency_p50"] = recent_latencies[len(recent_latencies) // 2]
-                snap["latency_p95"] = recent_latencies[
-                    int(len(recent_latencies) * 0.95)
-                ]
-                snap["latency_p99"] = recent_latencies[
-                    int(len(recent_latencies) * 0.99)
-                ]
+                snap["latency_p95"] = recent_latencies[int(len(recent_latencies) * 0.95)]
+                snap["latency_p99"] = recent_latencies[int(len(recent_latencies) * 0.99)]
             else:
                 snap["latency_p50"] = snap["latency_p95"] = snap["latency_p99"] = 0
 
@@ -224,22 +210,14 @@ class SoakMetrics:
                 "adversarial_sent": self.adversarial_sent,
                 "adversarial_rejected": self.adversarial_rejected,
                 "errors": dict(self.errors),
-                "latency_p50": (
-                    all_latencies[len(all_latencies) // 2] if all_latencies else 0
-                ),
+                "latency_p50": (all_latencies[len(all_latencies) // 2] if all_latencies else 0),
                 "latency_p95": (
-                    all_latencies[int(len(all_latencies) * 0.95)]
-                    if all_latencies
-                    else 0
+                    all_latencies[int(len(all_latencies) * 0.95)] if all_latencies else 0
                 ),
                 "latency_p99": (
-                    all_latencies[int(len(all_latencies) * 0.99)]
-                    if all_latencies
-                    else 0
+                    all_latencies[int(len(all_latencies) * 0.99)] if all_latencies else 0
                 ),
-                "max_queue_depth": max(
-                    (d for _, d in self.queue_depth_samples), default=0
-                ),
+                "max_queue_depth": max((d for _, d in self.queue_depth_samples), default=0),
                 "max_dlq_depth": max((d for _, d in self.dlq_depth_samples), default=0),
                 "checkpoints": self.checkpoints,
             }
@@ -256,8 +234,7 @@ class SoakTest:
         self.checkpoint_interval = args.checkpoint_min * 60
         self.default_max_tokens = args.max_tokens
         self.output_file = (
-            args.output
-            or f"soak_results_{datetime.now().strftime('%Y%m%dT%H%M%S')}.json"
+            args.output or f"soak_results_{datetime.now().strftime('%Y%m%dT%H%M%S')}.json"
         )
 
         self.region = config.get("AWS_REGION", "us-east-1")
@@ -286,9 +263,7 @@ class SoakTest:
                     QueueUrl=self.dlq_url,
                     AttributeNames=["ApproximateNumberOfMessages"],
                 )
-                self.dlq_baseline = int(
-                    resp["Attributes"].get("ApproximateNumberOfMessages", 0)
-                )
+                self.dlq_baseline = int(resp["Attributes"].get("ApproximateNumberOfMessages", 0))
             except Exception:
                 pass  # nosec B110  # best-effort DLQ baseline capture, failure non-fatal
 
@@ -327,9 +302,7 @@ class SoakTest:
             return {
                 "request_id": f"soak_{seq_num}",
                 "model_id": self.model_id,
-                "prompt": random.choice(
-                    PROMPTS
-                ),  # nosec B311  # non-crypto: load-test sampling
+                "prompt": random.choice(PROMPTS),  # nosec B311  # non-crypto: load-test sampling
                 "max_tokens": self.default_max_tokens,
             }, False
 
@@ -370,17 +343,12 @@ class SoakTest:
                     if status in ("SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"):
                         with self.pending_lock:
                             info = self.pending.pop(arn, {})
-                        latency_ms = (
-                            time.time() - info.get("start_time", time.time())
-                        ) * 1000
+                        latency_ms = (time.time() - info.get("start_time", time.time())) * 1000
                         is_adv = info.get("is_adversarial", False)
 
                         if status == "SUCCEEDED":
                             output = json.loads(desc.get("output", "{}"))
-                            if (
-                                output.get("budget_result", {}).get("source")
-                                == "queued"
-                            ):
+                            if output.get("budget_result", {}).get("source") == "queued":
                                 self.metrics.record_result(
                                     "queued",
                                     latency_ms=latency_ms,
@@ -403,17 +371,15 @@ class SoakTest:
                                 )
                                 for event in history.get("events", []):
                                     if event.get("type") == "TaskFailed":
-                                        error = event.get(
-                                            "taskFailedEventDetails", {}
-                                        ).get("error", "")
+                                        error = event.get("taskFailedEventDetails", {}).get(
+                                            "error", ""
+                                        )
                                         break
                             except Exception:
                                 pass  # nosec B110  # best-effort error-detail lookup, failure non-fatal
 
                             if error == "InputValidationError":
-                                self.metrics.record_result(
-                                    "rejected", is_adversarial=is_adv
-                                )
+                                self.metrics.record_result("rejected", is_adversarial=is_adv)
                             else:
                                 self.metrics.record_result(
                                     "failed",
@@ -444,9 +410,7 @@ class SoakTest:
                         QueueUrl=self.dlq_url,
                         AttributeNames=["ApproximateNumberOfMessages"],
                     )
-                    raw_dlq = int(
-                        resp["Attributes"].get("ApproximateNumberOfMessages", 0)
-                    )
+                    raw_dlq = int(resp["Attributes"].get("ApproximateNumberOfMessages", 0))
                     dlq_delta = max(0, raw_dlq - self.dlq_baseline)
                     self.metrics.record_dlq_depth(dlq_delta)
                 except Exception:
@@ -517,9 +481,7 @@ class SoakTest:
                 f"\n✅ SOAK TEST PASSED: {report['success_rate']:.2f}% success rate (target: {target_success}%), 0 DLQ messages"
             )
         elif report["max_dlq_depth"] > 0:
-            print(
-                f"\n❌ SOAK TEST FAILED: {report['max_dlq_depth']} DLQ messages detected"
-            )
+            print(f"\n❌ SOAK TEST FAILED: {report['max_dlq_depth']} DLQ messages detected")
         else:
             print(
                 f"\n❌ SOAK TEST FAILED: {report['success_rate']:.2f}% success rate (target: {target_success}%)"
@@ -573,9 +535,7 @@ class SoakTest:
         while not self.shutdown.is_set():
             elapsed = time.time() - start_time
             if elapsed >= self.duration_seconds:
-                print(
-                    f"\nDuration reached ({self.duration_seconds / 3600:.1f} hours). Stopping..."
-                )
+                print(f"\nDuration reached ({self.duration_seconds / 3600:.1f} hours). Stopping...")
                 break
 
             # Send one request

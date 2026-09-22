@@ -152,8 +152,7 @@ def run_multi_model_test(model_counts):
 
     # Per-model counters
     counters = {
-        alias: {"immediate": 0, "queued": 0, "failed": 0, "timed_out": 0}
-        for alias in model_counts
+        alias: {"immediate": 0, "queued": 0, "failed": 0, "timed_out": 0} for alias in model_counts
     }
 
     max_wait = 600  # 10 minutes

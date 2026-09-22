@@ -13,9 +13,7 @@ def load_config():
     config_file = os.path.join(script_dir, "..", "config.env")
 
     if not os.path.exists(config_file):
-        print(
-            "❌ config.env not found. Run: ./setup.sh or cp config.env.template config.env"
-        )
+        print("❌ config.env not found. Run: ./setup.sh or cp config.env.template config.env")
         sys.exit(1)
 
     # Parse config file

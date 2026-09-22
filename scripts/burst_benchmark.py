@@ -180,15 +180,11 @@ def run_shaper(model_id, n, interval, max_tokens):
             if st in ("SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"):
                 ms = (d["stopDate"] - d["startDate"]).total_seconds() * 1000
                 if st == "SUCCEEDED":
-                    results.append(
-                        {"ok": True, "throttled": False, "error": None, "ms": ms}
-                    )
+                    results.append({"ok": True, "throttled": False, "error": None, "ms": ms})
                 else:
                     cause = (d.get("cause") or "") + (d.get("error") or "")
                     throttled = (
-                        any(c in cause for c in _THROTTLE_CODES)
-                        or "429" in cause
-                        or "503" in cause
+                        any(c in cause for c in _THROTTLE_CODES) or "429" in cause or "503" in cause
                     )
                     results.append(
                         {
@@ -230,9 +226,7 @@ def shaper_tokens(model_id, start_epoch, end_epoch):
                 "ReturnData": True,
             }
         )
-    r = cw.get_metric_data(
-        MetricDataQueries=q, StartTime=start_epoch - 60, EndTime=end_epoch + 120
-    )
+    r = cw.get_metric_data(MetricDataQueries=q, StartTime=start_epoch - 60, EndTime=end_epoch + 120)
     vals = {res["Id"]: sum(res["Values"]) for res in r["MetricDataResults"]}
     return vals.get("m0", 0.0), vals.get("m1", 0.0)
 
@@ -267,9 +261,7 @@ def summarize(path, results, elapsed, offered, in_tok=None, out_tok=None):
 
 def main():
     ap = argparse.ArgumentParser(description="2x burst: shaper vs baseline")
-    ap.add_argument(
-        "--models", help="comma list of aliases/ids; default = all configured"
-    )
+    ap.add_argument("--models", help="comma list of aliases/ids; default = all configured")
     ap.add_argument(
         "--duration",
         type=int,

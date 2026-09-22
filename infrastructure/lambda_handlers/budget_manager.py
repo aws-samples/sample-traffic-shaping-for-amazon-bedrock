@@ -301,9 +301,7 @@ def try_reserve_allocation_leaky_bucket(
         short_window_sec = float(config.get("short_window_sec", 0))
         long_window_sec = float(config.get("long_window_sec", 0))
     except KeyError:
-        raise ValueError(
-            f"Model config not found: {model_id}. Run 'make create-config MODEL=...'"
-        )
+        raise ValueError(f"Model config not found: {model_id}. Run 'make create-config MODEL=...'")
     except Exception as e:
         raise ValueError(f"Error loading model config for {model_id}: {e}")
 
@@ -483,9 +481,7 @@ def trigger_queue_processor(model_id: str, dynamo_service: DynamoService):
     # Note: Multiple Budget Managers may reach here simultaneously if lock is stale
     # That's OK - Queue Processor uses atomic acquire_processor_lock() to ensure
     # only one wins
-    logger.info(
-        f"No active processor detected, triggering Queue Processor: model={model_id}"
-    )
+    logger.info(f"No active processor detected, triggering Queue Processor: model={model_id}")
 
     try:
         eventbridge.put_events(
@@ -630,9 +626,7 @@ def handler(event, context):
             return {"statusCode": 400, "error": error_msg, "queued": False}
 
         prompt_bytes = len(
-            (request_payload.get("prompt", "") if request_payload else "").encode(
-                "utf-8"
-            )
+            (request_payload.get("prompt", "") if request_payload else "").encode("utf-8")
         )
         max_prompt_bytes = 1_048_576  # 1 MB
         if prompt_bytes > max_prompt_bytes:

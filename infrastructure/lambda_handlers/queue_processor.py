@@ -70,9 +70,7 @@ def _flat_tpm_estimate(config: Dict[str, Any], queue_target_tpm: int = 0) -> int
          real request (a bare prompt + a few hundred output tokens), so it was the
          amplifier that turned a missing estimate into a 6× overshoot.
     """
-    default_max_tokens = config.get(
-        "default_max_tokens", config.get("max_tokens_per_request")
-    )
+    default_max_tokens = config.get("default_max_tokens", config.get("max_tokens_per_request"))
     if default_max_tokens is not None:
         burndown_rate = float(config.get("output_token_burndown_rate", 1.0))
         nominal_input_tokens = int(config.get("nominal_input_tokens", 0))
@@ -170,9 +168,7 @@ def trigger_successor(model_id: str) -> None:
                 }
             ]
         )
-        logger.info(
-            f"Re-triggered queue processor via EventBridge for model: {model_id}"
-        )
+        logger.info(f"Re-triggered queue processor via EventBridge for model: {model_id}")
     except Exception as e:
         # Don't fail the drain if the re-trigger emit fails; a later budget-manager
         # enqueue (or the next scheduled trigger) can still wake the processor.
@@ -221,9 +217,7 @@ def try_reserve_queue_capacity_batch(
         # default (see the helper's docstring + test_queue_overshoot_sim.py).
         burndown_rate = float(config.get("output_token_burndown_rate", 1.0))
         nominal_input_tokens = int(config.get("nominal_input_tokens", 0))
-        flat_tpm_estimate = _flat_tpm_estimate(
-            config, int(config.get("queue_target_tpm", 0))
-        )
+        flat_tpm_estimate = _flat_tpm_estimate(config, int(config.get("queue_target_tpm", 0)))
         flat_output_estimate = max(1, flat_tpm_estimate - nominal_input_tokens)
         # Sub-minute (2s) rate cap — same smoothing the burst gate applies, done here
         # as a FREE in-memory filter of the 60s records already fetched below (the
@@ -232,9 +226,7 @@ def try_reserve_queue_capacity_batch(
         # Defaults to queue_regeneration_rate (≈ the drain's sustained quota req/s).
         short_window_rps = float(config.get("short_window_rps", 0)) or queue_regen_rate
     except KeyError:
-        raise ValueError(
-            f"Model config not found: {model_id}. Run 'make create-config MODEL=...'"
-        )
+        raise ValueError(f"Model config not found: {model_id}. Run 'make create-config MODEL=...'")
     except Exception as e:
         raise ValueError(f"Error loading model config for {model_id}: {e}")
 
@@ -259,9 +251,7 @@ def try_reserve_queue_capacity_batch(
     # the queue processor holds a single-owner lock, so this reader is the only writer.
     SHORT_WINDOW_SECONDS = 2
     cutoff_ms = int((current_time - SHORT_WINDOW_SECONDS) * 1000)
-    recent_records = [
-        r for r in consumption_records if int(r["sk"].split("#")[0]) >= cutoff_ms
-    ]
+    recent_records = [r for r in consumption_records if int(r["sk"].split("#")[0]) >= cutoff_ms]
 
     # RPS dimension: cap requests dispatched per 2s.
     short_window_cap = max(1, int(short_window_rps * SHORT_WINDOW_SECONDS))
@@ -276,9 +266,7 @@ def try_reserve_queue_capacity_batch(
     tps_slot_headroom = short_window_headroom  # default: TPS not gating
     if tpm_queue_regen_rate > 0 and flat_tpm_estimate > 0:
         short_window_tps_cap = max(1, int(tpm_queue_regen_rate * SHORT_WINDOW_SECONDS))
-        recent_tokens_2s = sum(
-            int(r.get("estimated_tokens", 0) or 0) for r in recent_records
-        )
+        recent_tokens_2s = sum(int(r.get("estimated_tokens", 0) or 0) for r in recent_records)
         token_headroom = max(0, short_window_tps_cap - recent_tokens_2s)
         tps_slot_headroom = token_headroom // flat_tpm_estimate
 
@@ -450,9 +438,7 @@ def try_reserve_queue_capacity_batch(
     # TPM consumed in the last 60s = sum of estimated_tokens over the records already
     # queried above (free — no extra read). This is the "consumed" signal the dispatch
     # log pairs with each request's own estimate to compute would_exceed.
-    tpm_consumed_last_60s = sum(
-        int(r.get("estimated_tokens", 0) or 0) for r in consumption_records
-    )
+    tpm_consumed_last_60s = sum(int(r.get("estimated_tokens", 0) or 0) for r in consumption_records)
 
     logger.info(
         f"Batch capacity reserved: requested={batch_size}, reserved={reserved_count}, "
@@ -601,19 +587,9 @@ def handler(event, context):
 
     # Derived window caps for the four in-memory dispatch gates (mirror the sim).
     rpm_2s_cap = max(1, int(short_window_rps * SHORT_WINDOW_SEC))
-    tpm_2s_cap = (
-        int(tpm_queue_regen_rate * SHORT_WINDOW_SEC) if tpm_queue_regen_rate > 0 else 0
-    )
-    itpm_2s_cap = (
-        int(itpm_queue_regen_rate * SHORT_WINDOW_SEC)
-        if itpm_queue_regen_rate > 0
-        else 0
-    )
-    otpm_2s_cap = (
-        int(otpm_queue_regen_rate * SHORT_WINDOW_SEC)
-        if otpm_queue_regen_rate > 0
-        else 0
-    )
+    tpm_2s_cap = int(tpm_queue_regen_rate * SHORT_WINDOW_SEC) if tpm_queue_regen_rate > 0 else 0
+    itpm_2s_cap = int(itpm_queue_regen_rate * SHORT_WINDOW_SEC) if itpm_queue_regen_rate > 0 else 0
+    otpm_2s_cap = int(otpm_queue_regen_rate * SHORT_WINDOW_SEC) if otpm_queue_regen_rate > 0 else 0
     # Even-spacing pacer: target tokens/second (0 = disabled).
     queue_target_tps = queue_target_tpm / 60.0 if queue_target_tpm > 0 else 0.0
     logger.info(
@@ -630,9 +606,7 @@ def handler(event, context):
         logger.info("Another processor running (active lock exists), exiting")
         return {"processed": 0, "message": "Another processor running"}
 
-    logger.info(
-        f"Acquired processor lock: model={model_id}, processor_id={processor_id}"
-    )
+    logger.info(f"Acquired processor lock: model={model_id}, processor_id={processor_id}")
 
     # Whether to wake a successor invocation on exit. Set True only when the last
     # dispatched batch was FULL — a strong "there is still work and we were draining
@@ -667,18 +641,14 @@ def handler(event, context):
         while time.time() - start_time < MAX_RUNTIME:
             # Heartbeat check - refresh lock TTL every LOCK_HEARTBEAT_INTERVAL seconds
             if time.time() - last_heartbeat >= LOCK_HEARTBEAT_INTERVAL:
-                if not dynamo_service.refresh_processor_heartbeat(
-                    model_id, processor_id
-                ):
+                if not dynamo_service.refresh_processor_heartbeat(model_id, processor_id):
                     logger.warning(f"Lost lock ownership, exiting: model={model_id}")
                     return {
                         "processed": processed_count,
                         "failed": failed_count,
                         "status": "lock_lost",
                     }
-                logger.info(
-                    f"Heartbeat refreshed: model={model_id}, processed={processed_count}"
-                )
+                logger.info(f"Heartbeat refreshed: model={model_id}, processed={processed_count}")
                 last_heartbeat = time.time()
 
             # Periodic re-sync: every 60s, rebuild dispatch_log from DynamoDB actuals.
@@ -697,9 +667,7 @@ def handler(event, context):
                         output_tokens = int(r.get("estimated_output_tokens") or 0)
                         rebuilt.append((ts, combined, input_tokens, output_tokens))
                     dispatch_log = deque(sorted(rebuilt, key=lambda e: e[0]))
-                    logger.info(
-                        f"dispatch_log resynced from DynamoDB: {len(dispatch_log)} records"
-                    )
+                    logger.info(f"dispatch_log resynced from DynamoDB: {len(dispatch_log)} records")
                 except Exception as e:
                     logger.warning(f"dispatch_log resync failed (non-fatal): {e}")
                 last_resync = time.time()
@@ -714,9 +682,7 @@ def handler(event, context):
             if not items:
                 # Truly drained — no successor needed. Clear any earlier full-batch
                 # signal so we don't wake a fresh invocation onto an empty queue.
-                logger.info(
-                    f"Queue empty, stopping (total processed={processed_count})"
-                )
+                logger.info(f"Queue empty, stopping (total processed={processed_count})")
                 should_reschedule = False
                 break
 
@@ -757,13 +723,9 @@ def handler(event, context):
                 )
                 if recent_2s_count >= rpm_2s_cap:
                     in_win = [
-                        entry[0]
-                        for entry in dispatch_log
-                        if entry[0] >= now - SHORT_WINDOW_SEC
+                        entry[0] for entry in dispatch_log if entry[0] >= now - SHORT_WINDOW_SEC
                     ]
-                    sleep_for = max(
-                        0.001, (min(in_win) + SHORT_WINDOW_SEC) - now + 0.005
-                    )
+                    sleep_for = max(0.001, (min(in_win) + SHORT_WINDOW_SEC) - now + 0.005)
                     logger.info(
                         f"Gate RPM-2s: count={recent_2s_count}>={rpm_2s_cap}, sleeping {sleep_for:.3f}s"
                     )
@@ -799,13 +761,9 @@ def handler(event, context):
                         now = time.time()
 
                 # ── Gate 3: RPM 60s ────────────────────────────────────────────────
-                recent_60s_count = sum(
-                    1 for entry in dispatch_log if entry[0] >= now - 60.0
-                )
+                recent_60s_count = sum(1 for entry in dispatch_log if entry[0] >= now - 60.0)
                 if recent_60s_count >= queue_capacity:
-                    in_win_60 = [
-                        entry[0] for entry in dispatch_log if entry[0] >= now - 60.0
-                    ]
+                    in_win_60 = [entry[0] for entry in dispatch_log if entry[0] >= now - 60.0]
                     sleep_for = max(0.001, (min(in_win_60) + 60.0) - now + 0.005)
                     logger.info(
                         f"Gate RPM-60s: count={recent_60s_count}>={queue_capacity}, sleeping {sleep_for:.3f}s"
@@ -819,9 +777,7 @@ def handler(event, context):
                         ("iTPM", item_input_tokens, 2, itpm_queue_capacity),
                         ("oTPM", item_output_tokens, 3, otpm_queue_capacity),
                     ):
-                        sleep_for = _token_gate_sleep(
-                            dispatch_log, tokens, index, 60.0, cap, now
-                        )
+                        sleep_for = _token_gate_sleep(dispatch_log, tokens, index, 60.0, cap, now)
                         if sleep_for > 0:
                             logger.info(
                                 f"Gate {label}-60s: item={tokens}, cap={cap}, "
@@ -924,9 +880,7 @@ def handler(event, context):
                     try:
                         fresh_config = dynamo_service.get_model_config(model_id)
                     except Exception:
-                        fresh_config = (
-                            config  # Fall back to stale config if reload fails
-                        )
+                        fresh_config = config  # Fall back to stale config if reload fails
                     if fresh_config.get("circuit_breaker_disabled"):
                         logger.warning(
                             "Circuit breaker would trip but is DISABLED via config — continuing"
@@ -961,9 +915,7 @@ def handler(event, context):
                             }
                             print(json.dumps(cb_emf))
                         except Exception:
-                            logger.debug(
-                                "Failed to emit circuit breaker EMF", exc_info=True
-                            )
+                            logger.debug("Failed to emit circuit breaker EMF", exc_info=True)
                         break
             else:
                 consecutive_batch_failures = 0
@@ -980,9 +932,7 @@ def handler(event, context):
                             {
                                 "Namespace": "BedrockShaper",
                                 "Dimensions": [["ServiceName", "model_id"]],
-                                "Metrics": [
-                                    {"Name": "ProcessingRate", "Unit": "Count"}
-                                ],
+                                "Metrics": [{"Name": "ProcessingRate", "Unit": "Count"}],
                             }
                         ],
                     },
@@ -1017,9 +967,7 @@ def handler(event, context):
         if dynamo_service.release_processor_lock(model_id, processor_id):
             logger.info(f"Released processor lock: model={model_id}")
         else:
-            logger.warning(
-                f"Could not release lock (already lost ownership): model={model_id}"
-            )
+            logger.warning(f"Could not release lock (already lost ownership): model={model_id}")
 
         # Hand off to a fresh invocation if we exited with the queue still draining
         # at full clip (Bug 2). Emit AFTER releasing the lock so the successor can

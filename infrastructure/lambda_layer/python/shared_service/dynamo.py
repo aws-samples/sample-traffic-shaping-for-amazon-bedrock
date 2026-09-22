@@ -121,9 +121,7 @@ class DynamoService:
         Raises:
             KeyError if model config not found
         """
-        response = self.single_table.get_item(
-            Key={"pk": f"MODEL#{model_id}", "sk": "CONFIG"}
-        )
+        response = self.single_table.get_item(Key={"pk": f"MODEL#{model_id}", "sk": "CONFIG"})
 
         if "Item" not in response:
             raise KeyError(f"Model config not found: {model_id}")
@@ -229,8 +227,7 @@ class DynamoService:
             "estimated_tokens": estimated_tokens,
             "source": "burst",
             "consumed_at": datetime.fromtimestamp(now).isoformat(),
-            "ttl": int(now)
-            + 60,  # 60s retention — only needs to outlive the 15s window
+            "ttl": int(now) + 60,  # 60s retention — only needs to outlive the 15s window
         }
 
         if correlation_id:
@@ -243,9 +240,7 @@ class DynamoService:
             item["estimated_output_tokens"] = estimated_output_tokens
             item["backend"] = "mantle"
 
-        short_w = (
-            short_window_sec if short_window_sec > 0 else self.SHORT_WINDOW_SECONDS
-        )
+        short_w = short_window_sec if short_window_sec > 0 else self.SHORT_WINDOW_SECONDS
         long_w = long_window_sec if long_window_sec > 0 else self.LONG_WINDOW_SECONDS
 
         if backend == "mantle" and (itpm_burst_capacity > 0 or otpm_burst_capacity > 0):
@@ -275,25 +270,15 @@ class DynamoService:
             # and long (accuracy) windows on tokens AND requests, then write the
             # record with a single put_item. This is the fix for the counter-item
             # contention that pinned burst throughput far below its budget.
-            effective_short_rps = (
-                short_window_rps if short_window_rps > 0 else burst_regen_rate
-            )
+            effective_short_rps = short_window_rps if short_window_rps > 0 else burst_regen_rate
             cap_short_req = (
-                max(1, int(effective_short_rps * short_w))
-                if effective_short_rps > 0
-                else 0
+                max(1, int(effective_short_rps * short_w)) if effective_short_rps > 0 else 0
             )
             cap_long_req = (
-                max(1, int(effective_short_rps * long_w))
-                if effective_short_rps > 0
-                else 0
+                max(1, int(effective_short_rps * long_w)) if effective_short_rps > 0 else 0
             )
-            cap_short_tok = (
-                int(tpm_burst_regen_rate * short_w) if tpm_burst_regen_rate > 0 else 0
-            )
-            cap_long_tok = (
-                int(tpm_burst_regen_rate * long_w) if tpm_burst_regen_rate > 0 else 0
-            )
+            cap_short_tok = int(tpm_burst_regen_rate * short_w) if tpm_burst_regen_rate > 0 else 0
+            cap_long_tok = int(tpm_burst_regen_rate * long_w) if tpm_burst_regen_rate > 0 else 0
             gate_tpm = tpm_burst_regen_rate > 0 and estimated_tokens > 0
 
             # Oversized-request pre-check: a request that cannot fit even an empty
@@ -375,25 +360,13 @@ class DynamoService:
         effective_short_rps = short_window_rps
         if effective_short_rps <= 0 and rpm_quota_enabled and burst_regen_rate > 0:
             effective_short_rps = burst_regen_rate
-        cap_short_req = (
-            max(1, int(effective_short_rps * short_w)) if effective_short_rps > 0 else 0
-        )
-        cap_long_req = (
-            max(1, int(effective_short_rps * long_w)) if effective_short_rps > 0 else 0
-        )
+        cap_short_req = max(1, int(effective_short_rps * short_w)) if effective_short_rps > 0 else 0
+        cap_long_req = max(1, int(effective_short_rps * long_w)) if effective_short_rps > 0 else 0
 
-        cap_short_itok = (
-            int(itpm_burst_regen_rate * short_w) if itpm_burst_regen_rate > 0 else 0
-        )
-        cap_long_itok = (
-            int(itpm_burst_regen_rate * long_w) if itpm_burst_regen_rate > 0 else 0
-        )
-        cap_short_otok = (
-            int(otpm_burst_regen_rate * short_w) if otpm_burst_regen_rate > 0 else 0
-        )
-        cap_long_otok = (
-            int(otpm_burst_regen_rate * long_w) if otpm_burst_regen_rate > 0 else 0
-        )
+        cap_short_itok = int(itpm_burst_regen_rate * short_w) if itpm_burst_regen_rate > 0 else 0
+        cap_long_itok = int(itpm_burst_regen_rate * long_w) if itpm_burst_regen_rate > 0 else 0
+        cap_short_otok = int(otpm_burst_regen_rate * short_w) if otpm_burst_regen_rate > 0 else 0
+        cap_long_otok = int(otpm_burst_regen_rate * long_w) if otpm_burst_regen_rate > 0 else 0
 
         gate_i = itpm_burst_regen_rate > 0 and estimated_input_tokens > 0
         gate_o = otpm_burst_regen_rate > 0 and estimated_output_tokens > 0
@@ -404,11 +377,7 @@ class DynamoService:
                 f"Mantle single-request iTPM exceeds long-window cap for {model_id}: "
                 f"est_input={int(estimated_input_tokens)}, cap_long_itok={cap_long_itok}"
             )
-        if (
-            gate_o
-            and cap_long_otok > 0
-            and int(estimated_output_tokens) > cap_long_otok
-        ):
+        if gate_o and cap_long_otok > 0 and int(estimated_output_tokens) > cap_long_otok:
             raise BurstCapacityExceeded(
                 f"Mantle single-request oTPM exceeds long-window cap for {model_id}: "
                 f"est_output={int(estimated_output_tokens)}, cap_long_otok={cap_long_otok}"
@@ -626,18 +595,13 @@ class DynamoService:
 
         # Count total tokens consumed (convert Decimal to int if needed)
         tokens_consumed = sum(
-            (
-                int(record["count"])
-                if isinstance(record["count"], Decimal)
-                else record["count"]
-            )
+            (int(record["count"]) if isinstance(record["count"], Decimal) else record["count"])
             for record in consumption_records
         )
 
         # Calculate per-record regeneration: each record regenerates based on its own age
         tokens_regenerated = sum(
-            (current_time - int(record["sk"].split("#")[0]) / 1000.0)
-            * regeneration_rate
+            (current_time - int(record["sk"].split("#")[0]) / 1000.0) * regeneration_rate
             for record in consumption_records
         )
         # Can't regenerate more tokens than were consumed
@@ -703,9 +667,7 @@ class DynamoService:
             if record.get("estimated_tokens", 0)
         )
         time_since_drain_started = current_time - oldest_record_ms / 1000.0
-        tokens_regenerated = min(
-            time_since_drain_started * tpm_regeneration_rate, tokens_consumed
-        )
+        tokens_regenerated = min(time_since_drain_started * tpm_regeneration_rate, tokens_consumed)
 
         # Calculate available tokens
         available_tpm = tpm_capacity - tokens_consumed + tokens_regenerated
@@ -764,9 +726,7 @@ class DynamoService:
         anchor_records = [r for r in consumption_records if _field_val(r)]
         oldest_record_ms = min(int(r["sk"].split("#")[0]) for r in anchor_records)
         time_since_drain_started = current_time - oldest_record_ms / 1000.0
-        tokens_regenerated = min(
-            time_since_drain_started * tpm_regeneration_rate, tokens_consumed
-        )
+        tokens_regenerated = min(time_since_drain_started * tpm_regeneration_rate, tokens_consumed)
 
         return tpm_capacity - tokens_consumed + tokens_regenerated
 
@@ -838,9 +798,7 @@ class DynamoService:
                 batch_response = self.dynamodb.meta.client.batch_write_item(
                     RequestItems={table_name: unprocessed}
                 )
-                unprocessed = batch_response.get("UnprocessedItems", {}).get(
-                    table_name, []
-                )
+                unprocessed = batch_response.get("UnprocessedItems", {}).get(table_name, [])
 
         return deleted_count
 
@@ -852,9 +810,7 @@ class DynamoService:
             ProjectionExpression="model_id",
         )
 
-        return [
-            item["model_id"] for item in response.get("Items", []) if "model_id" in item
-        ]
+        return [item["model_id"] for item in response.get("Items", []) if "model_id" in item]
 
     # === Terminal-Status Methods (honest-outcomes layer) ===
 
@@ -904,9 +860,7 @@ class DynamoService:
         }
 
         try:
-            self.single_table.put_item(
-                Item=item, ConditionExpression="attribute_not_exists(pk)"
-            )
+            self.single_table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
         except self.dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
             # Item already exists (PENDING already written, or a terminal state has
             # been committed). A Retry must not clobber it — idempotent no-op.
@@ -1100,9 +1054,7 @@ class DynamoService:
             current_time=current_time,
         )
 
-    def delete_queue_consumption(
-        self, model_id: str, timestamp_ms: int, request_id: str
-    ) -> None:
+    def delete_queue_consumption(self, model_id: str, timestamp_ms: int, request_id: str) -> None:
         """Delete queue consumption record (rollback for over-consumption)."""
         self.delete_consumption_record(
             model_id=model_id,
@@ -1212,9 +1164,7 @@ class DynamoService:
             return False
         return expires_at < now
 
-    def batch_dequeue_items(
-        self, model_id: str, batch_size: int
-    ) -> List[Dict[str, Any]]:
+    def batch_dequeue_items(self, model_id: str, batch_size: int) -> List[Dict[str, Any]]:
         """
         Dequeue up to batch_size items (oldest first).
         Uses BatchWriteItem for efficient bulk deletion.
@@ -1283,8 +1233,7 @@ class DynamoService:
     def _batch_delete_items(self, table_name: str, items: List[Dict[str, Any]]) -> None:
         """Batch-delete queue items (25 per BatchWriteItem call, retrying unprocessed)."""
         delete_requests = [
-            {"DeleteRequest": {"Key": {"pk": item["pk"], "sk": item["sk"]}}}
-            for item in items
+            {"DeleteRequest": {"Key": {"pk": item["pk"], "sk": item["sk"]}}} for item in items
         ]
 
         # BatchWriteItem supports max 25 items per call
@@ -1303,9 +1252,7 @@ class DynamoService:
                 batch_response = self.dynamodb.meta.client.batch_write_item(
                     RequestItems={table_name: unprocessed}
                 )
-                unprocessed = batch_response.get("UnprocessedItems", {}).get(
-                    table_name, []
-                )
+                unprocessed = batch_response.get("UnprocessedItems", {}).get(table_name, [])
 
     def record_invocation_error(
         self, model_id: str, request_id: str, execution_arn: Optional[str], error: str
@@ -1389,9 +1336,7 @@ class DynamoService:
             # On error, assume no active lock to avoid blocking queue processing
             return False
 
-    def acquire_processor_lock(
-        self, model_id: str, processor_id: str, slot: int = 0
-    ) -> bool:
+    def acquire_processor_lock(self, model_id: str, processor_id: str, slot: int = 0) -> bool:
         """
         Acquire lock in single table, overwriting if TTL expired.
 
@@ -1429,9 +1374,7 @@ class DynamoService:
             # Lock exists and is not expired
             return False
 
-    def refresh_processor_heartbeat(
-        self, model_id: str, processor_id: str, slot: int = 0
-    ) -> bool:
+    def refresh_processor_heartbeat(self, model_id: str, processor_id: str, slot: int = 0) -> bool:
         """
         Refresh lock TTL (heartbeat). Returns False if we lost ownership.
 
@@ -1467,9 +1410,7 @@ class DynamoService:
             # Lost ownership - another processor acquired the lock
             return False
 
-    def release_processor_lock(
-        self, model_id: str, processor_id: str, slot: int = 0
-    ) -> bool:
+    def release_processor_lock(self, model_id: str, processor_id: str, slot: int = 0) -> bool:
         """
         Release lock only if we own it.
 

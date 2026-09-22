@@ -137,11 +137,7 @@ def _iso_ms(created, updated):
 
 def classify_http(e):
     resp = getattr(e, "response", None)
-    code = (
-        resp.get("Error", {}).get("Code", "")
-        if isinstance(resp, dict)
-        else type(e).__name__
-    )
+    code = resp.get("Error", {}).get("Code", "") if isinstance(resp, dict) else type(e).__name__
     if code in _THROTTLE:
         return 429, code
     if code in _UNAVAIL:
@@ -323,9 +319,7 @@ def agg(path, res, elapsed, offered_tpm):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--over", type=float, default=6.0, help="offered burst = over x real TPM quota"
-    )
+    ap.add_argument("--over", type=float, default=6.0, help="offered burst = over x real TPM quota")
     ap.add_argument(
         "--prompt-tokens",
         type=int,
@@ -399,9 +393,7 @@ def main():
             cap = 0.8 * quota
             set_shaper_cap(alias, cap)
             time.sleep(2)
-            s_res, s_el = run_shaper(
-                mid, n, prompt, f"{tag0}_{mi}", drain_cap_s=args.drain_cap_s
-            )
+            s_res, s_el = run_shaper(mid, n, prompt, f"{tag0}_{mi}", drain_cap_s=args.drain_cap_s)
             s = agg("shaper", s_res, s_el, offered)
             s["cap"] = cap
             print(
@@ -412,9 +404,7 @@ def main():
             )
             rows.append((alias, quota, b, s))
         except Exception as e:  # noqa: BLE001
-            print(
-                f"    !! {alias} failed: {type(e).__name__}: {str(e)[:80]}", flush=True
-            )
+            print(f"    !! {alias} failed: {type(e).__name__}: {str(e)[:80]}", flush=True)
         print(flush=True)
 
     def s2(ms):

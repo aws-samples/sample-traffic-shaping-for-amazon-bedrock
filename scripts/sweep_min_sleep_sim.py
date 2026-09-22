@@ -133,9 +133,7 @@ def run_token_aware_with_floor(
 
             # Gate 1: RPM 2s (raw sleep, no floor — RPM is not the token constraint)
             if recent_count(short_window_sec) >= short_window_cap:
-                in_win = [
-                    ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec
-                ]
+                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 do_sleep((oldest + short_window_sec) - clock.now + 0.005, floored=False)
                 prune(60.0)
@@ -151,9 +149,7 @@ def run_token_aware_with_floor(
                             if ts >= clock.now - short_window_sec
                         ]
                         newest = (
-                            max(ts for ts, _ in in_win)
-                            if in_win
-                            else clock.now - short_window_sec
+                            max(ts for ts, _ in in_win) if in_win else clock.now - short_window_sec
                         )
                         do_sleep(
                             (newest + short_window_sec) - clock.now + 0.005,
@@ -215,9 +211,7 @@ def run_even_spacing_pacer(
 
     for item in items:
         if last_dispatch is not None:
-            interval = (
-                item.tokens / target_tps
-            )  # seconds this item "owns" at target rate
+            interval = item.tokens / target_tps  # seconds this item "owns" at target rate
             earliest = last_dispatch + interval
             if clock.now < earliest:
                 sleep_for = earliest - clock.now
@@ -261,9 +255,7 @@ def _run_even_spacing_sweep(items: List[Item], doc_path: str) -> None:
         )
 
     with open(doc_path, "a", encoding="utf-8") as f:
-        f.write(
-            "## SIM sweep — EVEN-SPACING pacer (interval = item_tokens / target_rate)\n\n"
-        )
+        f.write("## SIM sweep — EVEN-SPACING pacer (interval = item_tokens / target_rate)\n\n")
         f.write(
             "> Paces each item to a target token rate directly (GCRA/leaky-bucket). "
             "Peak 1s ≈ sustained by construction — no batch clumping. Sim confirms the "
@@ -312,9 +304,7 @@ def main() -> None:
             )
             sustained_tpm = r.effective_tps * 60.0
             peak_1s_tpm = r.max_tokens_in_rolling_window(1.0) * 60.0
-            peak_60s_tpm = r.max_tokens_in_rolling_window(
-                60.0
-            )  # tokens in a 60s window = TPM
+            peak_60s_tpm = r.max_tokens_in_rolling_window(60.0)  # tokens in a 60s window = TPM
             drain_s = r.total_sim_time
             rows.append(
                 {

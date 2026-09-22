@@ -122,12 +122,8 @@ BEDROCK_MODEL_ID = (
     else config.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
 )
 SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
-NUM_REQUESTS = (
-    args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
-)
-MAX_WORKERS = (
-    args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
-)
+NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
+MAX_WORKERS = args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
 SUBMISSION_DURATION = (
     args.submission_duration
     if args.submission_duration is not None
@@ -192,9 +188,7 @@ def test_direct_bedrock():
 
     if SUBMISSION_DURATION > 0:
         submission_rate = NUM_REQUESTS / SUBMISSION_DURATION
-        print(
-            f"Submission: {SUBMISSION_DURATION}s duration ({submission_rate:.1f} req/s)"
-        )
+        print(f"Submission: {SUBMISSION_DURATION}s duration ({submission_rate:.1f} req/s)")
     else:
         print(f"Submission: Instant spike (all at once)")
 
@@ -251,12 +245,8 @@ def test_direct_bedrock():
     other_errors = sum(1 for r in results if r["error"] and r["error"] != "429")
 
     print(f"  Total requests:    {NUM_REQUESTS}")
-    print(
-        f"  Successful:        {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)"
-    )
-    print(
-        f"  Throttled (429):   {throttle_count} ({throttle_count/NUM_REQUESTS*100:.1f}%)"
-    )
+    print(f"  Successful:        {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)")
+    print(f"  Throttled (429):   {throttle_count} ({throttle_count/NUM_REQUESTS*100:.1f}%)")
     print(f"  Other errors:      {other_errors}")
     print(f"  Total time:        {total_time:.1f}s")
     print(f"{'='*60}\n")
@@ -264,9 +254,7 @@ def test_direct_bedrock():
     if throttle_count > 0:
         print(f"✅ SUCCESS: Got {throttle_count} throttles! Bedrock is rate limiting.")
     else:
-        print(
-            f"⚠️  No throttles detected. Try increasing NUM_REQUESTS or running faster."
-        )
+        print(f"⚠️  No throttles detected. Try increasing NUM_REQUESTS or running faster.")
 
     print()
 

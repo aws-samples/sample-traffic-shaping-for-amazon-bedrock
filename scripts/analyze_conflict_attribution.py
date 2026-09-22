@@ -107,9 +107,7 @@ def main():
 
     log_group = args.log_group
     if not log_group:
-        print(
-            "❌ No log group. Set BUDGET_MANAGER_LOG_GROUP in config.env or pass --log-group."
-        )
+        print("❌ No log group. Set BUDGET_MANAGER_LOG_GROUP in config.env or pass --log-group.")
         sys.exit(1)
 
     end = time.time()
@@ -131,14 +129,11 @@ fields shed_class
 | stats count(*) as n by shed_class
 | sort n desc
 """
-    class_rows = _rows_to_dicts(
-        _run_insights_query(logs, log_group, class_query, start, end)
-    )
+    class_rows = _rows_to_dicts(_run_insights_query(logs, log_group, class_query, start, end))
     class_pairs = [(r["shed_class"], int(r["n"])) for r in class_rows]
     class_total = sum(n for _, n in class_pairs)
     _print_histogram(
-        "shed_class breakdown (contention = should've admitted; "
-        "cap_breach = real quota)",
+        "shed_class breakdown (contention = should've admitted; " "cap_breach = real quota)",
         class_pairs,
         class_total,
     )
@@ -154,12 +149,9 @@ fields log_type, is_final
 | sort n desc
 | limit 50
 """
-    item_rows = _rows_to_dicts(
-        _run_insights_query(logs, log_group, item_query, start, end)
-    )
+    item_rows = _rows_to_dicts(_run_insights_query(logs, log_group, item_query, start, end))
     item_pairs = [
-        (r.get("conflict_items_raw", "(none)") or "(none)", int(r["n"]))
-        for r in item_rows
+        (r.get("conflict_items_raw", "(none)") or "(none)", int(r["n"])) for r in item_rows
     ]
     item_total = sum(n for _, n in item_pairs)
     _print_histogram(
@@ -171,16 +163,10 @@ fields log_type, is_final
     print("\nInterpretation:")
     print("  • Mostly cap_breach  → 3.58 req/s is the configured quota, not a bug.")
     print("  • Mostly contention  → hot-item serialization is the throttle.")
-    print(
-        "  • conflict item = rate2s only        → sharding RATE2S recovers throughput."
-    )
+    print("  • conflict item = rate2s only        → sharding RATE2S recovers throughput.")
     print("  • conflict item includes tpm_window/ → unsharded TPM singleton is the")
-    print(
-        "    tpm_global/tok2s                      serializer; sharding RATE2S is inert."
-    )
-    print(
-        '\n(Raw JSON lines: filter the log group on log_type="transaction_cancellation".)'
-    )
+    print("    tpm_global/tok2s                      serializer; sharding RATE2S is inert.")
+    print('\n(Raw JSON lines: filter the log group on log_type="transaction_cancellation".)')
 
 
 if __name__ == "__main__":

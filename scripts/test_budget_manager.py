@@ -120,12 +120,8 @@ BEDROCK_MODEL_ID = (
 )
 STATE_MACHINE_ARN = config.get("STATE_MACHINE_ARN", "")
 SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
-NUM_REQUESTS = (
-    args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
-)
-MAX_WORKERS = (
-    args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
-)
+NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
+MAX_WORKERS = args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
 SUBMISSION_DURATION = (
     args.submission_duration
     if args.submission_duration is not None
@@ -209,9 +205,7 @@ def test_step_functions():
     print(f"Concurrency: {MAX_WORKERS} threads")
 
     if PROMPT_SIZE or MAX_TOKENS is not None:
-        print(
-            f"Prompt size: {PROMPT_SIZE or '~10'} chars, max_tokens: {MAX_TOKENS or 100}"
-        )
+        print(f"Prompt size: {PROMPT_SIZE or '~10'} chars, max_tokens: {MAX_TOKENS or 100}")
         # Calculate estimated TPM per request for display
         from shared_service import estimate_request_tokens
 
@@ -237,9 +231,7 @@ def test_step_functions():
 
     if SUBMISSION_DURATION > 0:
         submission_rate = NUM_REQUESTS / SUBMISSION_DURATION
-        print(
-            f"Submission: {SUBMISSION_DURATION}s duration ({submission_rate:.1f} req/s)"
-        )
+        print(f"Submission: {SUBMISSION_DURATION}s duration ({submission_rate:.1f} req/s)")
     else:
         print(f"Submission: Instant spike (all at once)")
 
@@ -367,18 +359,14 @@ def test_step_functions():
                 )
                 time.sleep(min(30, poll_interval * (2 ** min(monitor_throttles, 4))))
                 continue
-            print(
-                f"\nError during monitoring (gave up after {monitor_throttles} throttles): {e}"
-            )
+            print(f"\nError during monitoring (gave up after {monitor_throttles} throttles): {e}")
             print(
                 f"   Shaper is still draining server-side — verify via SFN list-executions + CloudWatch."
             )
             break
 
     if running > 0 or queue_depth > 0:
-        print(
-            f"\n⚠️  Timeout after {max_wait_time}s: Queue={queue_depth}, Running={running}"
-        )
+        print(f"\n⚠️  Timeout after {max_wait_time}s: Queue={queue_depth}, Running={running}")
 
     # Final status check (only check remaining running executions if any)
     print(f"\nFinal execution statuses...")
@@ -410,9 +398,7 @@ def test_step_functions():
     error_count = sum(1 for r in results if not r["success"])
 
     print(f"  Total requests:       {NUM_REQUESTS}")
-    print(
-        f"  Started successfully: {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)"
-    )
+    print(f"  Started successfully: {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)")
     print(f"  Start errors:         {error_count}")
     print(f"  Processed immediate:  {final_succeeded}")
     print(f"  Queued:               {final_queued}")
@@ -427,9 +413,7 @@ def test_step_functions():
 
     if queue_depth == 0 and final_failed == 0 and running == 0:
         print(f"✅ SUCCESS: All {NUM_REQUESTS} requests processed!")
-        print(
-            f"   {final_succeeded} processed immediately, {final_queued} queued and processed"
-        )
+        print(f"   {final_succeeded} processed immediately, {final_queued} queued and processed")
     elif queue_depth > 0:
         print(f"⚠️  Queue still has {queue_depth} items after timeout.")
         print(f"   Wait longer or check Queue Processor logs.")

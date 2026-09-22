@@ -130,9 +130,7 @@ def handler(event, context):
 
     dynamo = DynamoService(single_table_name=SINGLE_TABLE_NAME)
     try:
-        resp = dynamo.single_table.get_item(
-            Key={"pk": f"REQUEST#{request_id}", "sk": "STATUS"}
-        )
+        resp = dynamo.single_table.get_item(Key={"pk": f"REQUEST#{request_id}", "sk": "STATUS"})
     except Exception as e:  # noqa: BLE001
         print(f"ERROR: GetItem failed for request_id={request_id}: {e}")
         return _response(

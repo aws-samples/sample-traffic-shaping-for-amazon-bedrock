@@ -16,12 +16,7 @@ import pytest
 from moto import mock_aws
 
 # Import the shared service layer from the Lambda layer path.
-LAYER = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "infrastructure"
-    / "lambda_layer"
-    / "python"
-)
+LAYER = pathlib.Path(__file__).resolve().parents[1] / "infrastructure" / "lambda_layer" / "python"
 sys.path.insert(0, str(LAYER))
 
 from shared_service import DynamoService, BurstCapacityExceeded  # noqa: E402
@@ -81,9 +76,7 @@ def test_admits_when_window_empty():
     res = _put(svc, "m1", "r1", 50_000)
     assert res["item"]["estimated_tokens"] == 50_000
     # Record was written to the BURST#CONSUMPTION partition.
-    recs = svc.query_consumption_records(
-        "m1", "BURST", window_seconds=15, consistent_read=True
-    )
+    recs = svc.query_consumption_records("m1", "BURST", window_seconds=15, consistent_read=True)
     assert len(recs) == 1
 
 

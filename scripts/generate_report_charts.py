@@ -136,9 +136,7 @@ def chart_2_burst_admission_before_after():
     )
 
     # Target line for burst
-    ax.axhline(
-        y=target_burst, color=COLORS["target"], linestyle="--", linewidth=2, alpha=0.7
-    )
+    ax.axhline(y=target_burst, color=COLORS["target"], linestyle="--", linewidth=2, alpha=0.7)
     ax.text(
         2.5,
         target_burst + 30,
