@@ -107,10 +107,14 @@ MODEL_MAP = {
 # non-Service-Quotas document, cited in-line; re-verify against Service Quotas
 # periodically and delete the entry once AWS publishes it there.
 DOCUMENTED_QUOTA_DEFAULTS = {
-    # Kimi K3: 10M TPM, no RPM dimension (confirmed no RPM anywhere for it).
+    # Kimi K3: 100M TPM, no RPM dimension (confirmed no RPM anywhere for it).
     # Source: AWS-internal Highspot Bedrock model-limits page, cited by repo
-    # owner 2026-09-21.
-    'kimi-k3': 10_000_000,
+    # owner 2026-09-22 -- matches the published Kimi K2.5 family figure
+    # (100M TPM in Service Quotas); revised up from an initial 10M citation
+    # (2026-09-21) once the family precedent was checked. A live baseline
+    # burst at 3x the 10M figure never throttled at all, consistent with the
+    # true ceiling being higher.
+    'kimi-k3': 100_000_000,
 }
 
 

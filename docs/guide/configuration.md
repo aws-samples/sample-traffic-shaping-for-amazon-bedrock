@@ -71,9 +71,10 @@ the alias:
   - **One narrow, named exception:** `DOCUMENTED_QUOTA_DEFAULTS` in
     `create_model_config.py` — a small, explicitly-sourced dict for a model
     too new for AWS Service Quotas to have published a discoverable rate
-    quota yet (e.g. Kimi K3: 10M TPM, cited to an authoritative internal
-    Bedrock model-limits document, verified 2026-09-21 that Service Quotas
-    genuinely has zero rows for it). `resolve_tpm()` only consults this dict
+    quota yet (e.g. Kimi K3: 100M TPM, cited to an authoritative internal
+    Bedrock model-limits document — matches the published Kimi K2.5 family
+    figure — verified 2026-09-22 that Service Quotas genuinely has zero rows
+    for K3 itself). `resolve_tpm()` only consults this dict
     *after* a real cache miss, tags the result `tpm_source='documented_default'`
     (never confusable with `'cache'` in the printed summary), and it never
     applies to any model not explicitly listed. This is not a return to the

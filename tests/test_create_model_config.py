@@ -151,7 +151,7 @@ def test_resolve_tpm_falls_through_to_documented_default_on_cache_miss(tmp_path,
 
     tpm, source = resolve_tpm("us.moonshotai.kimi-k3")
 
-    assert tpm == 10_000_000
+    assert tpm == 100_000_000
     assert source == "documented_default"
 
 
@@ -167,7 +167,7 @@ def test_resolve_tpm_documented_default_also_covers_a_present_but_null_entry(tmp
 
     tpm, source = resolve_tpm("us.moonshotai.kimi-k3")
 
-    assert tpm == 10_000_000
+    assert tpm == 100_000_000
     assert source == "documented_default"
 
 

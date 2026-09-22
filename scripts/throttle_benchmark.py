@@ -245,6 +245,12 @@ def main():
     ap.add_argument("--prompt-tokens", type=int, default=40000, help="approx input tokens/request (<60k for SFN 256KB)")
     ap.add_argument("--max-reqs", type=int, default=450, help="cap requests/model so big quotas drain in-window")
     ap.add_argument("--models", help="comma aliases to limit the feasible set")
+    ap.add_argument("--drain-cap-s", type=int, default=300,
+                     help="max seconds to wait for the shaper's queue to fully drain before "
+                          "counting the rest as still-queued (not failed). Raise this for a "
+                          "high-quota model at a real multiplier -- e.g. Kimi K3 at 100M TPM "
+                          "and --over 3 needs ~7500 requests, which the default 300s window "
+                          "cannot fully drain at the observed ~5-8 req/s pace.")
     args = ap.parse_args()
 
     sel = set(args.models.split(",")) if args.models else None
@@ -281,7 +287,7 @@ def main():
             cap = 0.8 * quota
             set_shaper_cap(alias, cap)
             time.sleep(2)
-            s_res, s_el = run_shaper(mid, n, prompt, f"{tag0}_{mi}", drain_cap_s=300)
+            s_res, s_el = run_shaper(mid, n, prompt, f"{tag0}_{mi}", drain_cap_s=args.drain_cap_s)
             s = agg("shaper", s_res, s_el, offered)
             s["cap"] = cap
             print(f"    shaper(cap={cap/1e6:.2f}M): 200={s['success']} 429={s['throttle']} 503={s['rejected']} "
