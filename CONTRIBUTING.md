@@ -117,8 +117,10 @@ Rules for suppressions:
 
 ## Code style
 
-- **Python:** format with `black` and type-check with `mypy` (both pinned in `requirements.txt`).
-  Target modern syntax; keep Lambda handlers dependency-light (they run on the shared layer).
+- **Python:** format with `black`, type-check with `mypy`, and static-security-scan with `bandit`
+  (all three pinned in `requirements.txt`). Target modern syntax; keep Lambda handlers
+  dependency-light (they run on the shared layer). `make lint` runs all of these plus
+  `detect-secrets` locally in one shot; the PR Gate workflow runs each as its own step.
 - **Naming and structure:** follow the existing patterns — the DynamoDB single-table access
   patterns live in `infrastructure/lambda_layer/python/shared_service/dynamo.py`; keep new access
   patterns there rather than scattering `boto3` calls across handlers.
@@ -137,7 +139,10 @@ Before opening a PR:
    if you touched queue-drain or admission logic.
 3. For any `infrastructure/` change, `cdk synth` exits 0 with zero unsuppressed `AwsSolutions`
    findings.
-4. `black` and `mypy` are clean on changed Python.
+4. `make lint` is clean (`black --check`, `mypy`, `bandit`, `detect-secrets` vs
+   `.secrets.baseline`) on changed Python. Refresh the baseline (`detect-secrets scan --baseline
+   .secrets.baseline`) if you add a file the scanner should ignore, and check the diff before
+   committing it.
 5. The PR description explains **what** changed and **why**, and links the finding or issue it
    addresses. If it changes shaper behavior under load, note how you verified it (which `make`
    target or load-test run, and the reconciled outcome).

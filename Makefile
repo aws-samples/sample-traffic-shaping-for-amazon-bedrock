@@ -3,6 +3,7 @@
 	inspect-tpm-consumption \
 	test-budget-manager test-direct-bedrock test-direct-retry test-direct-leaky test-all test-stale-lock \
 	test-queue-processor-sim test-budget-manager-sim \
+	format-check type-check security-scan secrets-scan lint \
 	test-multi-model \
 	soak-test analyze-soak \
 	logs-recent logs-budget-recent logs-queue-recent logs-bedrock-recent logs-errors \
@@ -25,6 +26,13 @@ help:
 	@echo "  make test MODEL=opus-5  - Same, against a specific model alias"
 	@echo "  make test-queue-processor-sim - Offline queue drain simulation (no AWS)"
 	@echo "  make test-budget-manager-sim  - Offline admission-gate simulation (no AWS)"
+	@echo ""
+	@echo "Code Quality (same checks the PR Gate workflow runs):"
+	@echo "  make format-check       - Check formatting (black --check)"
+	@echo "  make type-check         - Type-check (mypy)"
+	@echo "  make security-scan      - Static security analysis (bandit)"
+	@echo "  make secrets-scan       - Scan for secrets (detect-secrets vs .secrets.baseline)"
+	@echo "  make lint               - Run all four of the above"
 	@echo "  make test-budget-manager - Load test via semaphore (uses config.env defaults)"
 	@echo "  make test-budget-manager ARGS='--model nova-2-lite --num-requests 50' - With custom parameters"
 	@echo "  make test-direct-bedrock - Baseline throttling test, no retry (uses config.env defaults)"
@@ -215,6 +223,25 @@ test-queue-processor-sim:
 test-budget-manager-sim:
 	@echo "🧪 Running budget manager admission-gate simulation (offline, no AWS)..."
 	@source .venv/bin/activate && python scripts/test_budget_manager_sim.py $(ARGS)
+
+# Code Quality (offline, no AWS required) -- same checks the PR Gate workflow runs
+format-check:
+	@echo "🎨 Checking code formatting (black)..."
+	@source .venv/bin/activate && black --check scripts infrastructure tests
+
+type-check:
+	@echo "🔍 Type-checking (mypy)..."
+	@source .venv/bin/activate && mypy scripts infrastructure tests
+
+security-scan:
+	@echo "🛡️  Running static security analysis (bandit)..."
+	@source .venv/bin/activate && bandit -r infrastructure scripts tests -c pyproject.toml
+
+secrets-scan:
+	@echo "🔐 Scanning for secrets (detect-secrets)..."
+	@source .venv/bin/activate && detect-secrets scan --baseline .secrets.baseline
+
+lint: format-check type-check security-scan secrets-scan
 
 # Load Testing
 test-budget-manager:

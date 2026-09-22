@@ -33,11 +33,10 @@ import os
 
 from shared_service import DynamoService
 
-
-SINGLE_TABLE_NAME = os.environ.get('SINGLE_TABLE_NAME')
+SINGLE_TABLE_NAME = os.environ.get("SINGLE_TABLE_NAME")
 
 # EventBridge statuses this finalizer records. SUCCEEDED is intentionally absent.
-_HANDLED_STATUSES = {'FAILED', 'TIMED_OUT', 'ABORTED'}
+_HANDLED_STATUSES = {"FAILED", "TIMED_OUT", "ABORTED"}
 
 
 def _load_json(maybe_json):
@@ -70,98 +69,114 @@ def _extract_identity(detail):
     are checked defensively because the exact envelope depends on which state the
     execution died in.
     """
-    sm_input = _load_json(detail.get('input'))
-    sm_output = _load_json(detail.get('output'))
+    sm_input = _load_json(detail.get("input"))
+    sm_output = _load_json(detail.get("output"))
 
     # Nested payload the processor callback echoes, when present.
     nested = {}
-    if isinstance(sm_output.get('bedrock_response'), dict):
+    if isinstance(sm_output.get("bedrock_response"), dict):
         nested = sm_output
 
     def pick(key):
         return _first(sm_output.get(key), nested.get(key), sm_input.get(key))
 
     return {
-        'request_id': pick('request_id'),
-        'correlation_id': pick('correlation_id'),
-        'model_id': pick('model_id'),
-        'tenant_id': pick('tenant_id'),
+        "request_id": pick("request_id"),
+        "correlation_id": pick("correlation_id"),
+        "model_id": pick("model_id"),
+        "tenant_id": pick("tenant_id"),
     }
 
 
 def _finalize_one(dynamo, detail):
     """Record the terminal outcome for a single execution-status-change detail.
     Returns a small result dict for logging/aggregation."""
-    status = detail.get('status')
-    execution_arn = detail.get('executionArn')
+    status = detail.get("status")
+    execution_arn = detail.get("executionArn")
 
     if status not in _HANDLED_STATUSES:
         # SUCCEEDED and any RUNNING/etc. transitions are not our job.
-        return {'skipped': True, 'status': status, 'executionArn': execution_arn}
+        return {"skipped": True, "status": status, "executionArn": execution_arn}
 
     ident = _extract_identity(detail)
-    request_id = ident['request_id']
+    request_id = ident["request_id"]
 
     if not request_id:
         # Without a request_id we cannot key the terminal item. Fail loud — a
         # missing id means the SM I/O threading regressed (do NOT DescribeExecution).
-        print(f"ERROR: finalizer could not extract request_id from execution "
-              f"{execution_arn} (status={status}); identity={ident}")
-        return {'error': 'missing_request_id', 'status': status,
-                'executionArn': execution_arn}
+        print(
+            f"ERROR: finalizer could not extract request_id from execution "
+            f"{execution_arn} (status={status}); identity={ident}"
+        )
+        return {
+            "error": "missing_request_id",
+            "status": status,
+            "executionArn": execution_arn,
+        }
 
     # Decide reason/http_status.
-    if status == 'TIMED_OUT':
+    if status == "TIMED_OUT":
         # Distinguish a queue-TTL expiry (still QUEUED at timeout) from an
         # in-flight timeout. Read our own state — deterministic, no TTL-lag
         # dependence, no control-plane call.
         current_state = None
         try:
             resp = dynamo.single_table.get_item(
-                Key={'pk': f'REQUEST#{request_id}', 'sk': 'STATUS'}
+                Key={"pk": f"REQUEST#{request_id}", "sk": "STATUS"}
             )
-            current_state = (resp.get('Item') or {}).get('state')
+            current_state = (resp.get("Item") or {}).get("state")
         except Exception as e:  # noqa: BLE001 — degrade to timed_out on read failure
             print(f"WARNING: finalizer GetItem failed for request_id={request_id}: {e}")
-        if current_state == 'QUEUED':
-            reason, http_status = 'queue_expired', 504
+        if current_state == "QUEUED":
+            reason, http_status = "queue_expired", 504
         else:
-            reason, http_status = 'timed_out', 504
+            reason, http_status = "timed_out", 504
     else:
         # FAILED or ABORTED (incl. Lambda.TooManyRequestsException catch→Fail).
         # 'error', never 'throttled' — Cato C-8.
-        reason, http_status = 'error', 503
+        reason, http_status = "error", 503
 
     try:
         won = dynamo.write_terminal_status(
             request_id=request_id,
-            state='FAILED',
+            state="FAILED",
             reason=reason,
             http_status=http_status,
-            tenant_id=ident['tenant_id'],
-            correlation_id=ident['correlation_id'],
-            model_id=ident['model_id'],
-            source='queued',
+            tenant_id=ident["tenant_id"],
+            correlation_id=ident["correlation_id"],
+            model_id=ident["model_id"],
+            source="queued",
         )
     except Exception as e:  # noqa: BLE001
-        print(f"ERROR: finalizer write_terminal_status failed for "
-              f"request_id={request_id} (status={status}): {e}")
+        print(
+            f"ERROR: finalizer write_terminal_status failed for "
+            f"request_id={request_id} (status={status}): {e}"
+        )
         # Re-raise so the EventBridge target records a delivery failure and retries;
         # the conditional write is idempotent, so a retry is safe.
         raise
 
     if won:
-        print(f"Finalized terminal outcome: request_id={request_id}, "
-              f"sfn_status={status}, reason={reason}, http={http_status}, "
-              f"correlation_id={ident['correlation_id']}")
+        print(
+            f"Finalized terminal outcome: request_id={request_id}, "
+            f"sfn_status={status}, reason={reason}, http={http_status}, "
+            f"correlation_id={ident['correlation_id']}"
+        )
     else:
         # A per-request writer already committed a terminal — expected on the
         # happy-ish path where a real reason was recorded before timeout fired.
-        print(f"Finalizer no-op (already terminal): request_id={request_id}, "
-              f"sfn_status={status}")
+        print(
+            f"Finalizer no-op (already terminal): request_id={request_id}, "
+            f"sfn_status={status}"
+        )
 
-    return {'request_id': request_id, 'status': status, 'reason': reason,
-            'http_status': http_status, 'won': won}
+    return {
+        "request_id": request_id,
+        "status": status,
+        "reason": reason,
+        "http_status": http_status,
+        "won": won,
+    }
 
 
 def handler(event, context):
@@ -170,15 +185,15 @@ def handler(event, context):
 
     # EventBridge delivers one event per invocation; support a Records batch
     # defensively for any pipe/replay wrapper.
-    records = event.get('Records')
+    records = event.get("Records")
     if records:
         results = []
         for rec in records:
-            detail = (rec.get('detail')
-                      or _load_json(rec.get('body')).get('detail')
-                      or {})
+            detail = (
+                rec.get("detail") or _load_json(rec.get("body")).get("detail") or {}
+            )
             results.append(_finalize_one(dynamo, detail))
-        return {'status': 'ok', 'results': results}
+        return {"status": "ok", "results": results}
 
-    detail = event.get('detail') or {}
-    return {'status': 'ok', 'result': _finalize_one(dynamo, detail)}
+    detail = event.get("detail") or {}
+    return {"status": "ok", "result": _finalize_one(dynamo, detail)}

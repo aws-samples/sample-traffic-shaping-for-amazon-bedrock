@@ -17,15 +17,17 @@ import boto3
 import config_loader
 
 # Add lambda layer to Python path to import shared_service
-layer_path = os.path.join(os.path.dirname(__file__), '..', 'infrastructure', 'lambda_layer', 'python')
+layer_path = os.path.join(
+    os.path.dirname(__file__), "..", "infrastructure", "lambda_layer", "python"
+)
 sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
 
 # Load configuration and verify AWS access
 config = config_loader.get_config_with_aws_check()
-AWS_REGION = config.get('AWS_REGION', 'us-east-1')
-SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
+AWS_REGION = config.get("AWS_REGION", "us-east-1")
+SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
 
 
 def check_queue_depth(model_id, limit=5):
@@ -47,17 +49,17 @@ def check_queue_depth(model_id, limit=5):
         dynamo_service = DynamoService(single_table_name=SINGLE_TABLE_NAME)
 
         # Query queue items using DynamoService method
-        partition_key = f'MODEL#{model_id}#QUEUE#ITEMS'
-        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        partition_key = f"MODEL#{model_id}#QUEUE#ITEMS"
+        dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
         table = dynamodb.Table(SINGLE_TABLE_NAME)
 
         # Count items
         response = table.query(
-            KeyConditionExpression='pk = :pk',
-            ExpressionAttributeValues={':pk': partition_key},
-            Select='COUNT'
+            KeyConditionExpression="pk = :pk",
+            ExpressionAttributeValues={":pk": partition_key},
+            Select="COUNT",
         )
-        queue_depth = response['Count']
+        queue_depth = response["Count"]
 
         print(f"Queue depth: {queue_depth}")
 
@@ -66,13 +68,13 @@ def check_queue_depth(model_id, limit=5):
         else:
             # Get the most recent messages
             response = table.query(
-                KeyConditionExpression='pk = :pk',
-                ExpressionAttributeValues={':pk': partition_key},
+                KeyConditionExpression="pk = :pk",
+                ExpressionAttributeValues={":pk": partition_key},
                 ScanIndexForward=False,  # Sort descending (most recent first)
-                Limit=limit
+                Limit=limit,
             )
 
-            items = response.get('Items', [])
+            items = response.get("Items", [])
 
             print(f"\nMost recent {len(items)} queue item(s):")
             print(f"{'-'*60}")
@@ -83,7 +85,7 @@ def check_queue_depth(model_id, limit=5):
                 print(f"   request_id: {item.get('request_id', 'N/A')}")
                 print(f"   priority: {item.get('priority', 'N/A')}")
                 print(f"   queued_at: {item.get('queued_at', 'N/A')}")
-                if 'task_token' in item:
+                if "task_token" in item:
                     # Task tokens are bearer credentials — never print the value.
                     print(f"   task_token: [present]")
 
@@ -92,13 +94,14 @@ def check_queue_depth(model_id, limit=5):
     except Exception as e:
         print(f"❌ Error checking queue: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description='Check queue depth and display recent messages',
+        description="Check queue depth and display recent messages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -110,19 +113,19 @@ Examples:
 
   # Show more items
   python scripts/check_queue_depth.py --limit 10
-        """
+        """,
     )
 
     parser.add_argument(
-        '--model-id',
-        default='us.anthropic.claude-opus-5',
-        help='Model ID to check queue for (default: opus)'
+        "--model-id",
+        default="us.anthropic.claude-opus-5",
+        help="Model ID to check queue for (default: opus)",
     )
     parser.add_argument(
-        '--limit',
+        "--limit",
         type=int,
         default=5,
-        help='Number of recent items to display (default: 5)'
+        help="Number of recent items to display (default: 5)",
     )
 
     args = parser.parse_args()

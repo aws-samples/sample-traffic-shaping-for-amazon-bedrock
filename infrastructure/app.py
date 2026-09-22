@@ -5,7 +5,6 @@ import aws_cdk as cdk
 from cdk_nag import AwsSolutionsChecks
 from semaphore_stack import SemaphoreRateLimiterStack
 
-
 app = cdk.App()
 
 # cdk-nag: run the AWS Solutions ruleset against the synthesized template.
@@ -17,15 +16,15 @@ cdk.Aspects.of(app).add(AwsSolutionsChecks(verbose=True))
 # Get environment configuration
 env = cdk.Environment(
     account=app.node.try_get_context("account"),
-    region=app.node.try_get_context("region") or "us-east-1"
+    region=app.node.try_get_context("region") or "us-east-1",
 )
 
 # Create the main stack
 SemaphoreRateLimiterStack(
-    app, 
+    app,
     "SemaphoreRateLimiterStack",
     env=env,
-    description="Semaphore-based rate limiter for AWS Step Functions and Bedrock"
+    description="Semaphore-based rate limiter for AWS Step Functions and Bedrock",
 )
 
 app.synth()

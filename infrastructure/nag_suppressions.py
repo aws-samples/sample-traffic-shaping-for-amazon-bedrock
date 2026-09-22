@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 from typing import Sequence
 
+from aws_cdk import Stack
 from constructs import IConstruct
 from cdk_nag import NagSuppressions
 
@@ -71,7 +72,7 @@ def suppress(
     )
 
 
-def suppress_by_path(stack: IConstruct, path: str, entries: Sequence[dict]) -> None:
+def suppress_by_path(stack: Stack, path: str, entries: Sequence[dict]) -> None:
     """Path-based suppression for constructs you don't hold a reference to."""
     if not entries:
         raise ValueError("suppress_by_path() called with no entries.")

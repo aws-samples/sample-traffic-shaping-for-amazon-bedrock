@@ -5,6 +5,7 @@ and workload generators.
 These types are algorithm-agnostic — both the queue processor sim and the
 (future) budget manager sim import from here.
 """
+
 from __future__ import annotations
 
 import random
@@ -14,8 +15,8 @@ from typing import List, Optional, Tuple
 
 from .config import WorkloadPreset, MAX_TOTAL_TOKENS
 
-
 # ── Item ───────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class Item:
@@ -34,6 +35,7 @@ class Item:
     Use `.est` and `.actual` in dispatch/measurement code rather than reading
     the fields directly, so the fallback stays in one place.
     """
+
     tokens: int = 1
     actual_tokens: Optional[int] = None
 
@@ -49,6 +51,7 @@ class Item:
 
 
 # ── FakeClock ──────────────────────────────────────────────────────────────────
+
 
 class FakeClock:
     """A wall clock driven by the simulation, not real time.
@@ -74,9 +77,11 @@ class FakeClock:
 
 # ── SimResult ──────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SimResult:
     """Collected outputs from one algorithm run."""
+
     algo_name: str
     # (sim_timestamp, total_tokens) per dispatched item — `total_tokens` is the
     # ESTIMATE the gates paced on (kept as-is for backward compatibility; every
@@ -85,9 +90,9 @@ class SimResult:
     # (sim_timestamp, actual_tokens) per dispatched item — what Bedrock CHARGED.
     # Populated only by actuals-aware sims; when empty, actual_* accessors below
     # transparently fall back to dispatch_events, so old sims are unaffected.
-    actual_events:   List[Tuple[float, int]] = field(default_factory=list)
-    sleep_events:    List[Tuple[float, float]] = field(default_factory=list)
-    total_sim_time:  float = 0.0
+    actual_events: List[Tuple[float, int]] = field(default_factory=list)
+    sleep_events: List[Tuple[float, float]] = field(default_factory=list)
+    total_sim_time: float = 0.0
     _db_reads: int = 0
 
     # ── Actuals-aware views (Bedrock-charged TPM, not the estimate) ────────────
@@ -104,7 +109,11 @@ class SimResult:
     @property
     def effective_actual_tps(self) -> float:
         """Bedrock-charged tokens per second over the full run."""
-        return self.total_actual_tokens / self.total_sim_time if self.total_sim_time > 0 else 0.0
+        return (
+            self.total_actual_tokens / self.total_sim_time
+            if self.total_sim_time > 0
+            else 0.0
+        )
 
     def max_actual_tokens_in_rolling_window(self, window_sec: float) -> int:
         """Peak ACTUAL (Bedrock-charged) token sum in any rolling window."""
@@ -136,12 +145,20 @@ class SimResult:
 
     @property
     def effective_rps(self) -> float:
-        return self.total_dispatched / self.total_sim_time if self.total_sim_time > 0 else 0.0
+        return (
+            self.total_dispatched / self.total_sim_time
+            if self.total_sim_time > 0
+            else 0.0
+        )
 
     @property
     def effective_tps(self) -> float:
         """Tokens per second (token throughput over the full sim duration)."""
-        return self.total_tokens_dispatched / self.total_sim_time if self.total_sim_time > 0 else 0.0
+        return (
+            self.total_tokens_dispatched / self.total_sim_time
+            if self.total_sim_time > 0
+            else 0.0
+        )
 
     def total_sleep_time(self) -> float:
         return sum(d for _, d in self.sleep_events)
@@ -208,6 +225,7 @@ class SimResult:
 
 # ── AssertionResult ────────────────────────────────────────────────────────────
 
+
 class AssertionResult:
     """Accumulates pass/fail results for a set of named assertions."""
 
@@ -232,6 +250,7 @@ class AssertionResult:
 
 # ── Workload generators ────────────────────────────────────────────────────────
 
+
 def make_uniform(n: int, tokens: int) -> List[Item]:
     """n items all with the same token count."""
     return [Item(tokens=min(tokens, MAX_TOTAL_TOKENS)) for _ in range(n)]
@@ -240,13 +259,17 @@ def make_uniform(n: int, tokens: int) -> List[Item]:
 def make_mixed(n: int, low: int, high: int, seed: int = 42) -> List[Item]:
     """n items with token count drawn uniformly from [low, high]."""
     rng = random.Random(seed)
-    return [Item(tokens=min(rng.randint(low, high), MAX_TOTAL_TOKENS)) for _ in range(n)]
+    return [
+        Item(tokens=min(rng.randint(low, high), MAX_TOTAL_TOKENS)) for _ in range(n)
+    ]
 
 
 def make_heavy_tail_ranged(
     n: int,
-    small_low: int, small_high: int,
-    large_low: int, large_high: int,
+    small_low: int,
+    small_high: int,
+    large_low: int,
+    large_high: int,
     large_pct: float = 0.15,
     seed: int = 42,
 ) -> List[Item]:
@@ -281,9 +304,13 @@ def make_items_for_preset(
     if preset.is_spike:
         return make_heavy_tail_ranged(
             num_items,
-            small_low=preset.total_low,   small_high=preset.total_high,
-            large_low=preset.spike_total_low, large_high=preset.spike_total_high,
+            small_low=preset.total_low,
+            small_high=preset.total_high,
+            large_low=preset.spike_total_low,
+            large_high=preset.spike_total_high,
             large_pct=preset.spike_pct,
             seed=seed,
         )
-    return make_mixed(num_items, low=preset.total_low, high=preset.total_high, seed=seed)
+    return make_mixed(
+        num_items, low=preset.total_low, high=preset.total_high, seed=seed
+    )
