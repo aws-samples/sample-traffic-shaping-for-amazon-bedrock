@@ -11,7 +11,7 @@ setup(
     # supply-chain-safe installs. Bump deliberately; keep in sync with requirements.txt.
     install_requires=[
         "boto3==1.43.78",
-        "aws-cdk-lib==2.266.0",
+        "aws-cdk-lib==2.270.0",
         "constructs==10.8.1",
         # Security floor for a transitive dependency: CVE-2026-69247 /
         # GHSA-g6cj-pr64-35w5 affects cryptography 49.0.0; 50.0.0 is the fix.
