@@ -16,6 +16,7 @@ Reads API_GATEWAY_URL from config.env (or --api-url). SigV4 via the caller's
 current credentials (execute-api). Read-only against AWS beyond the requests it
 submits.
 """
+
 import argparse
 import json
 import os
@@ -53,12 +54,18 @@ def _signed_request(method, url, body=None):
     """SigV4-sign and send one execute-api request; return (status, body_text)."""
     creds = boto3.Session().get_credentials().get_frozen_credentials()
     data = json.dumps(body).encode() if body is not None else None
-    req = AWSRequest(method=method, url=url, data=data,
-                     headers={"Content-Type": "application/json"} if data else {})
+    req = AWSRequest(
+        method=method,
+        url=url,
+        data=data,
+        headers={"Content-Type": "application/json"} if data else {},
+    )
     SigV4Auth(creds, SERVICE, REGION).add_auth(req)
     urllib_req = urllib.request.Request(url, data=data, headers=dict(req.headers), method=method)
     try:
-        resp = urllib.request.urlopen(urllib_req, timeout=30)  # nosec B310 — static execute-api host from our own deploy
+        resp = urllib.request.urlopen(
+            urllib_req, timeout=30
+        )  # nosec B310 — static execute-api host from our own deploy
         return resp.status, resp.read().decode()
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
@@ -69,8 +76,13 @@ def _submit(api_url, arm, model_id, prompt):
     path = "/invoke"
     # /invoke maps the body into StartExecution; request_id is client-supplied here.
     request_id = str(uuid.uuid4())
-    body = {"request_id": request_id, "model_id": model_id,
-            "prompt": prompt, "correlation_id": correlation_id, "max_tokens": 64}
+    body = {
+        "request_id": request_id,
+        "model_id": model_id,
+        "prompt": prompt,
+        "correlation_id": correlation_id,
+        "max_tokens": 64,
+    }
     status, text = _signed_request("POST", f"{api_url}{path}", body)
     print(f"  [{arm}] POST {path} → {status}")
     try:
@@ -80,8 +92,12 @@ def _submit(api_url, arm, model_id, prompt):
     rid = parsed.get("request_id", request_id)
     if status not in (200, 202):
         print(f"    ⚠ unexpected submit status: {status} {text[:200]}")
-    return {"arm": arm, "correlation_id": correlation_id, "request_id": rid,
-            "submit_status": status}
+    return {
+        "arm": arm,
+        "correlation_id": correlation_id,
+        "request_id": rid,
+        "submit_status": status,
+    }
 
 
 def _poll_result(api_url, request_id, timeout_s=120, interval_s=3):
@@ -94,7 +110,9 @@ def _poll_result(api_url, request_id, timeout_s=120, interval_s=3):
         # 202 = still PENDING/QUEUED; anything else is terminal per the HTTP map.
         if status != 202:
             return status, text
-        time.sleep(interval_s)  # nosemgrep: arbitrary-sleep — bounded poll of our own async result endpoint
+        time.sleep(
+            interval_s
+        )  # nosemgrep: arbitrary-sleep — bounded poll of our own async result endpoint
     return last if last else (None, "no response")
 
 
@@ -102,9 +120,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="us.amazon.nova-2-lite-v1:0")
     ap.add_argument("--api-url", default=None)
-    ap.add_argument("--arms", default="invoke",
-                    help="comma list of arms to smoke (only 'invoke' remains; "
-                         "the baseline retry/jitter arms were removed)")
+    ap.add_argument(
+        "--arms",
+        default="invoke",
+        help="comma list of arms to smoke (only 'invoke' remains; "
+        "the baseline retry/jitter arms were removed)",
+    )
     ap.add_argument("--timeout", type=int, default=120)
     args = ap.parse_args()
 
@@ -131,10 +152,18 @@ def main():
             parsed = {}
         outcome = parsed.get("state") or parsed.get("error") or f"http_{status}"
         has_output = bool(parsed.get("output_url") or parsed.get("output_ref"))
-        print(f"  [{sub['arm']}] /result → {status}  state/outcome={outcome}"
-              f"  output={'yes' if has_output else 'no'}")
-        results.append({**sub, "terminal_status": status, "outcome": outcome,
-                        "has_output": has_output})
+        print(
+            f"  [{sub['arm']}] /result → {status}  state/outcome={outcome}"
+            f"  output={'yes' if has_output else 'no'}"
+        )
+        results.append(
+            {
+                **sub,
+                "terminal_status": status,
+                "outcome": outcome,
+                "has_output": has_output,
+            }
+        )
 
     print("\n=== SMOKE SUMMARY ===")
     ok = 0
@@ -142,15 +171,19 @@ def main():
         verdict = "✅" if r.get("terminal_status") == 200 else "⚠"
         if r.get("terminal_status") == 200:
             ok += 1
-        print(f"  {verdict} {r['arm']:8s} submit={r['submit_status']} "
-              f"terminal={r.get('terminal_status')} outcome={r.get('outcome')} "
-              f"correlation_id={r['correlation_id']}")
+        print(
+            f"  {verdict} {r['arm']:8s} submit={r['submit_status']} "
+            f"terminal={r.get('terminal_status')} outcome={r.get('outcome')} "
+            f"correlation_id={r['correlation_id']}"
+        )
     print(f"\n{ok}/{len(results)} arms reached a 200 SUCCEEDED terminal outcome.")
     # Non-200 terminals are still VALID honest outcomes (429/503/504) — the smoke's
     # job is to prove the contract resolves a terminal, not that Bedrock never throttles.
     unresolved = [r for r in results if r.get("terminal_status") in (None, 202)]
     if unresolved:
-        print(f"⚠ {len(unresolved)} request(s) did NOT resolve a terminal outcome (still pending / no id).")
+        print(
+            f"⚠ {len(unresolved)} request(s) did NOT resolve a terminal outcome (still pending / no id)."
+        )
         sys.exit(1)
     print("All requests resolved a terminal outcome — honest-outcomes contract is live.")
 

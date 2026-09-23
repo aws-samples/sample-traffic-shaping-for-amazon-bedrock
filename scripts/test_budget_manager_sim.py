@@ -63,22 +63,38 @@ import sys
 import time as real_time
 from collections import Counter, deque
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Counter as CounterType, List, Optional, Protocol, Tuple
+
+
+class _Gate(Protocol):
+    """Structural shape shared by AdmissionGate, WindowReadGate, and
+    ContendedCounterGate -- run_admission() runs any of the three
+    interchangeably, so it types against this instead of one concrete class."""
+
+    reject_reasons: CounterType
+
+    def try_admit(self, now: float, tokens: int) -> bool: ...
+
 
 # Shared simulation package (quota profiles, workload presets, core types).
 # We import the SAME vocabulary the queue processor sim uses so a profile means
 # the same thing to both — the only difference is which SLICE of quota each reads.
 from sim import (
-    SimConfig, SimQuota,
-    QUOTA_PROFILES, WORKLOAD_PRESETS,
+    SimConfig,
+    SimQuota,
+    QUOTA_PROFILES,
+    WORKLOAD_PRESETS,
     build_config,
-    Item, FakeClock, AssertionResult, make_items_for_preset,
+    Item,
+    FakeClock,
+    AssertionResult,
+    make_items_for_preset,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Admission gate — faithful replay of put_allocation() runtime path
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class AdmissionGate:
     """
@@ -106,15 +122,21 @@ class AdmissionGate:
         # budget manager sim and queue processor sim share one knob.
         self.short_window_sec = short_window_sec
         # Real config values (identical to calculate_config output for this quota):
-        self.burst_capacity = quota.burst_rpm                 # int(rpm * burst_fraction)
-        self.burst_regen_rate = quota.burst_rps               # rpm/60 * burst_fraction
-        self.tpm_burst_capacity = quota.burst_tpm             # int(tpm * burst_fraction)
-        self.tpm_burst_regen_rate = quota.burst_tpm_rate      # tpm/60 * burst_fraction
+        self.burst_capacity = quota.burst_rpm  # int(rpm * burst_fraction)
+        self.burst_regen_rate = quota.burst_rps  # rpm/60 * burst_fraction
+        self.tpm_burst_capacity = quota.burst_tpm  # int(tpm * burst_fraction)
+        self.tpm_burst_regen_rate = quota.burst_tpm_rate  # tpm/60 * burst_fraction
         # short_window_rps defaults to burst_regen_rate when unset (matches gate).
-        self.short_window_cap = max(1, int(self.burst_regen_rate * short_window_sec)) \
-            if self.burst_regen_rate > 0 else 0
-        self.short_window_tps_cap = max(1, int(self.tpm_burst_regen_rate * short_window_sec)) \
-            if self.tpm_burst_regen_rate > 0 else 0
+        self.short_window_cap = (
+            max(1, int(self.burst_regen_rate * short_window_sec))
+            if self.burst_regen_rate > 0
+            else 0
+        )
+        self.short_window_tps_cap = (
+            max(1, int(self.tpm_burst_regen_rate * short_window_sec))
+            if self.tpm_burst_regen_rate > 0
+            else 0
+        )
 
         # Shared counter state
         self.rpm_window: dict = {}
@@ -236,6 +258,7 @@ class AdmissionGate:
 # Window-read gate — faithful replay of the FUTURE-STATE admission path
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class WindowReadGate:
     """
     In-memory replay of the PROPOSED consumption-record sliding-window read gate
@@ -269,12 +292,15 @@ class WindowReadGate:
     future-state doc explicitly accepts and catches downstream with requeue.
     """
 
-    def __init__(self, quota: SimQuota,
-                 short_window_sec: float = 2.0,
-                 long_window_sec: float = 15.0,
-                 writeback_latency_sec: float = 7.5,
-                 read_visibility_lag_sec: float = 0.0,
-                 actual_ratio: float = 1.0):
+    def __init__(
+        self,
+        quota: SimQuota,
+        short_window_sec: float = 2.0,
+        long_window_sec: float = 15.0,
+        writeback_latency_sec: float = 7.5,
+        read_visibility_lag_sec: float = 0.0,
+        actual_ratio: float = 1.0,
+    ):
         self.q = quota
         self.short_window_sec = short_window_sec
         self.long_window_sec = long_window_sec
@@ -286,8 +312,8 @@ class WindowReadGate:
         # records reconcile. Default 1.0 = actuals == estimate (neutral).
         self.actual_ratio = actual_ratio
 
-        self.tpm_burst_regen_rate = quota.burst_tpm_rate      # tokens/s (burst slice)
-        self.short_window_rps = quota.burst_rps               # req/s (burst slice)
+        self.tpm_burst_regen_rate = quota.burst_tpm_rate  # tokens/s (burst slice)
+        self.short_window_rps = quota.burst_rps  # req/s (burst slice)
 
         # Derived caps.
         self.cap_2s_tok = int(self.tpm_burst_regen_rate * short_window_sec)
@@ -311,9 +337,9 @@ class WindowReadGate:
     def _tokens_at(self, rec: dict, now: float) -> int:
         """Token value of a record as a read at `now` would see it (estimate
         until write-back latency elapses, then the reconciled actual)."""
-        if now - rec['ts'] >= self.writeback_latency_sec:
-            return int(rec['est'] * self.actual_ratio)
-        return rec['est']
+        if now - rec["ts"] >= self.writeback_latency_sec:
+            return int(rec["est"] * self.actual_ratio)
+        return rec["est"]
 
     def _window_sums(self, now: float) -> Tuple[int, int, int, int]:
         """Return (tok_2s, req_2s, tok_Ns, req_Ns) over the visible consumption
@@ -324,14 +350,14 @@ class WindowReadGate:
         cut_long = now - self.long_window_sec
         tok_2s = req_2s = tok_Ns = req_Ns = 0
         for rec in self.log:
-            if rec['visible_at'] > now:
+            if rec["visible_at"] > now:
                 continue  # not yet committed — the read cannot see it
-            if rec['ts'] < cut_long:
+            if rec["ts"] < cut_long:
                 continue  # aged out of the long window
             tok = self._tokens_at(rec, now)
             req_Ns += 1
             tok_Ns += tok
-            if rec['ts'] >= cut_short:
+            if rec["ts"] >= cut_short:
                 req_2s += 1
                 tok_2s += tok
         return tok_2s, req_2s, tok_Ns, req_Ns
@@ -339,7 +365,7 @@ class WindowReadGate:
     def _prune(self, now: float) -> None:
         cut = now - self.long_window_sec
         # Keep records still inside the long window (drop fully-aged ones).
-        self.log = [r for r in self.log if r['ts'] >= cut]
+        self.log = [r for r in self.log if r["ts"] >= cut]
 
     def try_admit(self, now: float, tokens: int) -> bool:
         """Attempt admission via the sliding-window read. Returns True (admit,
@@ -366,17 +392,20 @@ class WindowReadGate:
             return False
 
         # ADMIT — write the consumption record (visible after the RMW lag).
-        self.log.append({
-            'ts': now,
-            'est': tokens,
-            'visible_at': now + self.read_visibility_lag_sec,
-        })
+        self.log.append(
+            {
+                "ts": now,
+                "est": tokens,
+                "visible_at": now + self.read_visibility_lag_sec,
+            }
+        )
         return True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Counter-gate CONTENTION model — the production TPM single-item hotspot
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class ContendedCounterGate:
     """
@@ -396,10 +425,14 @@ class ContendedCounterGate:
     `tpm_contention` — a request that had capacity but lost the lock race.
     """
 
-    def __init__(self, quota: SimQuota, short_window_sec: float = 2.0,
-                 conflict_window: float = 0.050,
-                 write_serialization: int = 1,
-                 max_retries: int = 3):
+    def __init__(
+        self,
+        quota: SimQuota,
+        short_window_sec: float = 2.0,
+        conflict_window: float = 0.050,
+        write_serialization: int = 1,
+        max_retries: int = 3,
+    ):
         self.base = AdmissionGate(quota, short_window_sec=short_window_sec)
         self.conflict_window = conflict_window
         self.write_serialization = write_serialization
@@ -429,7 +462,7 @@ class ContendedCounterGate:
                 break
             if attempt >= self.max_retries:
                 # Retries exhausted → shed as contention (had budget, lost race).
-                self.reject_reasons['tpm_contention'] += 1
+                self.reject_reasons["tpm_contention"] += 1
                 return False
             # Retry: advance the (local) clock a hair; the sim clock is shared, so
             # we just re-sample the window on the next loop iteration. Model the
@@ -454,9 +487,11 @@ class ContendedCounterGate:
 # Arrival generation
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Arrival:
     """A single offered request: when it arrives and how many tokens it costs."""
+
     ts: float
     tokens: int
 
@@ -498,9 +533,11 @@ def make_arrivals(
 # Result + analytics
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class AdmissionResult:
     """Outcome of feeding one arrival stream through the gate."""
+
     # (ts, tokens) for admitted requests
     admitted: List[Tuple[float, int]] = field(default_factory=list)
     enqueued: int = 0
@@ -544,7 +581,7 @@ class AdmissionResult:
 
 
 def run_admission(
-    gate: AdmissionGate,
+    gate: _Gate,
     arrivals: List[Arrival],
     clock: FakeClock,
     verbose: bool = False,
@@ -572,6 +609,7 @@ def run_admission(
 # ══════════════════════════════════════════════════════════════════════════════
 # Assertions
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def gate_internal_violations(gate: AdmissionGate) -> Tuple[int, int, int, int]:
     """
@@ -614,26 +652,37 @@ SEP = "─" * 72
 DSEP = "━" * 72
 
 
-def print_summary(cfg: SimConfig, offered_rps: float, duration: float,
-                  result: AdmissionResult, gate: AdmissionGate) -> None:
+def print_summary(
+    cfg: SimConfig,
+    offered_rps: float,
+    duration: float,
+    result: AdmissionResult,
+    gate: AdmissionGate,
+) -> None:
     q = cfg.quota
     print(f"\n{DSEP}")
-    print(f"  BUDGET MANAGER ADMISSION  ·  workload={cfg.workload_name}  "
-          f"profile={cfg.profile_name}")
+    print(
+        f"  BUDGET MANAGER ADMISSION  ·  workload={cfg.workload_name}  "
+        f"profile={cfg.profile_name}"
+    )
     print(SEP)
     print(f"  Total quota          : {q.rpm:,} RPM / {q.tpm:,} TPM")
-    print(f"  Burst slice (this)   : {q.burst_rpm:,} RPM ({q.burst_fraction*100:.0f}%) / "
-          f"{q.burst_tpm:,} TPM")
+    print(
+        f"  Burst slice (this)   : {q.burst_rpm:,} RPM ({q.burst_fraction*100:.0f}%) / "
+        f"{q.burst_tpm:,} TPM"
+    )
     print(f"  Burst 2s caps        : {q.burst_rpm_2s_cap:,} req / {q.burst_tpm_2s_cap:,} tok")
     print(f"  Sustained burst rate : {q.burst_rps:.2f} RPS / {q.burst_tpm_rate:,.0f} tok/s")
     print(SEP)
-    print(f"  Offered load         : {offered_rps:.2f} RPS over {duration:.0f}s  "
-          f"(avg {cfg.workload.avg_total_tokens():,.0f} tok/req)")
+    print(
+        f"  Offered load         : {offered_rps:.2f} RPS over {duration:.0f}s  "
+        f"(avg {cfg.workload.avg_total_tokens():,.0f} tok/req)"
+    )
     print(f"  Requests offered     : {result.total}")
-    print(f"  ADMITTED             : {result.admitted_count}  "
-          f"({result.admission_rate*100:.1f}%)")
-    print(f"  ENQUEUED             : {result.enqueued}  "
-          f"({(1-result.admission_rate)*100:.1f}%)")
+    print(
+        f"  ADMITTED             : {result.admitted_count}  " f"({result.admission_rate*100:.1f}%)"
+    )
+    print(f"  ENQUEUED             : {result.enqueued}  " f"({(1-result.admission_rate)*100:.1f}%)")
     print(f"  Admitted tokens      : {result.admitted_tokens:,}")
     if result.reject_reasons:
         reasons = ", ".join(f"{k}={v}" for k, v in sorted(result.reject_reasons.items()))
@@ -653,8 +702,7 @@ def print_summary(cfg: SimConfig, offered_rps: float, duration: float,
         print(f"  Peak admitted tok/60s: {peak_t60:>10,}  (window cap≤{max_tpm_eff:,})")
 
 
-def assert_result(cfg: SimConfig, result: AdmissionResult,
-                  gate: AdmissionGate) -> AssertionResult:
+def assert_result(cfg: SimConfig, result: AdmissionResult, gate: AdmissionGate) -> AssertionResult:
     """
     Assert the admitted stream respects the burst-slice windows. We assert against
     GATE-INTERNAL violations (final counter state vs the same effective/epoch cap
@@ -665,31 +713,46 @@ def assert_result(cfg: SimConfig, result: AdmissionResult,
     aa = AssertionResult()
     rpm_w, rpm_g, tpm_w, tpm_g = gate_internal_violations(gate)
 
-    aa.check(rpm_w == 0, "Admitted RPM 60s window within effective cap",
-             f"windows_over={rpm_w}")
-    aa.check(rpm_g == 0, "Admitted RPM 5-min epoch within global cap",
-             f"epochs_over={rpm_g}")
+    aa.check(
+        rpm_w == 0,
+        "Admitted RPM 60s window within effective cap",
+        f"windows_over={rpm_w}",
+    )
+    aa.check(rpm_g == 0, "Admitted RPM 5-min epoch within global cap", f"epochs_over={rpm_g}")
     if gate.tpm_burst_capacity > 0:
-        aa.check(tpm_w == 0, "Admitted TPM 60s window within effective cap",
-                 f"windows_over={tpm_w}")
-        aa.check(tpm_g == 0, "Admitted TPM 5-min epoch within global cap",
-                 f"epochs_over={tpm_g}")
+        aa.check(
+            tpm_w == 0,
+            "Admitted TPM 60s window within effective cap",
+            f"windows_over={tpm_w}",
+        )
+        aa.check(
+            tpm_g == 0,
+            "Admitted TPM 5-min epoch within global cap",
+            f"epochs_over={tpm_g}",
+        )
 
     # 2s smoothing: peak admitted requests and tokens in any 2s window must
     # not exceed the gate's caps. Arrivals are strictly time-ordered in the sim
     # (no concurrent-Lambda race), so the gate holds exactly — zero slack needed.
     peak_r2 = result.peak_req_in_window(2.0)
-    aa.check(peak_r2 <= cfg.quota.burst_rpm_2s_cap,
-             f"Peak admitted req/2s ≤ burst_rpm_2s_cap ({cfg.quota.burst_rpm_2s_cap})",
-             f"peak={peak_r2}")
+    aa.check(
+        peak_r2 <= cfg.quota.burst_rpm_2s_cap,
+        f"Peak admitted req/2s ≤ burst_rpm_2s_cap ({cfg.quota.burst_rpm_2s_cap})",
+        f"peak={peak_r2}",
+    )
 
     peak_t2 = result.peak_tokens_in_window(2.0)
-    aa.check(peak_t2 <= cfg.quota.burst_tpm_2s_cap,
-             f"Peak admitted tok/2s ≤ burst_tpm_2s_cap ({cfg.quota.burst_tpm_2s_cap:,})",
-             f"peak={peak_t2:,}")
+    aa.check(
+        peak_t2 <= cfg.quota.burst_tpm_2s_cap,
+        f"Peak admitted tok/2s ≤ burst_tpm_2s_cap ({cfg.quota.burst_tpm_2s_cap:,})",
+        f"peak={peak_t2:,}",
+    )
 
-    aa.check(result.admitted_count > 0, "At least one request admitted",
-             f"admitted={result.admitted_count}")
+    aa.check(
+        result.admitted_count > 0,
+        "At least one request admitted",
+        f"admitted={result.admitted_count}",
+    )
     return aa
 
 
@@ -697,8 +760,10 @@ def assert_result(cfg: SimConfig, result: AdmissionResult,
 # Scenario runner
 # ══════════════════════════════════════════════════════════════════════════════
 
-def resolve_offered_rps(cfg: SimConfig, load_factor: float,
-                        offered_rps_override: Optional[float]) -> float:
+
+def resolve_offered_rps(
+    cfg: SimConfig, load_factor: float, offered_rps_override: Optional[float]
+) -> float:
     """
     Offered RPS = load_factor × the burst-slice sustainable RPS for this workload.
 
@@ -710,12 +775,19 @@ def resolve_offered_rps(cfg: SimConfig, load_factor: float,
         return offered_rps_override
     q = cfg.quota
     avg_tok = max(1.0, cfg.workload.avg_total_tokens())
-    sustainable = min(q.burst_rps, q.burst_tpm_rate / avg_tok) if q.burst_tpm_rate > 0 else q.burst_rps
+    sustainable = (
+        min(q.burst_rps, q.burst_tpm_rate / avg_tok) if q.burst_tpm_rate > 0 else q.burst_rps
+    )
     return max(0.1, sustainable * load_factor)
 
 
-def run_scenario(cfg: SimConfig, load_factor: float, duration: float,
-                 offered_rps_override: Optional[float], verbose: bool) -> bool:
+def run_scenario(
+    cfg: SimConfig,
+    load_factor: float,
+    duration: float,
+    offered_rps_override: Optional[float],
+    verbose: bool,
+) -> bool:
     q = cfg.quota
     offered_rps = resolve_offered_rps(cfg, load_factor, offered_rps_override)
 
@@ -725,11 +797,15 @@ def run_scenario(cfg: SimConfig, load_factor: float, duration: float,
     arrivals = make_arrivals(offered_rps, duration, items)
 
     print(f"\n\n{'#' * 72}")
-    print(f"# SCENARIO: {cfg.workload_name.upper()}  ·  profile={cfg.profile_name}  "
-          f"·  load_factor={load_factor:.1f}x")
+    print(
+        f"# SCENARIO: {cfg.workload_name.upper()}  ·  profile={cfg.profile_name}  "
+        f"·  load_factor={load_factor:.1f}x"
+    )
     print(f"#  Workload   : {cfg.workload.description}")
-    print(f"#  Avg tokens : {cfg.workload.avg_total_tokens():,.0f}  "
-          f"max={cfg.workload.max_total_tokens():,}")
+    print(
+        f"#  Avg tokens : {cfg.workload.avg_total_tokens():,.0f}  "
+        f"max={cfg.workload.max_total_tokens():,}"
+    )
     print(f"#  Offered    : {offered_rps:.2f} RPS × {duration:.0f}s = {len(arrivals)} requests")
     print(f"{'#' * 72}")
 
@@ -756,45 +832,92 @@ def run_scenario(cfg: SimConfig, load_factor: float, duration: float,
 # Entry point
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--profile", default="prod", choices=list(QUOTA_PROFILES),
-                   help="Named quota profile (default: prod = 2000 RPM / 4M TPM total)")
-    p.add_argument("--workload", choices=list(WORKLOAD_PRESETS), default=None,
-                   help="Run only this workload (default: all three)")
+    p.add_argument(
+        "--profile",
+        default="prod",
+        choices=list(QUOTA_PROFILES),
+        help="Named quota profile (default: prod = 2000 RPM / 4M TPM total)",
+    )
+    p.add_argument(
+        "--workload",
+        choices=list(WORKLOAD_PRESETS),
+        default=None,
+        help="Run only this workload (default: all three)",
+    )
     p.add_argument("--rpm", type=int, default=None, help="Override total RPM")
     p.add_argument("--tpm", type=int, default=None, help="Override total TPM")
-    p.add_argument("--burst-fraction", type=float, default=None,
-                   help="Override burst (budget manager) quota fraction (default 0.50)")
-    p.add_argument("--load-factor", type=float, default=1.5,
-                   help="Offered load as a multiple of sustainable burst RPS (default 1.5x = over-quota)")
-    p.add_argument("--offered-rps", type=float, default=None,
-                   help="Explicit offered RPS (overrides --load-factor)")
-    p.add_argument("--duration", type=float, default=120.0,
-                   help="Offered-load duration in seconds (default 120)")
-    p.add_argument("--no-smoke", action="store_true",
-                   help="Skip the smoke profile sanity check")
-    p.add_argument("--verbose", action="store_true",
-                   help="Print per-arrival admit/enqueue trace")
+    p.add_argument(
+        "--burst-fraction",
+        type=float,
+        default=None,
+        help="Override burst (budget manager) quota fraction (default 0.50)",
+    )
+    p.add_argument(
+        "--load-factor",
+        type=float,
+        default=1.5,
+        help="Offered load as a multiple of sustainable burst RPS (default 1.5x = over-quota)",
+    )
+    p.add_argument(
+        "--offered-rps",
+        type=float,
+        default=None,
+        help="Explicit offered RPS (overrides --load-factor)",
+    )
+    p.add_argument(
+        "--duration",
+        type=float,
+        default=120.0,
+        help="Offered-load duration in seconds (default 120)",
+    )
+    p.add_argument("--no-smoke", action="store_true", help="Skip the smoke profile sanity check")
+    p.add_argument("--verbose", action="store_true", help="Print per-arrival admit/enqueue trace")
     # Phase 0 GATE: side-by-side CURRENT counter (with contention) vs the PROPOSED
     # window-read gate, to prove the cutover recovers the sheds contention caused.
-    p.add_argument("--compare-gates", action="store_true",
-                   help="Run COUNTER (contended) vs WINDOW-READ gate side-by-side "
-                        "and report admitted tokens/min for each (Phase 0 gate).")
-    p.add_argument("--concurrency", type=int, default=30,
-                   help="Concurrent in-flight admits for the contention/over-admission "
-                        "model (default 30 — mirrors ~30 RPS burst fan-out).")
-    p.add_argument("--short-window-sec", type=float, default=2.0,
-                   help="Short (rate-smoothing) window seconds (default 2).")
-    p.add_argument("--long-window-sec", type=float, default=15.0,
-                   help="Long (accuracy) window seconds for the window-read gate (default 15).")
-    p.add_argument("--writeback-latency-sec", type=float, default=7.5,
-                   help="Estimate→actual write-back latency for the window-read gate (default 7.5).")
-    p.add_argument("--actual-ratio", type=float, default=1.0,
-                   help="actual_tokens/estimated_tokens once reconciled (default 1.0 = neutral; "
-                        "<1 models the runtime output over-estimate freeing window room).")
+    p.add_argument(
+        "--compare-gates",
+        action="store_true",
+        help="Run COUNTER (contended) vs WINDOW-READ gate side-by-side "
+        "and report admitted tokens/min for each (Phase 0 gate).",
+    )
+    p.add_argument(
+        "--concurrency",
+        type=int,
+        default=30,
+        help="Concurrent in-flight admits for the contention/over-admission "
+        "model (default 30 — mirrors ~30 RPS burst fan-out).",
+    )
+    p.add_argument(
+        "--short-window-sec",
+        type=float,
+        default=2.0,
+        help="Short (rate-smoothing) window seconds (default 2).",
+    )
+    p.add_argument(
+        "--long-window-sec",
+        type=float,
+        default=15.0,
+        help="Long (accuracy) window seconds for the window-read gate (default 15).",
+    )
+    p.add_argument(
+        "--writeback-latency-sec",
+        type=float,
+        default=7.5,
+        help="Estimate→actual write-back latency for the window-read gate (default 7.5).",
+    )
+    p.add_argument(
+        "--actual-ratio",
+        type=float,
+        default=1.0,
+        help="actual_tokens/estimated_tokens once reconciled (default 1.0 = neutral; "
+        "<1 models the runtime output over-estimate freeing window room).",
+    )
     return p.parse_args()
 
 
@@ -819,13 +942,19 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
     print(f"\n{'#' * 72}")
     print(f"# PHASE 0 GATE — COUNTER (contended) vs WINDOW-READ")
     print(f"#  profile={cfg.profile_name}  workload={cfg.workload_name}")
-    print(f"#  burst slice: {q.burst_rpm:,} RPM / {q.burst_tpm:,} TPM  "
-          f"(regen {q.burst_tpm_rate:,.0f} tok/s = {q.burst_tpm_rate*60:,.0f}/min)")
-    print(f"#  offered: {offered_rps:.2f} RPS × {duration:.0f}s = {len(arrivals)} req  "
-          f"(avg {cfg.workload.avg_total_tokens():,.0f} tok/req)")
-    print(f"#  concurrency={args.concurrency}  windows={args.short_window_sec:.0f}s/"
-          f"{args.long_window_sec:.0f}s  writeback={args.writeback_latency_sec:.1f}s  "
-          f"actual_ratio={args.actual_ratio}")
+    print(
+        f"#  burst slice: {q.burst_rpm:,} RPM / {q.burst_tpm:,} TPM  "
+        f"(regen {q.burst_tpm_rate:,.0f} tok/s = {q.burst_tpm_rate*60:,.0f}/min)"
+    )
+    print(
+        f"#  offered: {offered_rps:.2f} RPS × {duration:.0f}s = {len(arrivals)} req  "
+        f"(avg {cfg.workload.avg_total_tokens():,.0f} tok/req)"
+    )
+    print(
+        f"#  concurrency={args.concurrency}  windows={args.short_window_sec:.0f}s/"
+        f"{args.long_window_sec:.0f}s  writeback={args.writeback_latency_sec:.1f}s  "
+        f"actual_ratio={args.actual_ratio}"
+    )
     print(f"{'#' * 72}")
 
     # ── CURRENT: counter gate WITH contention ──────────────────────────────────
@@ -841,10 +970,11 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
     # strawman, baseline. Above this rate, additional concurrent writers shed as
     # contention (the 1,087-of-1,093 TPM-conflict finding, admission-logic §3).
     counter_gate = ContendedCounterGate(
-        q, short_window_sec=args.short_window_sec,
-        conflict_window=0.050,               # ~one DynamoDB write round-trip
-        write_serialization=3,               # ~measured clean-serialize depth
-        max_retries=3,                        # matches put_allocation max_conflict_retries
+        q,
+        short_window_sec=args.short_window_sec,
+        conflict_window=0.050,  # ~one DynamoDB write round-trip
+        write_serialization=3,  # ~measured clean-serialize depth
+        max_retries=3,  # matches put_allocation max_conflict_retries
     )
     # Seed the write burst so the contention model reflects `concurrency` in-flight
     # admits, not just strictly-serial arrivals. We inject the fan-out by pre-loading
@@ -866,6 +996,7 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
     # multiplier (sqrt of concurrency) rather than the full fan-out, so the counter
     # gate admits the MEASURED ~150-240/min, not zero — a faithful comparison.
     import math as _math
+
     # Natural overlap on the single item = arrival density in the conflict window.
     # `concurrency` raises the fan-out modestly (log scale): Step Functions bursts
     # cluster admits, but not all `concurrency` land in the SAME 50ms window.
@@ -905,10 +1036,11 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
     # concurrency ⇒ more admits slip through against a stale window snapshot, but
     # the 15s horizon caps the total damage.
     window_gate = WindowReadGate(
-        q, short_window_sec=args.short_window_sec,
+        q,
+        short_window_sec=args.short_window_sec,
         long_window_sec=args.long_window_sec,
         writeback_latency_sec=args.writeback_latency_sec,
-        read_visibility_lag_sec=0.050,       # ~one write round-trip commit lag
+        read_visibility_lag_sec=0.050,  # ~one write round-trip commit lag
         actual_ratio=args.actual_ratio,
     )
     window_clock = FakeClock()
@@ -926,55 +1058,80 @@ def run_compare_gates(cfg: SimConfig, args: argparse.Namespace) -> bool:
     print(f"\n{SEP}")
     print(f"  {'':22}  {'COUNTER (contended)':>22}  {'WINDOW-READ':>18}")
     print(SEP)
-    print(f"  {'Admitted req':22}  {counter_result.admitted_count:>22,}  "
-          f"{window_result.admitted_count:>18,}")
-    print(f"  {'Enqueued req':22}  {counter_result.enqueued:>22,}  "
-          f"{window_result.enqueued:>18,}")
-    print(f"  {'Admission rate':22}  {counter_result.admission_rate*100:>21.1f}%  "
-          f"{window_result.admission_rate*100:>17.1f}%")
-    print(f"  {'Admitted tokens':22}  {counter_result.admitted_tokens:>22,}  "
-          f"{window_result.admitted_tokens:>18,}")
+    print(
+        f"  {'Admitted req':22}  {counter_result.admitted_count:>22,}  "
+        f"{window_result.admitted_count:>18,}"
+    )
+    print(
+        f"  {'Enqueued req':22}  {counter_result.enqueued:>22,}  " f"{window_result.enqueued:>18,}"
+    )
+    print(
+        f"  {'Admission rate':22}  {counter_result.admission_rate*100:>21.1f}%  "
+        f"{window_result.admission_rate*100:>17.1f}%"
+    )
+    print(
+        f"  {'Admitted tokens':22}  {counter_result.admitted_tokens:>22,}  "
+        f"{window_result.admitted_tokens:>18,}"
+    )
     print(f"  {'Admitted tok/min':22}  {counter_tpm_min:>22,.0f}  {window_tpm_min:>18,.0f}")
     print(SEP)
-    print(f"  Burst slice budget       : {burst_budget_min:,.0f} tok/min "
-          f"(the target the gate should reach)")
+    print(
+        f"  Burst slice budget       : {burst_budget_min:,.0f} tok/min "
+        f"(the target the gate should reach)"
+    )
     recovered = window_tpm_min - counter_tpm_min
-    print(f"  Counter gate shortfall   : {burst_budget_min - counter_tpm_min:,.0f} tok/min "
-          f"below burst budget (contention loss)")
+    print(
+        f"  Counter gate shortfall   : {burst_budget_min - counter_tpm_min:,.0f} tok/min "
+        f"below burst budget (contention loss)"
+    )
     print(f"  Window-read recovers     : {recovered:,.0f} tok/min vs counter gate")
     if counter_result.reject_reasons:
-        print(f"  Counter reject reasons   : "
-              + ", ".join(f"{k}={v}" for k, v in sorted(counter_result.reject_reasons.items())))
+        print(
+            f"  Counter reject reasons   : "
+            + ", ".join(f"{k}={v}" for k, v in sorted(counter_result.reject_reasons.items()))
+        )
     if window_result.reject_reasons:
-        print(f"  Window reject reasons    : "
-              + ", ".join(f"{k}={v}" for k, v in sorted(window_result.reject_reasons.items())))
+        print(
+            f"  Window reject reasons    : "
+            + ", ".join(f"{k}={v}" for k, v in sorted(window_result.reject_reasons.items()))
+        )
 
     # Peak over-admission check for the window gate (bounded damage).
     peak_t2 = window_result.peak_tokens_in_window(args.short_window_sec)
     peak_tN = window_result.peak_tokens_in_window(args.long_window_sec)
     print(SEP)
-    print(f"  Window gate peak tok/{args.short_window_sec:.0f}s : {peak_t2:,} "
-          f"(cap {window_gate.cap_2s_tok:,})")
-    print(f"  Window gate peak tok/{args.long_window_sec:.0f}s: {peak_tN:,} "
-          f"(cap {window_gate.cap_Ns_tok:,})")
+    print(
+        f"  Window gate peak tok/{args.short_window_sec:.0f}s : {peak_t2:,} "
+        f"(cap {window_gate.cap_2s_tok:,})"
+    )
+    print(
+        f"  Window gate peak tok/{args.long_window_sec:.0f}s: {peak_tN:,} "
+        f"(cap {window_gate.cap_Ns_tok:,})"
+    )
 
     # ── EXIT CRITERION ────────────────────────────────────────────────────────
     print(f"\n{SEP}")
     aa = AssertionResult()
-    aa.check(window_tpm_min >= counter_tpm_min,
-             "Window-read admits >= counter gate (recovers contention sheds)",
-             f"window={window_tpm_min:,.0f} vs counter={counter_tpm_min:,.0f} tok/min")
+    aa.check(
+        window_tpm_min >= counter_tpm_min,
+        "Window-read admits >= counter gate (recovers contention sheds)",
+        f"window={window_tpm_min:,.0f} vs counter={counter_tpm_min:,.0f} tok/min",
+    )
     # Over-admission must stay bounded — peak within the long window should not
     # blow far past the cap (the 15s horizon is the correctness horizon).
     over_frac = (peak_tN / window_gate.cap_Ns_tok) if window_gate.cap_Ns_tok else 0.0
-    aa.check(over_frac <= 1.5,
-             "Window gate over-admission bounded (peak 15s ≤ 1.5× cap)",
-             f"peak/cap={over_frac:.2f}")
+    aa.check(
+        over_frac <= 1.5,
+        "Window gate over-admission bounded (peak 15s ≤ 1.5× cap)",
+        f"peak/cap={over_frac:.2f}",
+    )
     aa.report()
     passed = aa.all_passed
     icon = "✅" if passed else "❌"
-    print(f"\n  {icon} PHASE 0 {'PASSED' if passed else 'FAILED'} — "
-          f"{'cutover justified' if passed else 'DO NOT proceed to Phase 1'}")
+    print(
+        f"\n  {icon} PHASE 0 {'PASSED' if passed else 'FAILED'} — "
+        f"{'cutover justified' if passed else 'DO NOT proceed to Phase 1'}"
+    )
     return passed
 
 
@@ -984,8 +1141,10 @@ def main() -> None:
     if args.compare_gates:
         wl = args.workload or "tpm-push"
         cfg = build_config(
-            profile=args.profile, workload_name=wl,
-            rpm_override=args.rpm, tpm_override=args.tpm,
+            profile=args.profile,
+            workload_name=wl,
+            rpm_override=args.rpm,
+            tpm_override=args.tpm,
             burst_fraction=args.burst_fraction,
             short_window_sec=args.short_window_sec,
         )
@@ -1017,8 +1176,10 @@ def main() -> None:
     workloads = [args.workload] if args.workload else list(WORKLOAD_PRESETS)
     for wl in workloads:
         cfg = build_config(
-            profile=args.profile, workload_name=wl,
-            rpm_override=args.rpm, tpm_override=args.tpm,
+            profile=args.profile,
+            workload_name=wl,
+            rpm_override=args.rpm,
+            tpm_override=args.tpm,
             burst_fraction=args.burst_fraction,
         )
         configs.append((cfg, args.load_factor, args.duration))
@@ -1055,9 +1216,11 @@ def main() -> None:
   (bounded + reconciled in production; out of scope here).
 """)
     else:
-        print(f"\n  ❌ {failed} scenario(s) failed — the sim gate diverged from the "
-              f"expected caps, or the offered load produced an impossible admit. "
-              f"Review assertion output above.")
+        print(
+            f"\n  ❌ {failed} scenario(s) failed — the sim gate diverged from the "
+            f"expected caps, or the offered load produced an impossible admit. "
+            f"Review assertion output above."
+        )
     sys.exit(0 if failed == 0 else 1)
 
 

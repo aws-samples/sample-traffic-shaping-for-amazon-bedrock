@@ -16,7 +16,9 @@ from botocore.config import Config
 import config_loader
 
 # Add lambda layer to Python path to import shared_service
-layer_path = os.path.join(os.path.dirname(__file__), '..', 'infrastructure', 'lambda_layer', 'python')
+layer_path = os.path.join(
+    os.path.dirname(__file__), "..", "infrastructure", "lambda_layer", "python"
+)
 sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
@@ -27,9 +29,11 @@ from create_model_config import MODEL_MAP
 
 MODEL_ALIASES = MODEL_MAP
 
+
 def resolve_model_id(model_input: str) -> str:
     """Resolve model alias to full model ID."""
     return MODEL_ALIASES.get(model_input.lower(), model_input)
+
 
 def validate_model_config(dynamo_service: DynamoService, model_id: str) -> None:
     """Validate that model config exists in DynamoDB."""
@@ -47,10 +51,11 @@ def validate_model_config(dynamo_service: DynamoService, model_id: str) -> None:
         print(f"❌ Error validating model config: {e}")
         sys.exit(1)
 
+
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description='Load test direct Bedrock calls (baseline throttling test)',
+        description="Load test direct Bedrock calls (baseline throttling test)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -66,55 +71,64 @@ Examples:
   
   # Override everything
   python scripts/test_direct_bedrock.py --model nova-2-lite --num-requests 200 --max-workers 20 --submission-duration 30
-        """
+        """,
     )
-    
+
     parser.add_argument(
-        '--model',
+        "--model",
         type=str,
-        help='Bedrock model ID (or a MODEL_MAP alias, e.g. nova-2-lite). Defaults to config.env BEDROCK_MODEL_ID'
+        help="Bedrock model ID (or a MODEL_MAP alias, e.g. nova-2-lite). Defaults to config.env BEDROCK_MODEL_ID",
     )
     parser.add_argument(
-        '--num-requests',
+        "--num-requests",
         type=int,
-        help='Number of requests to send. Defaults to config.env NUM_REQUESTS (125)'
+        help="Number of requests to send. Defaults to config.env NUM_REQUESTS (125)",
     )
     parser.add_argument(
-        '--max-workers',
+        "--max-workers",
         type=int,
-        help='Concurrent thread count. Defaults to config.env MAX_WORKERS (10)'
+        help="Concurrent thread count. Defaults to config.env MAX_WORKERS (10)",
     )
     parser.add_argument(
-        '--submission-duration',
+        "--submission-duration",
         type=int,
-        help='Duration to spread submissions in seconds. Defaults to config.env SUBMISSION_DURATION (10)'
+        help="Duration to spread submissions in seconds. Defaults to config.env SUBMISSION_DURATION (10)",
     )
     parser.add_argument(
-        '--prompt-size',
+        "--prompt-size",
         type=int,
         default=None,
-        help='Prompt size in chars (for TPM exhaustion testing). Default: tiny prompt (~20 tokens)'
+        help="Prompt size in chars (for TPM exhaustion testing). Default: tiny prompt (~20 tokens)",
     )
     parser.add_argument(
-        '--max-tokens',
+        "--max-tokens",
         type=int,
         default=20,
-        help='max_tokens per request (default: 20)'
+        help="max_tokens per request (default: 20)",
     )
 
     return parser.parse_args()
+
 
 # Load configuration and verify AWS access
 config = config_loader.get_config_with_aws_check()
 args = parse_args()
 
 # Apply CLI overrides or use config.env defaults
-AWS_REGION = config.get('AWS_REGION', 'us-east-1')
-BEDROCK_MODEL_ID = resolve_model_id(args.model) if args.model else config.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
-SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
-NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get('NUM_REQUESTS', '125'))
-MAX_WORKERS = args.max_workers if args.max_workers else int(config.get('MAX_WORKERS', '10'))
-SUBMISSION_DURATION = args.submission_duration if args.submission_duration is not None else int(config.get('SUBMISSION_DURATION', '10'))
+AWS_REGION = config.get("AWS_REGION", "us-east-1")
+BEDROCK_MODEL_ID = (
+    resolve_model_id(args.model)
+    if args.model
+    else config.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
+)
+SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
+NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
+MAX_WORKERS = args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
+SUBMISSION_DURATION = (
+    args.submission_duration
+    if args.submission_duration is not None
+    else int(config.get("SUBMISSION_DURATION", "10"))
+)
 PROMPT_SIZE = args.prompt_size
 MAX_TOKENS = args.max_tokens
 
@@ -122,11 +136,12 @@ MAX_TOKENS = args.max_tokens
 dynamo_service = DynamoService(single_table_name=SINGLE_TABLE_NAME)
 validate_model_config(dynamo_service, BEDROCK_MODEL_ID)
 
+
 def build_prompt(request_num, prompt_size=None):
     """Build a prompt of the requested size."""
     base = f'Say "Request {request_num} completed"'
     if prompt_size and prompt_size > len(base):
-        padding = ' This is padding text for TPM validation testing.'
+        padding = " This is padding text for TPM validation testing."
         reps = (prompt_size - len(base)) // len(padding) + 1
         base = (base + padding * reps)[:prompt_size]
     return base
@@ -139,29 +154,24 @@ def make_bedrock_call(bedrock, request_num):
             modelId=BEDROCK_MODEL_ID,
             messages=[
                 {
-                    'role': 'user',
-                    'content': [
-                        {
-                            'text': build_prompt(request_num, PROMPT_SIZE)
-                        }
-                    ]
+                    "role": "user",
+                    "content": [{"text": build_prompt(request_num, PROMPT_SIZE)}],
                 }
             ],
-            inferenceConfig={
-                'maxTokens': MAX_TOKENS
-            }
+            inferenceConfig={"maxTokens": MAX_TOKENS},
         )
-        
-        return {'request_num': request_num, 'success': True, 'error': None}
-        
+
+        return {"request_num": request_num, "success": True, "error": None}
+
     except ClientError as e:
-        error_code = e.response['Error']['Code']
-        is_throttle = error_code == 'ThrottlingException'
+        error_code = e.response["Error"]["Code"]
+        is_throttle = error_code == "ThrottlingException"
         return {
-            'request_num': request_num,
-            'success': False,
-            'error': '429' if is_throttle else error_code
+            "request_num": request_num,
+            "success": False,
+            "error": "429" if is_throttle else error_code,
         }
+
 
 def test_direct_bedrock():
     """
@@ -181,67 +191,73 @@ def test_direct_bedrock():
         print(f"Submission: {SUBMISSION_DURATION}s duration ({submission_rate:.1f} req/s)")
     else:
         print(f"Submission: Instant spike (all at once)")
-    
+
     print(f"{'='*60}\n")
-    
+
     # Initialize client with no retries
-    config_obj = Config(retries={'max_attempts': 1, 'mode': 'standard'})
-    bedrock = boto3.client('bedrock-runtime', region_name=AWS_REGION, config=config_obj)
-    
+    config_obj = Config(retries={"max_attempts": 1, "mode": "standard"})
+    bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION, config=config_obj)
+
     results = []
     start_time = time.time()
-    
+
     # Use ThreadPoolExecutor for concurrent calls
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         # Submit requests with optional rate limiting
         futures = []
-        delay_between_requests = SUBMISSION_DURATION / NUM_REQUESTS if SUBMISSION_DURATION > 0 else 0
-        
+        delay_between_requests = (
+            SUBMISSION_DURATION / NUM_REQUESTS if SUBMISSION_DURATION > 0 else 0
+        )
+
         for i in range(NUM_REQUESTS):
             future = executor.submit(make_bedrock_call, bedrock, i)
             futures.append(future)
-            
+
             if delay_between_requests > 0:
                 time.sleep(delay_between_requests)
-                print(f"  Submitted {i+1}/{NUM_REQUESTS} ({(i+1)/NUM_REQUESTS*100:.0f}%)", end='\r')
-        
+                print(
+                    f"  Submitted {i+1}/{NUM_REQUESTS} ({(i+1)/NUM_REQUESTS*100:.0f}%)",
+                    end="\r",
+                )
+
         if SUBMISSION_DURATION > 0:
             print(f"\n\nAll requests submitted. Waiting for completion...")
-        
+
         # Collect results as they complete
         completed = 0
         for future in as_completed(futures):
             result = future.result()
             results.append(result)
             completed += 1
-            
-            status = "✓ Success" if result['success'] else f"✗ {result['error']}"
-            print(f"  Completed {completed}/{NUM_REQUESTS}: {status}", end='\r')
-    
+
+            status = "✓ Success" if result["success"] else f"✗ {result['error']}"
+            print(f"  Completed {completed}/{NUM_REQUESTS}: {status}", end="\r")
+
     total_time = time.time() - start_time
-    
+
     # Print results
     print(f"\n\n{'='*60}")
     print(f"RESULTS:")
     print(f"{'='*60}")
-    
-    success_count = sum(1 for r in results if r['success'])
-    throttle_count = sum(1 for r in results if r['error'] == '429')
-    other_errors = sum(1 for r in results if r['error'] and r['error'] != '429')
-    
+
+    success_count = sum(1 for r in results if r["success"])
+    throttle_count = sum(1 for r in results if r["error"] == "429")
+    other_errors = sum(1 for r in results if r["error"] and r["error"] != "429")
+
     print(f"  Total requests:    {NUM_REQUESTS}")
     print(f"  Successful:        {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)")
     print(f"  Throttled (429):   {throttle_count} ({throttle_count/NUM_REQUESTS*100:.1f}%)")
     print(f"  Other errors:      {other_errors}")
     print(f"  Total time:        {total_time:.1f}s")
     print(f"{'='*60}\n")
-    
+
     if throttle_count > 0:
         print(f"✅ SUCCESS: Got {throttle_count} throttles! Bedrock is rate limiting.")
     else:
         print(f"⚠️  No throttles detected. Try increasing NUM_REQUESTS or running faster.")
-    
+
     print()
+
 
 if __name__ == "__main__":
     test_direct_bedrock()

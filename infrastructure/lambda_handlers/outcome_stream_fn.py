@@ -31,14 +31,13 @@ import time
 
 from boto3.dynamodb.types import TypeDeserializer
 
-
-SINGLE_TABLE_NAME = os.environ.get('SINGLE_TABLE_NAME')
+SINGLE_TABLE_NAME = os.environ.get("SINGLE_TABLE_NAME")
 
 EMF_NAMESPACE = "BedrockShaper"
 SERVICE_NAME = "TrafficShaper"
 
-_TERMINAL_STATES = {'SUCCEEDED', 'FAILED'}
-_NON_TERMINAL_STATES = {'PENDING', 'QUEUED'}
+_TERMINAL_STATES = {"SUCCEEDED", "FAILED"}
+_NON_TERMINAL_STATES = {"PENDING", "QUEUED"}
 
 _deserializer = TypeDeserializer()
 
@@ -59,17 +58,17 @@ def _deserialize_image(image):
 
 def _map_outcome(state, reason):
     """Map terminal state + reason to the RequestOutcome dimension value."""
-    if state == 'SUCCEEDED':
-        return 'succeeded'
+    if state == "SUCCEEDED":
+        return "succeeded"
     # state == 'FAILED' — the reason carries the real classification.
     return {
-        'throttled': 'throttled',
-        'ingress_throttled': 'ingress_throttled',
-        'error': 'error',
-        'timed_out': 'timed_out',
-        'queue_expired': 'queue_expired',
-        'validation_error': 'error',  # 400-class collapses to the error bucket for the metric
-    }.get(reason, 'error')
+        "throttled": "throttled",
+        "ingress_throttled": "ingress_throttled",
+        "error": "error",
+        "timed_out": "timed_out",
+        "queue_expired": "queue_expired",
+        "validation_error": "error",  # 400-class collapses to the error bucket for the metric
+    }.get(reason, "error")
 
 
 def _coerce_int(value, default=None):
@@ -85,19 +84,21 @@ def _coerce_int(value, default=None):
 def _emit_request_outcome(new_image):
     """Print one RequestOutcome EMF blob to stdout (house style — matches
     bedrock_processor.emit_bedrock_latency_metric)."""
-    model_id = new_image.get('model_id') or 'unknown'
-    source = new_image.get('source') or 'queued'
-    arm = new_image.get('arm') or 'shaper'
-    outcome = _map_outcome(new_image.get('state'), new_image.get('reason'))
+    model_id = new_image.get("model_id") or "unknown"
+    source = new_image.get("source") or "queued"
+    arm = new_image.get("arm") or "shaper"
+    outcome = _map_outcome(new_image.get("state"), new_image.get("reason"))
 
     emf = {
         "_aws": {
             "Timestamp": int(time.time() * 1000),
-            "CloudWatchMetrics": [{
-                "Namespace": EMF_NAMESPACE,
-                "Dimensions": [["ServiceName", "model_id", "source", "arm", "outcome"]],
-                "Metrics": [{"Name": "RequestOutcome", "Unit": "Count"}],
-            }],
+            "CloudWatchMetrics": [
+                {
+                    "Namespace": EMF_NAMESPACE,
+                    "Dimensions": [["ServiceName", "model_id", "source", "arm", "outcome"]],
+                    "Metrics": [{"Name": "RequestOutcome", "Unit": "Count"}],
+                }
+            ],
         },
         "ServiceName": SERVICE_NAME,
         "model_id": model_id,
@@ -105,13 +106,13 @@ def _emit_request_outcome(new_image):
         "arm": arm,
         "outcome": outcome,
         # Properties (not dimensions) — high-cardinality context.
-        "tenant_id": new_image.get('tenant_id') or '',
-        "correlation_id": new_image.get('correlation_id') or '',
-        "request_id": new_image.get('request_id') or '',
-        "attempts": _coerce_int(new_image.get('attempts'), 1),
+        "tenant_id": new_image.get("tenant_id") or "",
+        "correlation_id": new_image.get("correlation_id") or "",
+        "request_id": new_image.get("request_id") or "",
+        "attempts": _coerce_int(new_image.get("attempts"), 1),
         "RequestOutcome": 1,
     }
-    duration_ms = _coerce_int(new_image.get('duration_ms'))
+    duration_ms = _coerce_int(new_image.get("duration_ms"))
     if duration_ms is not None:
         emf["duration_ms"] = duration_ms
 
@@ -122,18 +123,18 @@ def _should_emit(new_image, old_image, event_name):
     """True iff this is a PENDING|QUEUED|absent -> terminal(SUCCEEDED|FAILED)
     transition on a request_status item."""
     # Filter to the terminal-status item only.
-    if new_image.get('entity_type') != 'request_status':
+    if new_image.get("entity_type") != "request_status":
         return False
 
-    new_state = new_image.get('state')
+    new_state = new_image.get("state")
     if new_state not in _TERMINAL_STATES:
         # Non-terminal transition (e.g. PENDING->QUEUED) — ignore.
         return False
 
-    old_state = old_image.get('state') if old_image else None
+    old_state = old_image.get("state") if old_image else None
 
     # INSERT straight to terminal, or no prior image -> emit.
-    if event_name == 'INSERT' or old_state is None:
+    if event_name == "INSERT" or old_state is None:
         return True
 
     # Terminal reached from a non-terminal state -> emit exactly this transition.
@@ -150,23 +151,23 @@ def _should_emit(new_image, old_image, event_name):
 
 def handler(event, context):
     """DynamoDB Streams target. Emits RequestOutcome for terminal transitions."""
-    records = event.get('Records', []) or []
+    records = event.get("Records", []) or []
     emitted = 0
     scanned = 0
 
     for record in records:
         scanned += 1
         try:
-            event_name = record.get('eventName')  # INSERT | MODIFY | REMOVE
-            if event_name == 'REMOVE':
+            event_name = record.get("eventName")  # INSERT | MODIFY | REMOVE
+            if event_name == "REMOVE":
                 # TTL/delete churn — never a terminal-outcome transition.
                 continue
 
-            ddb = record.get('dynamodb') or {}
-            new_image = _deserialize_image(ddb.get('NewImage'))
+            ddb = record.get("dynamodb") or {}
+            new_image = _deserialize_image(ddb.get("NewImage"))
             if not new_image:
                 continue
-            old_image = _deserialize_image(ddb.get('OldImage'))
+            old_image = _deserialize_image(ddb.get("OldImage"))
 
             if _should_emit(new_image, old_image, event_name):
                 _emit_request_outcome(new_image)
@@ -176,6 +177,8 @@ def handler(event, context):
             continue
 
     if emitted:
-        print(f"OutcomeStreamFn: emitted {emitted} RequestOutcome metric(s) "
-              f"from {scanned} stream record(s)")
-    return {'status': 'ok', 'scanned': scanned, 'emitted': emitted}
+        print(
+            f"OutcomeStreamFn: emitted {emitted} RequestOutcome metric(s) "
+            f"from {scanned} stream record(s)"
+        )
+    return {"status": "ok", "scanned": scanned, "emitted": emitted}

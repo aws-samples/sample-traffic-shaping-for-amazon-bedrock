@@ -17,11 +17,12 @@ DEFAULT_BYTES_PER_TOKEN = 4.0  # Conservative default for most models
 # Kept for reference/future use; the live per-model value comes from the CONFIG
 # record's bytes_per_token field, resolved at request time.
 CLAUDE_BYTES_PER_TOKEN = 3.5
-SAFETY_MARGIN = 1.1            # 10% over-estimation for rate limiting safety
+SAFETY_MARGIN = 1.1  # 10% over-estimation for rate limiting safety
 
 
 class BurstCapacityExceeded(Exception):
     """Raised when atomic burst admission gate rejects the request."""
+
     pass
 
 
@@ -29,7 +30,7 @@ def estimate_request_tokens(
     prompt: Optional[str],
     max_tokens: int = 100,
     burndown_rate: float = 1.0,
-    bytes_per_token: float = DEFAULT_BYTES_PER_TOKEN
+    bytes_per_token: float = DEFAULT_BYTES_PER_TOKEN,
 ) -> int:
     """
     Estimate TPM cost of a request, matching Bedrock's upfront deduction model.
@@ -57,7 +58,7 @@ def estimate_request_tokens(
     if not prompt:
         input_tokens = 0
     else:
-        byte_length = len(prompt.encode('utf-8'))
+        byte_length = len(prompt.encode("utf-8"))
         input_tokens = max(1, int(byte_length / bytes_per_token * SAFETY_MARGIN))
 
     output_token_cost = int(max_tokens * burndown_rate)
@@ -94,7 +95,7 @@ def estimate_request_tokens_split(
     if not prompt:
         input_tokens = 0
     else:
-        byte_length = len(prompt.encode('utf-8'))
+        byte_length = len(prompt.encode("utf-8"))
         input_tokens = max(1, int(byte_length / bytes_per_token * SAFETY_MARGIN))
 
     output_tokens = int(max_tokens)
@@ -106,7 +107,7 @@ class DynamoService:
 
     def __init__(self, single_table_name: str):
         """Initialize DynamoDB resources."""
-        self.dynamodb = boto3.resource('dynamodb')
+        self.dynamodb = boto3.resource("dynamodb")
         self.single_table = self.dynamodb.Table(single_table_name)
 
     # === Configuration Methods ===
@@ -120,14 +121,12 @@ class DynamoService:
         Raises:
             KeyError if model config not found
         """
-        response = self.single_table.get_item(
-            Key={'pk': f'MODEL#{model_id}', 'sk': 'CONFIG'}
-        )
+        response = self.single_table.get_item(Key={"pk": f"MODEL#{model_id}", "sk": "CONFIG"})
 
-        if 'Item' not in response:
+        if "Item" not in response:
             raise KeyError(f"Model config not found: {model_id}")
 
-        return response['Item']
+        return response["Item"]
 
     # === Burst Allocation Methods (Budget Manager) ===
 
@@ -140,22 +139,30 @@ class DynamoService:
     SHORT_WINDOW_SECONDS = 2
     LONG_WINDOW_SECONDS = 15
 
-    def put_allocation(self, model_id: str, request_id: str, estimated_tokens: int = 0,
-                       correlation_id: Optional[str] = None,
-                       burst_capacity: int = 0, burst_regen_rate: float = 0.0,
-                       max_burst_multiplier: float = 2.0,
-                       counter_shards: int = 1,
-                       tpm_burst_capacity: int = 0,
-                       tpm_burst_regen_rate: float = 0.0,
-                       backend: str = 'runtime',
-                       rpm_quota_enabled: bool = True,
-                       estimated_input_tokens: int = 0,
-                       estimated_output_tokens: int = 0,
-                       itpm_burst_capacity: int = 0, itpm_burst_regen_rate: float = 0.0,
-                       otpm_burst_capacity: int = 0, otpm_burst_regen_rate: float = 0.0,
-                       short_window_rps: float = 0.0,
-                       short_window_sec: float = 0.0,
-                       long_window_sec: float = 0.0) -> Dict[str, Any]:
+    def put_allocation(
+        self,
+        model_id: str,
+        request_id: str,
+        estimated_tokens: int = 0,
+        correlation_id: Optional[str] = None,
+        burst_capacity: int = 0,
+        burst_regen_rate: float = 0.0,
+        max_burst_multiplier: float = 2.0,
+        counter_shards: int = 1,
+        tpm_burst_capacity: int = 0,
+        tpm_burst_regen_rate: float = 0.0,
+        backend: str = "runtime",
+        rpm_quota_enabled: bool = True,
+        estimated_input_tokens: int = 0,
+        estimated_output_tokens: int = 0,
+        itpm_burst_capacity: int = 0,
+        itpm_burst_regen_rate: float = 0.0,
+        otpm_burst_capacity: int = 0,
+        otpm_burst_regen_rate: float = 0.0,
+        short_window_rps: float = 0.0,
+        short_window_sec: float = 0.0,
+        long_window_sec: float = 0.0,
+    ) -> Dict[str, Any]:
         """
         Admit or reject a request via a CONSUMPTION-RECORD SLIDING-WINDOW READ.
 
@@ -212,33 +219,37 @@ class DynamoService:
         now_ms = int(now * 1000)
 
         item = {
-            'pk': f'MODEL#{model_id}#BURST#CONSUMPTION',
-            'sk': f'{now_ms}#{request_id}',  # request_id ensures uniqueness
-            'entity_type': 'burst_consumption_token',
-            'request_id': request_id,
-            'count': 1,
-            'estimated_tokens': estimated_tokens,
-            'source': 'burst',
-            'consumed_at': datetime.fromtimestamp(now).isoformat(),
-            'ttl': int(now) + 60  # 60s retention — only needs to outlive the 15s window
+            "pk": f"MODEL#{model_id}#BURST#CONSUMPTION",
+            "sk": f"{now_ms}#{request_id}",  # request_id ensures uniqueness
+            "entity_type": "burst_consumption_token",
+            "request_id": request_id,
+            "count": 1,
+            "estimated_tokens": estimated_tokens,
+            "source": "burst",
+            "consumed_at": datetime.fromtimestamp(now).isoformat(),
+            "ttl": int(now) + 60,  # 60s retention — only needs to outlive the 15s window
         }
 
         if correlation_id:
-            item['correlation_id'] = correlation_id
+            item["correlation_id"] = correlation_id
 
         # Mantle carries split token fields on the consumption record so iTPM/oTPM
         # windows can be summed independently and reconciled to actuals later.
-        if backend == 'mantle':
-            item['estimated_input_tokens'] = estimated_input_tokens
-            item['estimated_output_tokens'] = estimated_output_tokens
-            item['backend'] = 'mantle'
+        if backend == "mantle":
+            item["estimated_input_tokens"] = estimated_input_tokens
+            item["estimated_output_tokens"] = estimated_output_tokens
+            item["backend"] = "mantle"
 
         short_w = short_window_sec if short_window_sec > 0 else self.SHORT_WINDOW_SECONDS
         long_w = long_window_sec if long_window_sec > 0 else self.LONG_WINDOW_SECONDS
 
-        if backend == 'mantle' and (itpm_burst_capacity > 0 or otpm_burst_capacity > 0):
+        if backend == "mantle" and (itpm_burst_capacity > 0 or otpm_burst_capacity > 0):
             return self._put_allocation_mantle(
-                model_id=model_id, request_id=request_id, item=item, now=now, now_ms=now_ms,
+                model_id=model_id,
+                request_id=request_id,
+                item=item,
+                now=now,
+                now_ms=now_ms,
                 rpm_quota_enabled=rpm_quota_enabled,
                 burst_regen_rate=burst_regen_rate,
                 estimated_input_tokens=estimated_input_tokens,
@@ -246,7 +257,8 @@ class DynamoService:
                 itpm_burst_regen_rate=itpm_burst_regen_rate,
                 otpm_burst_regen_rate=otpm_burst_regen_rate,
                 short_window_rps=short_window_rps,
-                short_w=short_w, long_w=long_w,
+                short_w=short_w,
+                long_w=long_w,
             )
 
         if burst_capacity > 0:
@@ -259,8 +271,12 @@ class DynamoService:
             # record with a single put_item. This is the fix for the counter-item
             # contention that pinned burst throughput far below its budget.
             effective_short_rps = short_window_rps if short_window_rps > 0 else burst_regen_rate
-            cap_short_req = max(1, int(effective_short_rps * short_w)) if effective_short_rps > 0 else 0
-            cap_long_req = max(1, int(effective_short_rps * long_w)) if effective_short_rps > 0 else 0
+            cap_short_req = (
+                max(1, int(effective_short_rps * short_w)) if effective_short_rps > 0 else 0
+            )
+            cap_long_req = (
+                max(1, int(effective_short_rps * long_w)) if effective_short_rps > 0 else 0
+            )
             cap_short_tok = int(tpm_burst_regen_rate * short_w) if tpm_burst_regen_rate > 0 else 0
             cap_long_tok = int(tpm_burst_regen_rate * long_w) if tpm_burst_regen_rate > 0 else 0
             gate_tpm = tpm_burst_regen_rate > 0 and estimated_tokens > 0
@@ -279,7 +295,7 @@ class DynamoService:
                 model_id,
                 long_window_sec=long_w,
                 short_window_sec=short_w,
-                token_field='estimated_tokens',  # nosec B106  # 'token_field' names a DynamoDB attribute, not a credential
+                token_field="estimated_tokens",  # nosec B106  # 'token_field' names a DynamoDB attribute, not a credential
                 est_tokens=estimated_tokens if gate_tpm else 0,
                 cap_short_tok=cap_short_tok if gate_tpm else 0,
                 cap_long_tok=cap_long_tok if gate_tpm else 0,
@@ -291,13 +307,9 @@ class DynamoService:
             # bedrock_processor reconciles this to actuals ~7.5s later.
             self.single_table.put_item(
                 Item=item,
-                ConditionExpression='attribute_not_exists(pk) AND attribute_not_exists(sk)'
+                ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
             )
-            return {
-                'timestamp_ms': now_ms,
-                'timestamp': now,
-                'item': item
-            }
+            return {"timestamp_ms": now_ms, "timestamp": now, "item": item}
         else:
             # burst_capacity <= 0 ⇒ BURST DISABLED: reject every request so it all
             # queues. This is the "0% burst" configuration — used to prove the queue
@@ -314,15 +326,24 @@ class DynamoService:
                 f"routing request to queue"
             )
 
-    def _put_allocation_mantle(self, *, model_id: str, request_id: str, item: Dict[str, Any],
-                               now: float, now_ms: int,
-                               rpm_quota_enabled: bool,
-                               burst_regen_rate: float,
-                               estimated_input_tokens: int, estimated_output_tokens: int,
-                               itpm_burst_regen_rate: float,
-                               otpm_burst_regen_rate: float,
-                               short_window_rps: float = 0.0,
-                               short_w: float = 2.0, long_w: float = 15.0) -> Dict[str, Any]:
+    def _put_allocation_mantle(
+        self,
+        *,
+        model_id: str,
+        request_id: str,
+        item: Dict[str, Any],
+        now: float,
+        now_ms: int,
+        rpm_quota_enabled: bool,
+        burst_regen_rate: float,
+        estimated_input_tokens: int,
+        estimated_output_tokens: int,
+        itpm_burst_regen_rate: float,
+        otpm_burst_regen_rate: float,
+        short_window_rps: float = 0.0,
+        short_w: float = 2.0,
+        long_w: float = 15.0,
+    ) -> Dict[str, Any]:
         """
         Mantle SLIDING-WINDOW READ gate (iTPM + oTPM, RPM optional).
 
@@ -370,12 +391,12 @@ class DynamoService:
             cap_short_req=cap_short_req if rpm_quota_enabled else 0,
             cap_long_req=cap_long_req if rpm_quota_enabled else 0,
             # Input-token dimension.
-            token_field='estimated_input_tokens',  # nosec B106  # 'token_field' names a DynamoDB attribute, not a credential
+            token_field="estimated_input_tokens",  # nosec B106  # 'token_field' names a DynamoDB attribute, not a credential
             est_tokens=estimated_input_tokens if gate_i else 0,
             cap_short_tok=cap_short_itok if gate_i else 0,
             cap_long_tok=cap_long_itok if gate_i else 0,
             # Output-token dimension (second, independent gate).
-            token_field2='estimated_output_tokens',
+            token_field2="estimated_output_tokens",
             est_tokens2=estimated_output_tokens if gate_o else 0,
             cap_short_tok2=cap_short_otok if gate_o else 0,
             cap_long_tok2=cap_long_otok if gate_o else 0,
@@ -384,13 +405,9 @@ class DynamoService:
         # ADMIT: write the consumption record with the split estimates.
         self.single_table.put_item(
             Item=item,
-            ConditionExpression='attribute_not_exists(pk) AND attribute_not_exists(sk)'
+            ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
         )
-        return {
-            'timestamp_ms': now_ms,
-            'timestamp': now,
-            'item': item
-        }
+        return {"timestamp_ms": now_ms, "timestamp": now, "item": item}
 
     def _enforce_window_gate(
         self,
@@ -400,7 +417,7 @@ class DynamoService:
         short_window_sec: float,
         cap_short_req: int = 0,
         cap_long_req: int = 0,
-        token_field: str = 'estimated_tokens',
+        token_field: str = "estimated_tokens",
         est_tokens: int = 0,
         cap_short_tok: int = 0,
         cap_long_tok: int = 0,
@@ -437,16 +454,21 @@ class DynamoService:
         """
         gate_req = cap_short_req > 0 or cap_long_req > 0
         gate_tok = est_tokens > 0 and (cap_short_tok > 0 or cap_long_tok > 0)
-        gate_tok2 = (token_field2 is not None and est_tokens2 > 0
-                     and (cap_short_tok2 > 0 or cap_long_tok2 > 0))
+        gate_tok2 = (
+            token_field2 is not None
+            and est_tokens2 > 0
+            and (cap_short_tok2 > 0 or cap_long_tok2 > 0)
+        )
         if not (gate_req or gate_tok or gate_tok2):
             return  # nothing to enforce (e.g. RPM-only model with no request cap)
 
         # Strongly-consistent read of the full long window — the single source of
         # truth. This is the ONE read that replaced the counter transaction.
         records = self.query_consumption_records(
-            model_id, 'BURST',
-            window_seconds=int(long_window_sec), consistent_read=True,
+            model_id,
+            "BURST",
+            window_seconds=int(long_window_sec),
+            consistent_read=True,
         )
 
         now_ms = int(time.time() * 1000)
@@ -457,7 +479,7 @@ class DynamoService:
         tok2_short = tok2_long = 0
         for rec in records:
             try:
-                rec_ms = int(str(rec['sk']).split('#')[0])
+                rec_ms = int(str(rec["sk"]).split("#")[0])
             except (KeyError, ValueError, IndexError):
                 continue
             in_short = rec_ms >= short_cutoff_ms
@@ -470,7 +492,7 @@ class DynamoService:
                 tok_long += v
                 if in_short:
                     tok_short += v
-            if gate_tok2:
+            if gate_tok2 and token_field2 is not None:
                 v2 = rec.get(token_field2, 0)
                 v2 = int(v2) if isinstance(v2, Decimal) else int(v2 or 0)
                 tok2_long += v2
@@ -520,7 +542,7 @@ class DynamoService:
         model_id: str,
         capacity_mode: str,
         window_seconds: int = 60,
-        consistent_read: bool = True
+        consistent_read: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Get consumption records in sliding window (Step 2 of write-then-verify).
@@ -537,20 +559,20 @@ class DynamoService:
 
         response = self.single_table.query(
             KeyConditionExpression=(
-                Key('pk').eq(f'MODEL#{model_id}#{capacity_mode}#CONSUMPTION') &
-                Key('sk').between(f'{window_start_ms}#', f'{now_ms}#~')
+                Key("pk").eq(f"MODEL#{model_id}#{capacity_mode}#CONSUMPTION")
+                & Key("sk").between(f"{window_start_ms}#", f"{now_ms}#~")
             ),
-            ConsistentRead=consistent_read
+            ConsistentRead=consistent_read,
         )
 
-        return response.get('Items', [])
+        return response.get("Items", [])
 
     def calculate_available_tokens(
         self,
         capacity: int,
         consumption_records: List[Dict[str, Any]],
         regeneration_rate: float,
-        current_time: Optional[float] = None
+        current_time: Optional[float] = None,
     ) -> float:
         """
         Calculate available tokens with continuous regeneration.
@@ -573,13 +595,13 @@ class DynamoService:
 
         # Count total tokens consumed (convert Decimal to int if needed)
         tokens_consumed = sum(
-            int(record['count']) if isinstance(record['count'], Decimal) else record['count']
+            (int(record["count"]) if isinstance(record["count"], Decimal) else record["count"])
             for record in consumption_records
         )
 
         # Calculate per-record regeneration: each record regenerates based on its own age
         tokens_regenerated = sum(
-            (current_time - int(record['sk'].split('#')[0]) / 1000.0) * regeneration_rate
+            (current_time - int(record["sk"].split("#")[0]) / 1000.0) * regeneration_rate
             for record in consumption_records
         )
         # Can't regenerate more tokens than were consumed
@@ -595,7 +617,7 @@ class DynamoService:
         tpm_capacity: int,
         consumption_records: List[Dict[str, Any]],
         tpm_regeneration_rate: float,
-        current_time: Optional[float] = None
+        current_time: Optional[float] = None,
     ) -> float:
         """
         Calculate available TPM tokens using a bucket-level regeneration model.
@@ -623,9 +645,11 @@ class DynamoService:
 
         # Sum estimated_tokens (TPM cost) from each record
         tokens_consumed = sum(
-            int(record.get('estimated_tokens', 0))
-            if isinstance(record.get('estimated_tokens', 0), Decimal)
-            else record.get('estimated_tokens', 0)
+            (
+                int(record.get("estimated_tokens", 0))
+                if isinstance(record.get("estimated_tokens", 0), Decimal)
+                else record.get("estimated_tokens", 0)
+            )
             for record in consumption_records
         )
 
@@ -638,9 +662,9 @@ class DynamoService:
         # concurrent records), making the bucket appear to refill N× too fast and causing
         # over-admission under thundering herd conditions.
         oldest_record_ms = min(
-            int(record['sk'].split('#')[0])
+            int(record["sk"].split("#")[0])
             for record in consumption_records
-            if record.get('estimated_tokens', 0)
+            if record.get("estimated_tokens", 0)
         )
         time_since_drain_started = current_time - oldest_record_ms / 1000.0
         tokens_regenerated = min(time_since_drain_started * tpm_regeneration_rate, tokens_consumed)
@@ -656,7 +680,7 @@ class DynamoService:
         consumption_records: List[Dict[str, Any]],
         tpm_regeneration_rate: float,
         dimension: str,
-        current_time: Optional[float] = None
+        current_time: Optional[float] = None,
     ) -> float:
         """
         Calculate available iTPM or oTPM for the mantle split-quota model.
@@ -677,10 +701,10 @@ class DynamoService:
         Returns:
             Available tokens for the dimension (can be negative if over-consumed)
         """
-        if dimension == 'INPUT':
-            field_name = 'estimated_input_tokens'
-        elif dimension == 'OUTPUT':
-            field_name = 'estimated_output_tokens'
+        if dimension == "INPUT":
+            field_name = "estimated_input_tokens"
+        elif dimension == "OUTPUT":
+            field_name = "estimated_output_tokens"
         else:
             raise ValueError(f"dimension must be 'INPUT' or 'OUTPUT', got: {dimension}")
 
@@ -700,18 +724,14 @@ class DynamoService:
 
         # Anchor regeneration on the oldest record that consumed this dimension.
         anchor_records = [r for r in consumption_records if _field_val(r)]
-        oldest_record_ms = min(int(r['sk'].split('#')[0]) for r in anchor_records)
+        oldest_record_ms = min(int(r["sk"].split("#")[0]) for r in anchor_records)
         time_since_drain_started = current_time - oldest_record_ms / 1000.0
         tokens_regenerated = min(time_since_drain_started * tpm_regeneration_rate, tokens_consumed)
 
         return tpm_capacity - tokens_consumed + tokens_regenerated
 
     def delete_consumption_record(
-        self,
-        model_id: str,
-        capacity_mode: str,
-        timestamp_ms: int,
-        request_id: str
+        self, model_id: str, capacity_mode: str, timestamp_ms: int, request_id: str
     ) -> None:
         """
         Delete consumption record (rollback for over-consumption).
@@ -719,15 +739,17 @@ class DynamoService:
         """
         self.single_table.delete_item(
             Key={
-                'pk': f'MODEL#{model_id}#{capacity_mode}#CONSUMPTION',
-                'sk': f'{timestamp_ms}#{request_id}'
+                "pk": f"MODEL#{model_id}#{capacity_mode}#CONSUMPTION",
+                "sk": f"{timestamp_ms}#{request_id}",
             },
-            ConditionExpression='attribute_exists(pk) AND attribute_exists(sk)'
+            ConditionExpression="attribute_exists(pk) AND attribute_exists(sk)",
         )
 
     # === Reconciliation Methods ===
 
-    def sweep_orphaned_records(self, model_id: str, capacity_mode: str = 'BURST', max_age_seconds: int = 120) -> int:
+    def sweep_orphaned_records(
+        self, model_id: str, capacity_mode: str = "BURST", max_age_seconds: int = 120
+    ) -> int:
         """
         Find and delete consumption records older than max_age_seconds.
 
@@ -742,60 +764,66 @@ class DynamoService:
         cutoff_ms = now_ms - (max_age_seconds * 1000)
 
         # Query records older than cutoff (sk < cutoff)
-        pk = f'MODEL#{model_id}#{capacity_mode}#CONSUMPTION'
+        pk = f"MODEL#{model_id}#{capacity_mode}#CONSUMPTION"
         response = self.single_table.query(
-            KeyConditionExpression=(
-                Key('pk').eq(pk) &
-                Key('sk').lt(f'{cutoff_ms}#')
-            ),
-            ConsistentRead=True
+            KeyConditionExpression=(Key("pk").eq(pk) & Key("sk").lt(f"{cutoff_ms}#")),
+            ConsistentRead=True,
         )
 
-        orphaned_items = response.get('Items', [])
+        orphaned_items = response.get("Items", [])
         if not orphaned_items:
             return 0
 
         # Batch delete orphaned records
         table_name = self.single_table.table_name
         delete_requests = [
-            {'DeleteRequest': {'Key': {'pk': item['pk'], 'sk': item['sk']}}}
+            {"DeleteRequest": {"Key": {"pk": item["pk"], "sk": item["sk"]}}}
             for item in orphaned_items
         ]
 
         deleted_count = len(delete_requests)
 
         for i in range(0, len(delete_requests), 25):
-            chunk = delete_requests[i:i + 25]
+            chunk = delete_requests[i : i + 25]
             batch_response = self.dynamodb.meta.client.batch_write_item(
                 RequestItems={table_name: chunk}
             )
 
             # Retry unprocessed items
-            unprocessed = batch_response.get('UnprocessedItems', {}).get(table_name, [])
+            unprocessed = batch_response.get("UnprocessedItems", {}).get(table_name, [])
             while unprocessed:
-                time.sleep(0.1)  # nosemgrep: arbitrary-sleep -- deliberate backoff before retrying UnprocessedItems
+                time.sleep(
+                    0.1
+                )  # nosemgrep: arbitrary-sleep -- deliberate backoff before retrying UnprocessedItems
                 batch_response = self.dynamodb.meta.client.batch_write_item(
                     RequestItems={table_name: unprocessed}
                 )
-                unprocessed = batch_response.get('UnprocessedItems', {}).get(table_name, [])
+                unprocessed = batch_response.get("UnprocessedItems", {}).get(table_name, [])
 
         return deleted_count
 
     def get_all_configured_models(self) -> List[str]:
         """Query all MODEL#*#CONFIG items and return model_ids."""
         response = self.single_table.scan(
-            FilterExpression='entity_type = :et',
-            ExpressionAttributeValues={':et': 'model_config'},
-            ProjectionExpression='model_id'
+            FilterExpression="entity_type = :et",
+            ExpressionAttributeValues={":et": "model_config"},
+            ProjectionExpression="model_id",
         )
 
-        return [item['model_id'] for item in response.get('Items', []) if 'model_id' in item]
+        return [item["model_id"] for item in response.get("Items", []) if "model_id" in item]
 
     # === Terminal-Status Methods (honest-outcomes layer) ===
 
-    def write_pending_status(self, *, request_id: str, tenant_id: Optional[str],
-                             correlation_id: Optional[str], model_id: str,
-                             arm: str = "shaper", source: str = "immediate") -> None:
+    def write_pending_status(
+        self,
+        *,
+        request_id: str,
+        tenant_id: Optional[str],
+        correlation_id: Optional[str],
+        model_id: str,
+        arm: str = "shaper",
+        source: str = "immediate",
+    ) -> None:
         """
         Write the initial PENDING terminal-status item for a request.
 
@@ -813,41 +841,47 @@ class DynamoService:
         now_iso = datetime.utcnow().isoformat()
 
         item = {
-            'pk': f'REQUEST#{request_id}',
-            'sk': 'STATUS',
-            'entity_type': 'request_status',
-            'request_id': request_id,
-            'correlation_id': correlation_id,
-            'tenant_id': tenant_id,
-            'model_id': model_id,
-            'arm': arm,
-            'source': source,
-            'state': 'PENDING',
-            'reason': None,
-            'http_status': 202,
-            'attempts': 1,
-            'created_at': now_iso,
-            'updated_at': now_iso,
-            'ttl': int(now) + 86400  # 24h retention
+            "pk": f"REQUEST#{request_id}",
+            "sk": "STATUS",
+            "entity_type": "request_status",
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+            "tenant_id": tenant_id,
+            "model_id": model_id,
+            "arm": arm,
+            "source": source,
+            "state": "PENDING",
+            "reason": None,
+            "http_status": 202,
+            "attempts": 1,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+            "ttl": int(now) + 86400,  # 24h retention
         }
 
         try:
-            self.single_table.put_item(
-                Item=item,
-                ConditionExpression='attribute_not_exists(pk)'
-            )
+            self.single_table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
         except self.dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
             # Item already exists (PENDING already written, or a terminal state has
             # been committed). A Retry must not clobber it — idempotent no-op.
             print(f"PENDING write skipped (item exists) for request_id={request_id}")
 
-    def write_terminal_status(self, *, request_id: str, state: str,
-                              reason: Optional[str] = None, http_status: int,
-                              tenant_id: Optional[str], correlation_id: Optional[str],
-                              model_id: str, arm: str = "shaper", source: str = "queued",
-                              output_ref: Optional[str] = None,
-                              attempts: int = 1,
-                              duration_ms: Optional[int] = None) -> bool:
+    def write_terminal_status(
+        self,
+        *,
+        request_id: str,
+        state: str,
+        reason: Optional[str] = None,
+        http_status: int,
+        tenant_id: Optional[str],
+        correlation_id: Optional[str],
+        model_id: str,
+        arm: str = "shaper",
+        source: str = "queued",
+        output_ref: Optional[str] = None,
+        attempts: int = 1,
+        duration_ms: Optional[int] = None,
+    ) -> bool:
         """
         Gate the terminal transition exactly-once with one conditional UpdateItem.
 
@@ -875,60 +909,60 @@ class DynamoService:
         now_iso = datetime.utcnow().isoformat()
 
         set_clauses = [
-            '#state = :state',
-            'reason = :reason',
-            'http_status = :http_status',
-            'updated_at = :updated_at',
-            'entity_type = :entity_type',
-            'request_id = :request_id',
-            'correlation_id = :correlation_id',
-            'tenant_id = :tenant_id',
-            'model_id = :model_id',
-            'arm = :arm',
-            '#source = :source',
-            'attempts = :attempts',
-            'created_at = if_not_exists(created_at, :created_at)',
-            '#ttl = if_not_exists(#ttl, :ttl)',
+            "#state = :state",
+            "reason = :reason",
+            "http_status = :http_status",
+            "updated_at = :updated_at",
+            "entity_type = :entity_type",
+            "request_id = :request_id",
+            "correlation_id = :correlation_id",
+            "tenant_id = :tenant_id",
+            "model_id = :model_id",
+            "arm = :arm",
+            "#source = :source",
+            "attempts = :attempts",
+            "created_at = if_not_exists(created_at, :created_at)",
+            "#ttl = if_not_exists(#ttl, :ttl)",
         ]
 
         values = {
-            ':state': state,
-            ':reason': reason,
-            ':http_status': int(http_status),
-            ':updated_at': now_iso,
-            ':entity_type': 'request_status',
-            ':request_id': request_id,
-            ':correlation_id': correlation_id,
-            ':tenant_id': tenant_id,
-            ':model_id': model_id,
-            ':arm': arm,
-            ':source': source,
-            ':attempts': int(attempts),
-            ':created_at': now_iso,
-            ':ttl': int(now) + 86400,  # 24h retention (create-only)
-            ':pending': 'PENDING',
-            ':queued': 'QUEUED',
+            ":state": state,
+            ":reason": reason,
+            ":http_status": int(http_status),
+            ":updated_at": now_iso,
+            ":entity_type": "request_status",
+            ":request_id": request_id,
+            ":correlation_id": correlation_id,
+            ":tenant_id": tenant_id,
+            ":model_id": model_id,
+            ":arm": arm,
+            ":source": source,
+            ":attempts": int(attempts),
+            ":created_at": now_iso,
+            ":ttl": int(now) + 86400,  # 24h retention (create-only)
+            ":pending": "PENDING",
+            ":queued": "QUEUED",
         }
 
         # Optional attributes: only written when supplied (never overwrite with null).
         if output_ref is not None:
-            set_clauses.append('output_ref = :output_ref')
-            values[':output_ref'] = output_ref
+            set_clauses.append("output_ref = :output_ref")
+            values[":output_ref"] = output_ref
         if duration_ms is not None:
-            set_clauses.append('duration_ms = :duration_ms')
-            values[':duration_ms'] = int(duration_ms)
+            set_clauses.append("duration_ms = :duration_ms")
+            values[":duration_ms"] = int(duration_ms)
 
         try:
             self.single_table.update_item(
-                Key={'pk': f'REQUEST#{request_id}', 'sk': 'STATUS'},
-                UpdateExpression='SET ' + ', '.join(set_clauses),
-                ConditionExpression='attribute_not_exists(pk) OR #state IN (:pending, :queued)',
+                Key={"pk": f"REQUEST#{request_id}", "sk": "STATUS"},
+                UpdateExpression="SET " + ", ".join(set_clauses),
+                ConditionExpression="attribute_not_exists(pk) OR #state IN (:pending, :queued)",
                 ExpressionAttributeNames={
-                    '#state': 'state',
-                    '#source': 'source',
-                    '#ttl': 'ttl'
+                    "#state": "state",
+                    "#source": "source",
+                    "#ttl": "ttl",
                 },
-                ExpressionAttributeValues=values
+                ExpressionAttributeValues=values,
             )
             return True
         except self.dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
@@ -939,10 +973,15 @@ class DynamoService:
 
     # === Queue Consumption Methods (Queue Processor) ===
 
-    def put_queue_consumption(self, model_id: str, request_id: str, estimated_tokens: int = 0,
-                              correlation_id: Optional[str] = None,
-                              estimated_input_tokens: int = 0,
-                              estimated_output_tokens: int = 0) -> Dict[str, Any]:
+    def put_queue_consumption(
+        self,
+        model_id: str,
+        request_id: str,
+        estimated_tokens: int = 0,
+        correlation_id: Optional[str] = None,
+        estimated_input_tokens: int = 0,
+        estimated_output_tokens: int = 0,
+    ) -> Dict[str, Any]:
         """
         Write queue consumption record (leaky bucket pattern).
         Similar to put_allocation() but for QUEUE#CONSUMPTION partition.
@@ -959,85 +998,69 @@ class DynamoService:
         now_ms = int(now * 1000)
 
         item = {
-            'pk': f'MODEL#{model_id}#QUEUE#CONSUMPTION',
-            'sk': f'{now_ms}#{request_id}',
-            'entity_type': 'queue_consumption_token',
-            'request_id': request_id,
-            'count': 1,
-            'estimated_tokens': estimated_tokens,
-            'estimated_input_tokens': estimated_input_tokens,
-            'estimated_output_tokens': estimated_output_tokens,
-            'source': 'queue',
-            'consumed_at': datetime.fromtimestamp(now).isoformat(),
-            'ttl': int(now) + 300  # 5 min retention
+            "pk": f"MODEL#{model_id}#QUEUE#CONSUMPTION",
+            "sk": f"{now_ms}#{request_id}",
+            "entity_type": "queue_consumption_token",
+            "request_id": request_id,
+            "count": 1,
+            "estimated_tokens": estimated_tokens,
+            "estimated_input_tokens": estimated_input_tokens,
+            "estimated_output_tokens": estimated_output_tokens,
+            "source": "queue",
+            "consumed_at": datetime.fromtimestamp(now).isoformat(),
+            "ttl": int(now) + 300,  # 5 min retention
         }
 
         if correlation_id:
-            item['correlation_id'] = correlation_id
+            item["correlation_id"] = correlation_id
 
         self.single_table.put_item(
             Item=item,
-            ConditionExpression='attribute_not_exists(pk) AND attribute_not_exists(sk)'
+            ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
         )
 
-        return {
-            'timestamp_ms': now_ms,
-            'timestamp': now,
-            'item': item
-        }
+        return {"timestamp_ms": now_ms, "timestamp": now, "item": item}
 
     def query_queue_consumption_records(
-        self,
-        model_id: str,
-        window_seconds: int = 60,
-        consistent_read: bool = True
+        self, model_id: str, window_seconds: int = 60, consistent_read: bool = True
     ) -> List[Dict[str, Any]]:
         """Get queue consumption records in sliding window."""
         return self.query_consumption_records(
             model_id=model_id,
-            capacity_mode='QUEUE',
+            capacity_mode="QUEUE",
             window_seconds=window_seconds,
-            consistent_read=consistent_read
+            consistent_read=consistent_read,
         )
 
     def calculate_queue_capacity(
-        self,
-        model_id: str,
-        current_time: Optional[float] = None
+        self, model_id: str, current_time: Optional[float] = None
     ) -> float:
         """
         Calculate available queue capacity using leaky bucket.
         Uses queue_capacity (40) and queue_regeneration_rate (0.667).
         """
         config = self.get_model_config(model_id)
-        queue_capacity = int(config['queue_capacity'])
-        queue_regen_rate = float(config['queue_regeneration_rate'])
+        queue_capacity = int(config["queue_capacity"])
+        queue_regen_rate = float(config["queue_regeneration_rate"])
 
         consumption_records = self.query_queue_consumption_records(
-            model_id=model_id,
-            window_seconds=60,
-            consistent_read=True
+            model_id=model_id, window_seconds=60, consistent_read=True
         )
 
         return self.calculate_available_tokens(
             capacity=queue_capacity,
             consumption_records=consumption_records,
             regeneration_rate=queue_regen_rate,
-            current_time=current_time
+            current_time=current_time,
         )
 
-    def delete_queue_consumption(
-        self,
-        model_id: str,
-        timestamp_ms: int,
-        request_id: str
-    ) -> None:
+    def delete_queue_consumption(self, model_id: str, timestamp_ms: int, request_id: str) -> None:
         """Delete queue consumption record (rollback for over-consumption)."""
         self.delete_consumption_record(
             model_id=model_id,
-            capacity_mode='QUEUE',
+            capacity_mode="QUEUE",
             timestamp_ms=timestamp_ms,
-            request_id=request_id
+            request_id=request_id,
         )
 
     def enqueue_request(
@@ -1074,39 +1097,39 @@ class DynamoService:
         sort_key = f"{timestamp_ms:015d}#{priority:03d}#{request_id}"
 
         queue_item = {
-            'pk': f'MODEL#{model_id}#QUEUE#ITEMS',
-            'sk': sort_key,
-            'entity_type': 'queue_item',
-            'request_id': request_id,
-            'model_id': model_id,
-            'priority': priority,
-            'queued_at': now.isoformat(),
-            'timestamp_ms': timestamp_ms,
-            'expires_at': expires_at.isoformat(),
-            'ttl': ttl_timestamp
+            "pk": f"MODEL#{model_id}#QUEUE#ITEMS",
+            "sk": sort_key,
+            "entity_type": "queue_item",
+            "request_id": request_id,
+            "model_id": model_id,
+            "priority": priority,
+            "queued_at": now.isoformat(),
+            "timestamp_ms": timestamp_ms,
+            "expires_at": expires_at.isoformat(),
+            "ttl": ttl_timestamp,
         }
 
         if estimated_tokens:
-            queue_item['estimated_tokens'] = estimated_tokens
+            queue_item["estimated_tokens"] = estimated_tokens
         if estimated_input_tokens:
-            queue_item['estimated_input_tokens'] = estimated_input_tokens
+            queue_item["estimated_input_tokens"] = estimated_input_tokens
         if estimated_output_tokens:
-            queue_item['estimated_output_tokens'] = estimated_output_tokens
+            queue_item["estimated_output_tokens"] = estimated_output_tokens
 
         if task_token:
-            queue_item['task_token'] = task_token
+            queue_item["task_token"] = task_token
         if execution_arn:
-            queue_item['execution_arn'] = execution_arn
+            queue_item["execution_arn"] = execution_arn
         if request_payload:
-            queue_item['request_payload'] = request_payload
+            queue_item["request_payload"] = request_payload
         if correlation_id:
-            queue_item['correlation_id'] = correlation_id
+            queue_item["correlation_id"] = correlation_id
         if tenant_id:
-            queue_item['tenant_id'] = tenant_id
+            queue_item["tenant_id"] = tenant_id
 
         self.single_table.put_item(
             Item=queue_item,
-            ConditionExpression='attribute_not_exists(pk) AND attribute_not_exists(sk)'
+            ConditionExpression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
         )
 
         return queue_item
@@ -1114,10 +1137,10 @@ class DynamoService:
     def get_queue_depth(self, model_id: str) -> int:
         """Get queue length from single table."""
         response = self.single_table.query(
-            KeyConditionExpression=Key('pk').eq(f'MODEL#{model_id}#QUEUE#ITEMS'),
-            Select='COUNT'
+            KeyConditionExpression=Key("pk").eq(f"MODEL#{model_id}#QUEUE#ITEMS"),
+            Select="COUNT",
         )
-        return response['Count']
+        return response["Count"]
 
     @staticmethod
     def _queue_item_expired(item: Dict[str, Any], now: datetime) -> bool:
@@ -1132,7 +1155,7 @@ class DynamoService:
         expires_at is missing or unparseable, treat the item as NOT expired so we never
         drop a live request on a parse error.
         """
-        raw = item.get('expires_at')
+        raw = item.get("expires_at")
         if not raw:
             return False
         try:
@@ -1160,12 +1183,12 @@ class DynamoService:
         """
         # Query oldest items (FIFO)
         response = self.single_table.query(
-            KeyConditionExpression=Key('pk').eq(f'MODEL#{model_id}#QUEUE#ITEMS'),
+            KeyConditionExpression=Key("pk").eq(f"MODEL#{model_id}#QUEUE#ITEMS"),
             Limit=batch_size,
-            ScanIndexForward=True  # Oldest first
+            ScanIndexForward=True,  # Oldest first
         )
 
-        items = response.get('Items', [])
+        items = response.get("Items", [])
         if not items:
             return []
 
@@ -1179,21 +1202,21 @@ class DynamoService:
 
         # --- Expired path: terminalize (queue_expired/504) then delete ---
         for item in expired_items:
-            request_id = item.get('request_id')
+            request_id = item.get("request_id")
             if request_id:
                 # Shared exactly-once guard. If a terminal state already exists (e.g. the
                 # SM TimedOut finalizer beat us), write_terminal_status returns False and
                 # we still proceed to delete the queue item.
                 self.write_terminal_status(
                     request_id=request_id,
-                    state='FAILED',
-                    reason='queue_expired',
+                    state="FAILED",
+                    reason="queue_expired",
                     http_status=504,
-                    tenant_id=item.get('tenant_id'),
-                    correlation_id=item.get('correlation_id'),
-                    model_id=item.get('model_id', model_id),
-                    arm=item.get('arm', 'shaper'),
-                    source=item.get('source', 'queued'),
+                    tenant_id=item.get("tenant_id"),
+                    correlation_id=item.get("correlation_id"),
+                    model_id=item.get("model_id", model_id),
+                    arm=item.get("arm", "shaper"),
+                    source=item.get("source", "queued"),
                 )
 
         if expired_items:
@@ -1210,32 +1233,29 @@ class DynamoService:
     def _batch_delete_items(self, table_name: str, items: List[Dict[str, Any]]) -> None:
         """Batch-delete queue items (25 per BatchWriteItem call, retrying unprocessed)."""
         delete_requests = [
-            {'DeleteRequest': {'Key': {'pk': item['pk'], 'sk': item['sk']}}}
-            for item in items
+            {"DeleteRequest": {"Key": {"pk": item["pk"], "sk": item["sk"]}}} for item in items
         ]
 
         # BatchWriteItem supports max 25 items per call
         for i in range(0, len(delete_requests), 25):
-            chunk = delete_requests[i:i + 25]
+            chunk = delete_requests[i : i + 25]
             batch_response = self.dynamodb.meta.client.batch_write_item(
                 RequestItems={table_name: chunk}
             )
 
             # Retry unprocessed items (rare, but handle for robustness)
-            unprocessed = batch_response.get('UnprocessedItems', {}).get(table_name, [])
+            unprocessed = batch_response.get("UnprocessedItems", {}).get(table_name, [])
             while unprocessed:
-                time.sleep(0.1)  # Brief backoff  # nosemgrep: arbitrary-sleep -- deliberate backoff before retrying UnprocessedItems
+                time.sleep(
+                    0.1
+                )  # Brief backoff  # nosemgrep: arbitrary-sleep -- deliberate backoff before retrying UnprocessedItems
                 batch_response = self.dynamodb.meta.client.batch_write_item(
                     RequestItems={table_name: unprocessed}
                 )
-                unprocessed = batch_response.get('UnprocessedItems', {}).get(table_name, [])
+                unprocessed = batch_response.get("UnprocessedItems", {}).get(table_name, [])
 
     def record_invocation_error(
-        self,
-        model_id: str,
-        request_id: str,
-        execution_arn: Optional[str],
-        error: str
+        self, model_id: str, request_id: str, execution_arn: Optional[str], error: str
     ) -> Dict[str, Any]:
         """
         Record a failed Bedrock invocation for debugging.
@@ -1253,18 +1273,18 @@ class DynamoService:
         now_ms = int(now * 1000)
 
         item = {
-            'pk': f'MODEL#{model_id}#INVOCATION#ERRORS',
-            'sk': f'{now_ms}#{request_id}',
-            'entity_type': 'invocation_error',
-            'request_id': request_id,
-            'error_message': error,
-            'error_type': error.split(':')[0] if ':' in error else 'UnknownError',
-            'occurred_at': datetime.fromtimestamp(now).isoformat(),
-            'ttl': int(now) + 86400 * 7  # 7 day retention
+            "pk": f"MODEL#{model_id}#INVOCATION#ERRORS",
+            "sk": f"{now_ms}#{request_id}",
+            "entity_type": "invocation_error",
+            "request_id": request_id,
+            "error_message": error,
+            "error_type": error.split(":")[0] if ":" in error else "UnknownError",
+            "occurred_at": datetime.fromtimestamp(now).isoformat(),
+            "ttl": int(now) + 86400 * 7,  # 7 day retention
         }
 
         if execution_arn:
-            item['step_function_execution'] = execution_arn
+            item["step_function_execution"] = execution_arn
 
         self.single_table.put_item(Item=item)
 
@@ -1272,11 +1292,7 @@ class DynamoService:
 
     # === Heartbeat Lock Methods (Single Table) ===
 
-    def is_processor_lock_active(
-        self,
-        model_id: str,
-        slot: int = 0
-    ) -> bool:
+    def is_processor_lock_active(self, model_id: str, slot: int = 0) -> bool:
         """
         Check if an active (non-stale) processor lock exists.
 
@@ -1293,24 +1309,23 @@ class DynamoService:
         """
         try:
             response = self.single_table.get_item(
-                Key={
-                    'pk': f'MODEL#{model_id}#LOCK',
-                    'sk': f'PROCESSOR#{slot}'
-                }
+                Key={"pk": f"MODEL#{model_id}#LOCK", "sk": f"PROCESSOR#{slot}"}
             )
 
-            if 'Item' not in response:
+            if "Item" not in response:
                 # No lock exists
                 return False
 
-            item = response['Item']
-            lock_ttl = int(item.get('ttl', 0))
+            item = response["Item"]
+            lock_ttl = int(item.get("ttl", 0))
             now = int(time.time())
 
             if lock_ttl < now:
                 # Lock exists but TTL expired (stale)
-                processor_id = item.get('processor_id', 'unknown')
-                print(f"Stale lock detected: processor_id={processor_id}, ttl={lock_ttl}, now={now}")
+                processor_id = item.get("processor_id", "unknown")
+                print(
+                    f"Stale lock detected: processor_id={processor_id}, ttl={lock_ttl}, now={now}"
+                )
                 return False
 
             # Lock exists and is active
@@ -1321,12 +1336,7 @@ class DynamoService:
             # On error, assume no active lock to avoid blocking queue processing
             return False
 
-    def acquire_processor_lock(
-        self,
-        model_id: str,
-        processor_id: str,
-        slot: int = 0
-    ) -> bool:
+    def acquire_processor_lock(self, model_id: str, processor_id: str, slot: int = 0) -> bool:
         """
         Acquire lock in single table, overwriting if TTL expired.
 
@@ -1348,32 +1358,23 @@ class DynamoService:
         try:
             self.single_table.put_item(
                 Item={
-                    'pk': f'MODEL#{model_id}#LOCK',
-                    'sk': f'PROCESSOR#{slot}',
-                    'entity_type': 'processor_lock',
-                    'processor_id': processor_id,
-                    'locked_at': datetime.utcnow().isoformat(),
-                    'ttl': ttl
+                    "pk": f"MODEL#{model_id}#LOCK",
+                    "sk": f"PROCESSOR#{slot}",
+                    "entity_type": "processor_lock",
+                    "processor_id": processor_id,
+                    "locked_at": datetime.utcnow().isoformat(),
+                    "ttl": ttl,
                 },
-                ConditionExpression='attribute_not_exists(pk) OR #ttl < :now',
-                ExpressionAttributeNames={
-                    '#ttl': 'ttl'
-                },
-                ExpressionAttributeValues={
-                    ':now': now
-                }
+                ConditionExpression="attribute_not_exists(pk) OR #ttl < :now",
+                ExpressionAttributeNames={"#ttl": "ttl"},
+                ExpressionAttributeValues={":now": now},
             )
             return True
         except self.dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
             # Lock exists and is not expired
             return False
 
-    def refresh_processor_heartbeat(
-        self,
-        model_id: str,
-        processor_id: str,
-        slot: int = 0
-    ) -> bool:
+    def refresh_processor_heartbeat(self, model_id: str, processor_id: str, slot: int = 0) -> bool:
         """
         Refresh lock TTL (heartbeat). Returns False if we lost ownership.
 
@@ -1394,32 +1395,22 @@ class DynamoService:
 
         try:
             self.single_table.update_item(
-                Key={
-                    'pk': f'MODEL#{model_id}#LOCK',
-                    'sk': f'PROCESSOR#{slot}'
-                },
-                UpdateExpression='SET #ttl = :ttl, heartbeat_at = :now',
-                ConditionExpression='processor_id = :pid',
-                ExpressionAttributeNames={
-                    '#ttl': 'ttl'
-                },
+                Key={"pk": f"MODEL#{model_id}#LOCK", "sk": f"PROCESSOR#{slot}"},
+                UpdateExpression="SET #ttl = :ttl, heartbeat_at = :now",
+                ConditionExpression="processor_id = :pid",
+                ExpressionAttributeNames={"#ttl": "ttl"},
                 ExpressionAttributeValues={
-                    ':ttl': ttl,
-                    ':now': datetime.utcnow().isoformat(),
-                    ':pid': processor_id
-                }
+                    ":ttl": ttl,
+                    ":now": datetime.utcnow().isoformat(),
+                    ":pid": processor_id,
+                },
             )
             return True
         except self.dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
             # Lost ownership - another processor acquired the lock
             return False
 
-    def release_processor_lock(
-        self,
-        model_id: str,
-        processor_id: str,
-        slot: int = 0
-    ) -> bool:
+    def release_processor_lock(self, model_id: str, processor_id: str, slot: int = 0) -> bool:
         """
         Release lock only if we own it.
 
@@ -1436,14 +1427,9 @@ class DynamoService:
         """
         try:
             self.single_table.delete_item(
-                Key={
-                    'pk': f'MODEL#{model_id}#LOCK',
-                    'sk': f'PROCESSOR#{slot}'
-                },
-                ConditionExpression='processor_id = :pid',
-                ExpressionAttributeValues={
-                    ':pid': processor_id
-                }
+                Key={"pk": f"MODEL#{model_id}#LOCK", "sk": f"PROCESSOR#{slot}"},
+                ConditionExpression="processor_id = :pid",
+                ExpressionAttributeValues={":pid": processor_id},
             )
             return True
         except self.dynamodb.meta.client.exceptions.ConditionalCheckFailedException:

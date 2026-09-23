@@ -17,7 +17,9 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add lambda layer to Python path for shared_service
-layer_path = os.path.join(os.path.dirname(__file__), '..', 'infrastructure', 'lambda_layer', 'python')
+layer_path = os.path.join(
+    os.path.dirname(__file__), "..", "infrastructure", "lambda_layer", "python"
+)
 sys.path.insert(0, layer_path)
 
 import boto3
@@ -29,15 +31,15 @@ import config_loader
 # ---------------------------------------------------------------------------
 
 CFG = config_loader.load_config()  # Also sets AWS_DEFAULT_REGION
-CLOUDFRONT_URL = CFG.get('CLOUDFRONT_URL', '').rstrip('/')
-DLQ_URL = CFG.get('DLQ_URL', '')
-SINGLE_TABLE_NAME = CFG.get('SINGLE_TABLE_NAME', '')
-DASHBOARD_URL = CFG.get('DASHBOARD_URL', '')
-AWS_REGION = CFG.get('AWS_REGION', 'us-east-1')
-DEFAULT_MODEL = CFG.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
+CLOUDFRONT_URL = CFG.get("CLOUDFRONT_URL", "").rstrip("/")
+DLQ_URL = CFG.get("DLQ_URL", "")
+SINGLE_TABLE_NAME = CFG.get("SINGLE_TABLE_NAME", "")
+DASHBOARD_URL = CFG.get("DASHBOARD_URL", "")
+AWS_REGION = CFG.get("AWS_REGION", "us-east-1")
+DEFAULT_MODEL = CFG.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
 
 # AWS clients
-sqs = boto3.client('sqs', region_name=AWS_REGION)
+sqs = boto3.client("sqs", region_name=AWS_REGION)
 dynamo_service = DynamoService(single_table_name=SINGLE_TABLE_NAME)
 
 # SSL context for CloudFront HTTPS calls
@@ -47,40 +49,43 @@ ssl_ctx = ssl.create_default_context()
 # Test helpers
 # ---------------------------------------------------------------------------
 
-def http_request(url, headers=None, method='POST', body=None, timeout=30):
+
+def http_request(url, headers=None, method="POST", body=None, timeout=30):
     """Make an HTTP request and return (status, headers, body, elapsed_ms)."""
     req = urllib.request.Request(url, method=method, headers=headers or {})
     if body:
         req.data = json.dumps(body).encode()
-        req.add_header('Content-Type', 'application/json')
+        req.add_header("Content-Type", "application/json")
     start = time.time()
     try:
-        resp = urllib.request.urlopen(req, context=ssl_ctx, timeout=timeout)  # nosec B310  # nosemgrep: dynamic-urllib-use-detected  # static internal execute-api/CloudFront host, not user-controlled
+        resp = urllib.request.urlopen(
+            req, context=ssl_ctx, timeout=timeout
+        )  # nosec B310  # nosemgrep: dynamic-urllib-use-detected  # static internal execute-api/CloudFront host, not user-controlled
         elapsed = (time.time() - start) * 1000
         resp_headers = dict(resp.getheaders())
-        resp_body = resp.read().decode('utf-8', errors='replace')
+        resp_body = resp.read().decode("utf-8", errors="replace")
         return {
-            'status': resp.status,
-            'headers': resp_headers,
-            'body': resp_body[:4000],
-            'elapsed_ms': round(elapsed, 1)
+            "status": resp.status,
+            "headers": resp_headers,
+            "body": resp_body[:4000],
+            "elapsed_ms": round(elapsed, 1),
         }
     except urllib.error.HTTPError as e:
         elapsed = (time.time() - start) * 1000
-        resp_body = e.read().decode('utf-8', errors='replace') if e.fp else ''
+        resp_body = e.read().decode("utf-8", errors="replace") if e.fp else ""
         return {
-            'status': e.code,
-            'headers': dict(e.headers.items()) if e.headers else {},
-            'body': resp_body[:4000],
-            'elapsed_ms': round(elapsed, 1)
+            "status": e.code,
+            "headers": dict(e.headers.items()) if e.headers else {},
+            "body": resp_body[:4000],
+            "elapsed_ms": round(elapsed, 1),
         }
     except Exception as e:
         elapsed = (time.time() - start) * 1000
         return {
-            'status': 0,
-            'headers': {},
-            'body': str(e),
-            'elapsed_ms': round(elapsed, 1)
+            "status": 0,
+            "headers": {},
+            "body": str(e),
+            "elapsed_ms": round(elapsed, 1),
         }
 
 
@@ -88,36 +93,40 @@ def run_smoke_test(model_id=None):
     """Send 1 request through CloudFront → API GW → Step Functions → Bedrock."""
     model = model_id or DEFAULT_MODEL
     url = f"{CLOUDFRONT_URL}/invoke"
-    return http_request(url, headers={
-        'x-model-id': model,
-        'Content-Type': 'application/json'
-    }, body={
-        'prompt': 'Say "smoke test passed" in exactly 5 words.',
-        'max_tokens': 50,
-        'temperature': 0.1
-    })
+    return http_request(
+        url,
+        headers={"x-model-id": model, "Content-Type": "application/json"},
+        body={
+            "prompt": 'Say "smoke test passed" in exactly 5 words.',
+            "max_tokens": 50,
+            "temperature": 0.1,
+        },
+    )
 
 
 def run_cff_no_header():
     """Send request without x-model-id — should get 400 from CFF."""
     url = f"{CLOUDFRONT_URL}/invoke"
-    return http_request(url, headers={
-        'Content-Type': 'application/json'
-    }, body={'prompt': 'test', 'max_tokens': 10})
+    return http_request(
+        url,
+        headers={"Content-Type": "application/json"},
+        body={"prompt": "test", "max_tokens": 10},
+    )
 
 
 def run_cff_with_header(model_id=None):
     """Send request with x-model-id — should pass CFF validation."""
     model = model_id or DEFAULT_MODEL
     url = f"{CLOUDFRONT_URL}/invoke"
-    return http_request(url, headers={
-        'x-model-id': model,
-        'Content-Type': 'application/json'
-    }, body={
-        'prompt': 'Say "CFF validation passed".',
-        'max_tokens': 30,
-        'temperature': 0.1
-    })
+    return http_request(
+        url,
+        headers={"x-model-id": model, "Content-Type": "application/json"},
+        body={
+            "prompt": 'Say "CFF validation passed".',
+            "max_tokens": 30,
+            "temperature": 0.1,
+        },
+    )
 
 
 def run_burst_test(count=5, model_id=None):
@@ -126,38 +135,33 @@ def run_burst_test(count=5, model_id=None):
     count = min(max(int(count), 1), 50)
     results = []
     with ThreadPoolExecutor(max_workers=min(count, 20)) as pool:
-        futures = {
-            pool.submit(run_smoke_test, model): i
-            for i in range(count)
-        }
+        futures = {pool.submit(run_smoke_test, model): i for i in range(count)}
         for future in as_completed(futures):
             idx = futures[future]
             try:
                 r = future.result()
-                r['request_index'] = idx
+                r["request_index"] = idx
                 results.append(r)
             except Exception as e:
-                results.append({
-                    'request_index': idx,
-                    'status': 0,
-                    'body': str(e),
-                    'elapsed_ms': 0
-                })
-    results.sort(key=lambda r: r.get('request_index', 0))
+                results.append({"request_index": idx, "status": 0, "body": str(e), "elapsed_ms": 0})
+    results.sort(key=lambda r: r.get("request_index", 0))
     return results
 
 
 def get_dlq_status():
     """Get DLQ approximate message count."""
     if not DLQ_URL:
-        return {'error': 'DLQ_URL not configured'}
+        return {"error": "DLQ_URL not configured"}
     attrs = sqs.get_queue_attributes(
         QueueUrl=DLQ_URL,
-        AttributeNames=['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible']
-    )['Attributes']
+        AttributeNames=[
+            "ApproximateNumberOfMessages",
+            "ApproximateNumberOfMessagesNotVisible",
+        ],
+    )["Attributes"]
     return {
-        'visible': int(attrs.get('ApproximateNumberOfMessages', 0)),
-        'in_flight': int(attrs.get('ApproximateNumberOfMessagesNotVisible', 0))
+        "visible": int(attrs.get("ApproximateNumberOfMessages", 0)),
+        "in_flight": int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0)),
     }
 
 
@@ -166,9 +170,9 @@ def get_queue_depth(model_id=None):
     model = model_id or DEFAULT_MODEL
     try:
         depth = dynamo_service.get_queue_depth(model)
-        return {'model_id': model, 'queue_depth': depth}
+        return {"model_id": model, "queue_depth": depth}
     except Exception as e:
-        return {'model_id': model, 'queue_depth': 0, 'error': str(e)}
+        return {"model_id": model, "queue_depth": 0, "error": str(e)}
 
 
 def get_system_config(model_id=None):
@@ -177,77 +181,78 @@ def get_system_config(model_id=None):
     try:
         config = dynamo_service.get_model_config(model)
         return {
-            'model_id': model,
-            'burst_capacity': config.get('burst_capacity'),
-            'queue_capacity': config.get('queue_capacity'),
-            'rpm_limit': config.get('rpm_limit'),
-            'tpm_burst_capacity': config.get('tpm_burst_capacity', 0),
-            'cloudfront_url': CLOUDFRONT_URL,
-            'dashboard_url': DASHBOARD_URL,
+            "model_id": model,
+            "burst_capacity": config.get("burst_capacity"),
+            "queue_capacity": config.get("queue_capacity"),
+            "rpm_limit": config.get("rpm_limit"),
+            "tpm_burst_capacity": config.get("tpm_burst_capacity", 0),
+            "cloudfront_url": CLOUDFRONT_URL,
+            "dashboard_url": DASHBOARD_URL,
         }
     except Exception as e:
-        return {'error': str(e), 'model_id': model}
+        return {"error": str(e), "model_id": model}
 
 
 # ---------------------------------------------------------------------------
 # HTTP Handler
 # ---------------------------------------------------------------------------
 
+
 class DashboardHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         # Quieter logging
-        if '/api/' in args[0]:
+        if "/api/" in args[0]:
             return
         super().log_message(format, *args)
 
     def _json_response(self, data, status=200):
         self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data, default=str).encode())
 
     def _read_body(self):
-        length = int(self.headers.get('Content-Length', 0))
+        length = int(self.headers.get("Content-Length", 0))
         if length:
             return json.loads(self.rfile.read(length))
         return {}
 
     def do_OPTIONS(self):
         self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def do_GET(self):
-        if self.path == '/' or self.path == '/index.html':
+        if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(DASHBOARD_HTML_BYTES)
-        elif self.path == '/api/dlq-status':
+        elif self.path == "/api/dlq-status":
             self._json_response(get_dlq_status())
-        elif self.path.startswith('/api/queue-depth'):
+        elif self.path.startswith("/api/queue-depth"):
             self._json_response(get_queue_depth())
-        elif self.path.startswith('/api/config'):
+        elif self.path.startswith("/api/config"):
             self._json_response(get_system_config())
         else:
             self.send_error(404)
 
     def do_POST(self):
         body = self._read_body()
-        model_id = body.get('model_id')
+        model_id = body.get("model_id")
 
-        if self.path == '/api/smoke-test':
+        if self.path == "/api/smoke-test":
             self._json_response(run_smoke_test(model_id))
-        elif self.path == '/api/cff-no-header':
+        elif self.path == "/api/cff-no-header":
             self._json_response(run_cff_no_header())
-        elif self.path == '/api/cff-with-header':
+        elif self.path == "/api/cff-with-header":
             self._json_response(run_cff_with_header(model_id))
-        elif self.path == '/api/burst-test':
-            count = body.get('count', 5)
+        elif self.path == "/api/burst-test":
+            count = body.get("count", 5)
             self._json_response(run_burst_test(count, model_id))
         else:
             self.send_error(404)
@@ -770,7 +775,7 @@ function escapeHtml(text) {
 </script>
 </body>
 </html>
-""".replace('DASHBOARD_URL_PLACEHOLDER_JS', json.dumps(DASHBOARD_URL))
+""".replace("DASHBOARD_URL_PLACEHOLDER_JS", json.dumps(DASHBOARD_URL))
 
 DASHBOARD_HTML_BYTES = DASHBOARD_HTML.encode()
 
@@ -779,14 +784,15 @@ DASHBOARD_HTML_BYTES = DASHBOARD_HTML.encode()
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Bedrock Traffic Shaper — Test Dashboard')
-    parser.add_argument('--port', type=int, default=8080, help='Port to listen on (default: 8080)')
+    parser = argparse.ArgumentParser(description="Bedrock Traffic Shaper — Test Dashboard")
+    parser.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
     parser.add_argument(
-        '--host',
-        default=os.environ.get('DASHBOARD_HOST', '127.0.0.1'),
-        help='Interface to bind (default: 127.0.0.1, localhost-only). '
-             'Set to 0.0.0.0 or override via DASHBOARD_HOST to expose externally.',
+        "--host",
+        default=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
+        help="Interface to bind (default: 127.0.0.1, localhost-only). "
+        "Set to 0.0.0.0 or override via DASHBOARD_HOST to expose externally.",
     )
     args = parser.parse_args()
 
@@ -807,5 +813,5 @@ def main():
         server.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -147,7 +147,9 @@ class RuntimeConverseClient(BedrockClient):
         output_cost = int(max_tokens * self._burndown)
         combined = input_tokens + output_cost
         # Runtime gates on the combined bucket. input/output are informational.
-        return TokenEstimate(input_tokens=input_tokens, output_tokens=output_cost, combined=combined)
+        return TokenEstimate(
+            input_tokens=input_tokens, output_tokens=output_cost, combined=combined
+        )
 
     def invoke(
         self,
@@ -163,7 +165,7 @@ class RuntimeConverseClient(BedrockClient):
     ) -> BedrockResponse:
         start_time = time.time()
         try:
-            inference_config = {"maxTokens": max_tokens}
+            inference_config: Dict[str, Any] = {"maxTokens": max_tokens}
             # Only send temperature when the model accepts sampling params AND the
             # caller actually provided one. Next-gen Claude models 400 otherwise.
             if not strip_sampling and temperature is not None:
@@ -210,10 +212,14 @@ class RuntimeConverseClient(BedrockClient):
                 "ServiceQuotaExceededException",
             )
             if is_throttled:
-                print(f"Bedrock throttled: model={model_id}, error={error_code}, duration={duration_ms:.2f}ms")
+                print(
+                    f"Bedrock throttled: model={model_id}, error={error_code}, duration={duration_ms:.2f}ms"
+                )
             else:
-                print(f"Bedrock invocation failed: model={model_id}, error={error_code}, "
-                      f"message={error_message}, duration={duration_ms:.2f}ms")
+                print(
+                    f"Bedrock invocation failed: model={model_id}, error={error_code}, "
+                    f"message={error_message}, duration={duration_ms:.2f}ms"
+                )
             return BedrockResponse(
                 success=False,
                 error=f"{error_code}: {error_message}",
@@ -223,8 +229,12 @@ class RuntimeConverseClient(BedrockClient):
 
         except Exception as e:  # noqa: BLE001 — uniform failure contract
             duration_ms = (time.time() - start_time) * 1000
-            print(f"Unexpected error invoking Bedrock: model={model_id}, error={str(e)}, duration={duration_ms:.2f}ms")
-            return BedrockResponse(success=False, error=str(e), throttled=False, duration_ms=duration_ms)
+            print(
+                f"Unexpected error invoking Bedrock: model={model_id}, error={str(e)}, duration={duration_ms:.2f}ms"
+            )
+            return BedrockResponse(
+                success=False, error=str(e), throttled=False, duration_ms=duration_ms
+            )
 
 
 class MantleMessagesClient(BedrockClient):
@@ -243,7 +253,11 @@ class MantleMessagesClient(BedrockClient):
     caller reconciles to the actual usage post-call.
     """
 
-    def __init__(self, model_config: Optional[Dict[str, Any]] = None, session: Optional[boto3.Session] = None):
+    def __init__(
+        self,
+        model_config: Optional[Dict[str, Any]] = None,
+        session: Optional[boto3.Session] = None,
+    ):
         self._config = model_config or {}
         self._session = session or boto3.Session()
         self._region = self._config.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
@@ -361,8 +375,10 @@ class MantleMessagesClient(BedrockClient):
                 usage = parsed.get("usage", {}) if isinstance(parsed, dict) else {}
                 actual_in = usage.get("input_tokens")
                 actual_out = usage.get("output_tokens")
-                print(f"Mantle invocation successful: model={model_id}, duration={duration_ms:.2f}ms, "
-                      f"actual_in={actual_in}, actual_out={actual_out}")
+                print(
+                    f"Mantle invocation successful: model={model_id}, duration={duration_ms:.2f}ms, "
+                    f"actual_in={actual_in}, actual_out={actual_out}"
+                )
                 return BedrockResponse(
                     success=True,
                     response_body=parsed,
@@ -376,8 +392,10 @@ class MantleMessagesClient(BedrockClient):
             # Non-200: classify throttle vs hard error. Mantle returns 429 over
             # RPM quota and 503 when rate exceeds available capacity.
             is_throttled = status in (429, 503)
-            print(f"Mantle invocation failed: model={model_id}, http_status={status}, "
-                  f"duration={duration_ms:.2f}ms, body={raw[:512]}")
+            print(
+                f"Mantle invocation failed: model={model_id}, http_status={status}, "
+                f"duration={duration_ms:.2f}ms, body={raw[:512]}"
+            )
             return BedrockResponse(
                 success=False,
                 error=f"HTTP {status}: {raw[:512]}",
@@ -389,8 +407,12 @@ class MantleMessagesClient(BedrockClient):
 
         except Exception as e:  # noqa: BLE001 — uniform failure contract
             duration_ms = (time.time() - start_time) * 1000
-            print(f"Unexpected error invoking Mantle: model={model_id}, error={str(e)}, duration={duration_ms:.2f}ms")
-            return BedrockResponse(success=False, error=str(e), throttled=False, duration_ms=duration_ms)
+            print(
+                f"Unexpected error invoking Mantle: model={model_id}, error={str(e)}, duration={duration_ms:.2f}ms"
+            )
+            return BedrockResponse(
+                success=False, error=str(e), throttled=False, duration_ms=duration_ms
+            )
 
 
 class OpenAIResponsesClient(BedrockClient):
@@ -413,7 +435,11 @@ class OpenAIResponsesClient(BedrockClient):
     uses a 1:1 output ceiling pre-call and the caller reconciles to usage actuals.
     """
 
-    def __init__(self, model_config: Optional[Dict[str, Any]] = None, session: Optional[boto3.Session] = None):
+    def __init__(
+        self,
+        model_config: Optional[Dict[str, Any]] = None,
+        session: Optional[boto3.Session] = None,
+    ):
         self._config = model_config or {}
         self._session = session or boto3.Session()
         self._region = self._config.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
@@ -481,16 +507,24 @@ class OpenAIResponsesClient(BedrockClient):
                 duration_ms=(time.time() - start_time) * 1000,
             )
 
-        aws_request = AWSRequest(method="POST", url=self._endpoint, data=payload,
-                                 headers={"content-type": "application/json"})
+        aws_request = AWSRequest(
+            method="POST",
+            url=self._endpoint,
+            data=payload,
+            headers={"content-type": "application/json"},
+        )
         SigV4Auth(credentials, MANTLE_SERVICE_NAME, self._region).add_auth(aws_request)
         signed_headers = dict(aws_request.headers)
 
         http = urllib3.PoolManager()
         try:
             resp = http.request(
-                "POST", self._endpoint, body=payload, headers=signed_headers,
-                timeout=urllib3.Timeout(total=MANTLE_HTTP_TIMEOUT), retries=False,
+                "POST",
+                self._endpoint,
+                body=payload,
+                headers=signed_headers,
+                timeout=urllib3.Timeout(total=MANTLE_HTTP_TIMEOUT),
+                retries=False,
             )
             duration_ms = (time.time() - start_time) * 1000
             status = resp.status
@@ -504,8 +538,10 @@ class OpenAIResponsesClient(BedrockClient):
                 usage = parsed.get("usage", {}) if isinstance(parsed, dict) else {}
                 actual_in = usage.get("input_tokens")
                 actual_out = usage.get("output_tokens")
-                print(f"OpenAI-mantle invocation successful: model={model_id}, duration={duration_ms:.2f}ms, "
-                      f"actual_in={actual_in}, actual_out={actual_out}")
+                print(
+                    f"OpenAI-mantle invocation successful: model={model_id}, duration={duration_ms:.2f}ms, "
+                    f"actual_in={actual_in}, actual_out={actual_out}"
+                )
                 return BedrockResponse(
                     success=True,
                     response_body=parsed,
@@ -517,8 +553,10 @@ class OpenAIResponsesClient(BedrockClient):
                 )
 
             is_throttled = status in (429, 503)
-            print(f"OpenAI-mantle invocation failed: model={model_id}, http_status={status}, "
-                  f"duration={duration_ms:.2f}ms, body={raw[:512]}")
+            print(
+                f"OpenAI-mantle invocation failed: model={model_id}, http_status={status}, "
+                f"duration={duration_ms:.2f}ms, body={raw[:512]}"
+            )
             return BedrockResponse(
                 success=False,
                 error=f"HTTP {status}: {raw[:512]}",
@@ -530,8 +568,12 @@ class OpenAIResponsesClient(BedrockClient):
 
         except Exception as e:  # noqa: BLE001 — uniform failure contract
             duration_ms = (time.time() - start_time) * 1000
-            print(f"Unexpected error invoking OpenAI-mantle: model={model_id}, error={str(e)}, duration={duration_ms:.2f}ms")
-            return BedrockResponse(success=False, error=str(e), throttled=False, duration_ms=duration_ms)
+            print(
+                f"Unexpected error invoking OpenAI-mantle: model={model_id}, error={str(e)}, duration={duration_ms:.2f}ms"
+            )
+            return BedrockResponse(
+                success=False, error=str(e), throttled=False, duration_ms=duration_ms
+            )
 
 
 def client_for(model_config: Dict[str, Any]) -> BedrockClient:
@@ -545,7 +587,9 @@ def client_for(model_config: Dict[str, Any]) -> BedrockClient:
     (OpenAI GPT-5.6). Remaining Tier-3 styles (chat_completions, invoke) raise.
     """
     backend = model_config.get("backend", "runtime")
-    api_style = model_config.get("api_style") or ("converse" if backend == "runtime" else "messages")
+    api_style = model_config.get("api_style") or (
+        "converse" if backend == "runtime" else "messages"
+    )
 
     match (backend, api_style):
         case ("runtime", "converse"):

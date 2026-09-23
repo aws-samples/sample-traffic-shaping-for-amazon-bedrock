@@ -1,5 +1,11 @@
 # Bandit (Python SAST) configuration for bedrock-traffic-shaper.
-# Run with:  bandit -r . -c pyproject.toml
+# Run with:  bandit -r infrastructure scripts tests -c pyproject.toml  (or `make security-scan`)
+#
+# Scan first-party source dirs directly rather than `-r .` -- exclude_dirs below
+# is a defense in depth, not reliably sufficient on its own to keep vendored/
+# generated trees (or a stray local venv/worktree outside the ones listed) out
+# of the scan; pointing bandit straight at the real source dirs is what actually
+# keeps the run to first-party code, mirroring pytest.ini's testpaths pattern.
 #
 # Scope of suppressions is deliberate and narrow:
 #   - B101 (assert_used) is skipped ONLY in test/sim files, where asserts are the
@@ -42,3 +48,39 @@ skips = [
   "*_sim.py",
   "*/sim/*",
 ]
+
+# black configuration.
+#
+# Defaults (88-char lines, quote normalization to double) turn a mechanical
+# reformat into a much noisier diff than the actual style question warrants:
+# every single-quoted string flips quote marks, and any def/call that doesn't
+# fit in 88 chars explodes to one-argument-per-line. Widening to 100 and
+# keeping existing quote style cuts that diff substantially while still
+# giving `black --check` a real, enforced answer.
+[tool.black]
+line-length = 100
+skip-string-normalization = true
+
+# mypy configuration.
+#
+# This repo doesn't import its own modules through the `infrastructure`/`scripts`
+# package prefixes -- runtime resolves them via sys.path tricks instead (CDK runs
+# `cd infrastructure && cdk synth`, so `semaphore_stack` etc. resolve as top-level
+# modules; the Lambda layer puts `infrastructure/lambda_layer/python` directly on
+# sys.path, so `shared_service` resolves the same way; `scripts/*.py` insert their
+# own directory onto sys.path to import sibling scripts as top-level modules too).
+# mypy_path + explicit_package_bases makes mypy resolve modules the same way,
+# instead of walking up through each __init__.py to a repo-root-qualified name.
+[tool.mypy]
+python_version = "3.10"
+mypy_path = ["scripts", "infrastructure", "infrastructure/lambda_layer/python", "infrastructure/lambda_handlers"]
+explicit_package_bases = true
+namespace_packages = true
+exclude = '(^|/)(\.venv[^/]*|node_modules|cdk\.out|\.ash|\.claude.*|build|dist)(/|$)'
+
+[[tool.mypy.overrides]]
+# Third-party packages with no bundled type stubs and no stub package pinned in
+# this repo -- not a first-party typing gap, so blanket-ignoring here is correct
+# rather than a strictness hole.
+module = ["boto3.*", "botocore.*", "matplotlib.*", "numpy.*"]
+ignore_missing_imports = true

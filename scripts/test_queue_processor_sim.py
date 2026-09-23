@@ -56,25 +56,31 @@ from typing import List, Optional, Tuple
 
 # Shared simulation package (quota profiles, workload presets, core types)
 from sim import (
-    SimConfig, SimQuota, WorkloadPreset,
-    QUOTA_PROFILES, WORKLOAD_PRESETS,
+    SimConfig,
+    SimQuota,
+    WorkloadPreset,
+    QUOTA_PROFILES,
+    WORKLOAD_PRESETS,
     build_config,
-    Item, FakeClock, SimResult, AssertionResult,
+    Item,
+    FakeClock,
+    SimResult,
+    AssertionResult,
     make_items_for_preset,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CURRENT algorithm — batch-parallel, RPM-only gate
 # Models what queue_processor.py does today.
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def run_current_algo(
     clock: FakeClock,
     items: List[Item],
     batch_size: int,
-    queue_regen_rate: float,   # requests/sec
-    queue_capacity: int,       # max requests per 60s window
+    queue_regen_rate: float,  # requests/sec
+    queue_capacity: int,  # max requests per 60s window
     short_window_sec: float = 2.0,
     verbose: bool = False,
 ) -> SimResult:
@@ -94,12 +100,11 @@ def run_current_algo(
 
     while idx < len(items):
         batch_start = clock.now
-        batch_items = items[idx:idx + batch_size]
+        batch_items = items[idx : idx + batch_size]
 
         result._db_reads += 1
         now = clock.now
-        recent_2s = sum(1 for ts, _ in result.dispatch_events
-                        if now - ts < short_window_sec)
+        recent_2s = sum(1 for ts, _ in result.dispatch_events if now - ts < short_window_sec)
         headroom = max(0, short_window_cap - recent_2s)
 
         if headroom <= 0:
@@ -107,8 +112,7 @@ def run_current_algo(
             clock.sleep(1.0)
             continue
 
-        avail_60s = queue_capacity - sum(1 for ts, _ in result.dispatch_events
-                                         if now - ts < 60.0)
+        avail_60s = queue_capacity - sum(1 for ts, _ in result.dispatch_events if now - ts < 60.0)
         if avail_60s <= 0:
             result.sleep_events.append((clock.now, 1.0))
             clock.sleep(1.0)
@@ -122,8 +126,10 @@ def run_current_algo(
 
         if verbose:
             toks = sum(it.tokens for it in batch_items[:reserved])
-            print(f"  t={clock.now:.2f}  CURRENT dispatched {reserved} at same tick "
-                  f"(tokens={toks:,})")
+            print(
+                f"  t={clock.now:.2f}  CURRENT dispatched {reserved} at same tick "
+                f"(tokens={toks:,})"
+            )
 
         elapsed = clock.now - batch_start
         if elapsed < min_batch_interval:
@@ -138,6 +144,7 @@ def run_current_algo(
 # ══════════════════════════════════════════════════════════════════════════════
 # PROPOSED algorithm — streaming per-item, RPM-only gate
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def run_proposed_algo(
     clock: FakeClock,
@@ -158,7 +165,7 @@ def run_proposed_algo(
     result = SimResult(algo_name="PROPOSED  (streaming,   RPM-only gate)")
     result._db_reads = 1
 
-    short_window_cap  = max(1, int(queue_regen_rate * short_window_sec))
+    short_window_cap = max(1, int(queue_regen_rate * short_window_sec))
     dispatch_overhead = dispatch_overhead_ms / 1000.0
     dispatch_log: deque = deque()
     idx = 0
@@ -185,8 +192,7 @@ def run_proposed_algo(
 
             r2 = recent_count(short_window_sec)
             if r2 >= short_window_cap:
-                in_win = [ts for ts, _ in dispatch_log
-                          if ts >= clock.now - short_window_sec]
+                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 sleep_for = max(0.001, (oldest + short_window_sec) - clock.now + 0.005)
                 result.sleep_events.append((clock.now, sleep_for))
@@ -217,14 +223,15 @@ def run_proposed_algo(
 # This is the proposed fix for queue_processor.py.
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def run_proposed_token_aware(
     clock: FakeClock,
     items: List[Item],
     batch_size: int,
     queue_regen_rate: float,
     queue_capacity: int,
-    tpm_regen_rate: float,    # tokens/second = TPM / 60
-    tpm_capacity: int,        # max tokens per 60s window = TPM
+    tpm_regen_rate: float,  # tokens/second = TPM / 60
+    tpm_capacity: int,  # max tokens per 60s window = TPM
     short_window_sec: float = 2.0,
     dispatch_overhead_ms: float = 20.0,
     verbose: bool = False,
@@ -251,7 +258,7 @@ def run_proposed_token_aware(
     result._db_reads = 1
 
     short_window_cap = max(1, int(queue_regen_rate * short_window_sec))
-    tpm_2s_cap       = int(tpm_regen_rate * short_window_sec) if tpm_regen_rate > 0 else 0
+    tpm_2s_cap = int(tpm_regen_rate * short_window_sec) if tpm_regen_rate > 0 else 0
     dispatch_overhead = dispatch_overhead_ms / 1000.0
     dispatch_log: deque = deque()
     idx = 0
@@ -277,8 +284,7 @@ def run_proposed_token_aware(
         and sleeps until the last needed entry rolls off the window edge.
         """
         in_win = sorted(
-            ((ts, tok) for ts, tok in dispatch_log
-             if ts >= clock.now - window),
+            ((ts, tok) for ts, tok in dispatch_log if ts >= clock.now - window),
             key=lambda e: e[0],
         )
         current_tokens = sum(tok for _, tok in in_win)
@@ -287,16 +293,18 @@ def run_proposed_token_aware(
             return
         freed = 0
         sleep_until = clock.now
-        for ts, tok in in_win:          # oldest first
-            freed    += tok
+        for ts, tok in in_win:  # oldest first
+            freed += tok
             sleep_until = ts + window
             if freed >= deficit:
                 break
         sleep_for = max(0.001, sleep_until - clock.now + 0.005)
         if verbose:
-            print(f"  t={clock.now:.2f}  TPM {window:.0f}s full: "
-                  f"current={current_tokens:,}, item={item_tokens:,}, "
-                  f"cap={cap:,}, sleep={sleep_for:.3f}s")
+            print(
+                f"  t={clock.now:.2f}  TPM {window:.0f}s full: "
+                f"current={current_tokens:,}, item={item_tokens:,}, "
+                f"cap={cap:,}, sleep={sleep_for:.3f}s"
+            )
         result.sleep_events.append((clock.now, sleep_for))
         clock.sleep(sleep_for)
 
@@ -313,8 +321,7 @@ def run_proposed_token_aware(
             # ── Gate 1: RPM 2s window ─────────────────────────────────────────
             r2 = recent_count(short_window_sec)
             if r2 >= short_window_cap:
-                in_win = [ts for ts, _ in dispatch_log
-                          if ts >= clock.now - short_window_sec]
+                in_win = [ts for ts, _ in dispatch_log if ts >= clock.now - short_window_sec]
                 oldest = min(in_win) if in_win else clock.now - short_window_sec
                 sleep_for = max(0.001, (oldest + short_window_sec) - clock.now + 0.005)
                 result.sleep_events.append((clock.now, sleep_for))
@@ -329,16 +336,21 @@ def run_proposed_token_aware(
                     # This bounds the peak to at most one oversized item per window
                     # and prevents it from stacking on top of prior traffic.
                     if t2 > 0:
-                        in_win = [(ts, tok) for ts, tok in dispatch_log
-                                  if ts >= clock.now - short_window_sec]
-                        newest = max(ts for ts, _ in in_win) if in_win else \
-                            clock.now - short_window_sec
-                        sleep_for = max(0.001,
-                                        (newest + short_window_sec) - clock.now + 0.005)
+                        in_win = [
+                            (ts, tok)
+                            for ts, tok in dispatch_log
+                            if ts >= clock.now - short_window_sec
+                        ]
+                        newest = (
+                            max(ts for ts, _ in in_win) if in_win else clock.now - short_window_sec
+                        )
+                        sleep_for = max(0.001, (newest + short_window_sec) - clock.now + 0.005)
                         if verbose:
-                            print(f"  t={clock.now:.2f}  Oversized item "
-                                  f"({item.tokens:,} tok > 2s cap {tpm_2s_cap:,}): "
-                                  f"draining window, sleep={sleep_for:.3f}s")
+                            print(
+                                f"  t={clock.now:.2f}  Oversized item "
+                                f"({item.tokens:,} tok > 2s cap {tpm_2s_cap:,}): "
+                                f"draining window, sleep={sleep_for:.3f}s"
+                            )
                         result.sleep_events.append((clock.now, sleep_for))
                         clock.sleep(sleep_for)
                         prune(60.0)
@@ -377,7 +389,7 @@ def run_proposed_token_aware(
 # Output helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-SEP  = "─" * 72
+SEP = "─" * 72
 DSEP = "━" * 72
 
 
@@ -391,26 +403,39 @@ def _run_all_three(
 
     c_clock = FakeClock()
     r_current = run_current_algo(
-        c_clock, items, cfg.batch_size,
-        q.queue_rps, q.queue_capacity,
-        short_window_sec=cfg.short_window_sec, verbose=verbose,
+        c_clock,
+        items,
+        cfg.batch_size,
+        q.queue_rps,
+        q.queue_capacity,
+        short_window_sec=cfg.short_window_sec,
+        verbose=verbose,
     )
 
     p_clock = FakeClock()
     r_proposed = run_proposed_algo(
-        p_clock, items, cfg.batch_size,
-        q.queue_rps, q.queue_capacity,
+        p_clock,
+        items,
+        cfg.batch_size,
+        q.queue_rps,
+        q.queue_capacity,
         short_window_sec=cfg.short_window_sec,
-        dispatch_overhead_ms=cfg.dispatch_overhead_ms, verbose=verbose,
+        dispatch_overhead_ms=cfg.dispatch_overhead_ms,
+        verbose=verbose,
     )
 
     t_clock = FakeClock()
     r_token = run_proposed_token_aware(
-        t_clock, items, cfg.batch_size,
-        q.queue_rps, q.queue_capacity,
-        tpm_regen_rate=q.queue_tpm_rate, tpm_capacity=q.tpm_capacity,
+        t_clock,
+        items,
+        cfg.batch_size,
+        q.queue_rps,
+        q.queue_capacity,
+        tpm_regen_rate=q.queue_tpm_rate,
+        tpm_capacity=q.tpm_capacity,
         short_window_sec=cfg.short_window_sec,
-        dispatch_overhead_ms=cfg.dispatch_overhead_ms, verbose=verbose,
+        dispatch_overhead_ms=cfg.dispatch_overhead_ms,
+        verbose=verbose,
     )
 
     return r_current, r_proposed, r_token
@@ -425,18 +450,22 @@ def print_result_summary(result: SimResult, cfg: SimConfig) -> None:
     print(f"  Items dispatched        : {result.total_dispatched}")
     print(f"  Total tokens dispatched : {result.total_tokens_dispatched:,}")
     print(f"  Total sim time          : {result.total_sim_time:.2f}s")
-    print(f"  Effective RPS           : {result.effective_rps:.2f}  "
-          f"(target≈{target_rps:.2f}, "
-          f"efficiency={result.effective_rps / target_rps * 100:.1f}%)")
+    print(
+        f"  Effective RPS           : {result.effective_rps:.2f}  "
+        f"(target≈{target_rps:.2f}, "
+        f"efficiency={result.effective_rps / target_rps * 100:.1f}%)"
+    )
     print(f"  Effective TPS           : {result.effective_tps:,.0f} tok/s")
-    print(f"  Total sleep time        : {result.total_sleep_time():.2f}s  "
-          f"({len(result.sleep_events)} events)")
+    print(
+        f"  Total sleep time        : {result.total_sleep_time():.2f}s  "
+        f"({len(result.sleep_events)} events)"
+    )
     print(f"  DynamoDB reads          : {result.total_db_reads()}")
 
     sw = cfg.short_window_sec
-    peak_req_2s  = result.max_in_rolling_window(sw)
+    peak_req_2s = result.max_in_rolling_window(sw)
     peak_req_60s = result.max_in_rolling_window(60.0)
-    peak_tok_2s  = result.max_tokens_in_rolling_window(sw)
+    peak_tok_2s = result.max_tokens_in_rolling_window(sw)
     peak_tok_60s = result.max_tokens_in_rolling_window(60.0)
 
     print(f"  Peak req  / {sw:.0f}s window   : {peak_req_2s:>6}  (cap={q.rpm_2s_cap})")
@@ -444,13 +473,16 @@ def print_result_summary(result: SimResult, cfg: SimConfig) -> None:
     if q.tpm_2s_cap > 0:
         v = result.token_window_violations(sw, q.tpm_2s_cap)
         flag = "  ⚠ VIOLATIONS" if v > 0 else ""
-        print(f"  Peak tok  / {sw:.0f}s window   : {peak_tok_2s:>10,}  "
-              f"(cap={q.tpm_2s_cap:,}){flag}")
+        print(
+            f"  Peak tok  / {sw:.0f}s window   : {peak_tok_2s:>10,}  "
+            f"(cap={q.tpm_2s_cap:,}){flag}"
+        )
     if q.tpm_capacity > 0:
         v = result.token_window_violations(60.0, q.tpm_capacity)
         flag = "  ⚠ VIOLATIONS" if v > 0 else ""
-        print(f"  Peak tok  / 60s window  : {peak_tok_60s:>10,}  "
-              f"(cap={q.tpm_capacity:,}){flag}")
+        print(
+            f"  Peak tok  / 60s window  : {peak_tok_60s:>10,}  " f"(cap={q.tpm_capacity:,}){flag}"
+        )
 
 
 def assert_token_aware_result(
@@ -470,43 +502,45 @@ def assert_token_aware_result(
     achievable.  This applies to both the 2s and 60s windows.
     """
     ar = AssertionResult()
-    q  = cfg.quota
+    q = cfg.quota
     sw = cfg.short_window_sec
     max_item_tokens = max(i.tokens for i in items) if items else 0
 
     # ── RPM windows ───────────────────────────────────────────────────────────
     peak_req_2s = result.max_in_rolling_window(sw)
-    ar.check(peak_req_2s <= q.rpm_2s_cap,
-             f"Peak requests in {sw:.0f}s ≤ {q.rpm_2s_cap}",
-             f"peak={peak_req_2s}")
+    ar.check(
+        peak_req_2s <= q.rpm_2s_cap,
+        f"Peak requests in {sw:.0f}s ≤ {q.rpm_2s_cap}",
+        f"peak={peak_req_2s}",
+    )
 
     peak_req_60s = result.max_in_rolling_window(60.0)
-    ar.check(peak_req_60s <= q.queue_capacity,
-             f"Peak requests in 60s ≤ {q.queue_capacity:,}",
-             f"peak={peak_req_60s}")
+    ar.check(
+        peak_req_60s <= q.queue_capacity,
+        f"Peak requests in 60s ≤ {q.queue_capacity:,}",
+        f"peak={peak_req_60s}",
+    )
 
     # ── TPM windows (with oversized-item exception) ────────────────────────────
     if q.tpm_2s_cap > 0:
-        peak_tok_2s      = result.max_tokens_in_rolling_window(sw)
+        peak_tok_2s = result.max_tokens_in_rolling_window(sw)
         effective_2s_cap = max(q.tpm_2s_cap, max_item_tokens)
-        label_2s = (
-            f"Peak tokens in {sw:.0f}s ≤ {q.tpm_2s_cap:,}"
-            + (f" (oversized-item exception: cap flexed to {effective_2s_cap:,})"
-               if effective_2s_cap > q.tpm_2s_cap else "")
+        label_2s = f"Peak tokens in {sw:.0f}s ≤ {q.tpm_2s_cap:,}" + (
+            f" (oversized-item exception: cap flexed to {effective_2s_cap:,})"
+            if effective_2s_cap > q.tpm_2s_cap
+            else ""
         )
-        ar.check(peak_tok_2s <= effective_2s_cap, label_2s,
-                 f"peak={peak_tok_2s:,}")
+        ar.check(peak_tok_2s <= effective_2s_cap, label_2s, f"peak={peak_tok_2s:,}")
 
     if q.tpm_capacity > 0:
-        peak_tok_60s      = result.max_tokens_in_rolling_window(60.0)
+        peak_tok_60s = result.max_tokens_in_rolling_window(60.0)
         effective_60s_cap = max(q.tpm_capacity, max_item_tokens)
-        label_60s = (
-            f"Peak tokens in 60s ≤ {q.tpm_capacity:,}"
-            + (f" (oversized-item exception: cap flexed to {effective_60s_cap:,})"
-               if effective_60s_cap > q.tpm_capacity else "")
+        label_60s = f"Peak tokens in 60s ≤ {q.tpm_capacity:,}" + (
+            f" (oversized-item exception: cap flexed to {effective_60s_cap:,})"
+            if effective_60s_cap > q.tpm_capacity
+            else ""
         )
-        ar.check(peak_tok_60s <= effective_60s_cap, label_60s,
-                 f"peak={peak_tok_60s:,}")
+        ar.check(peak_tok_60s <= effective_60s_cap, label_60s, f"peak={peak_tok_60s:,}")
 
     # ── Throughput ────────────────────────────────────────────────────────────
     target_rps = cfg.expected_effective_rps
@@ -527,9 +561,11 @@ def assert_token_aware_result(
             f"actual={result.effective_tps:,.0f}",
         )
 
-    ar.check(result.total_dispatched > 0,
-             "All items dispatched",
-             f"dispatched={result.total_dispatched}")
+    ar.check(
+        result.total_dispatched > 0,
+        "All items dispatched",
+        f"dispatched={result.total_dispatched}",
+    )
 
     return ar
 
@@ -537,6 +573,7 @@ def assert_token_aware_result(
 # ══════════════════════════════════════════════════════════════════════════════
 # Scenario runner
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def run_scenario(cfg: SimConfig, verbose: bool = False) -> bool:
     """
@@ -551,29 +588,44 @@ def run_scenario(cfg: SimConfig, verbose: bool = False) -> bool:
     print(f"# SCENARIO: {cfg.workload_name.upper()}  ·  profile={cfg.profile_name}")
     print(f"#")
     print(f"#  Total quota   : {q.rpm:,} RPM / {q.tpm:,} TPM")
-    print(f"#  Queue slice   : {q.queue_rpm:,} RPM ({q.queue_fraction*100:.0f}%) / "
-          f"{q.queue_tpm:,} TPM ({q.queue_fraction*100:.0f}%)")
-    print(f"#  Burst slice   : {q.burst_rpm:,} RPM ({q.burst_fraction*100:.0f}%) / "
-          f"{q.burst_tpm:,} TPM ({q.burst_fraction*100:.0f}%)  [budget manager, future sim]")
+    print(
+        f"#  Queue slice   : {q.queue_rpm:,} RPM ({q.queue_fraction*100:.0f}%) / "
+        f"{q.queue_tpm:,} TPM ({q.queue_fraction*100:.0f}%)"
+    )
+    print(
+        f"#  Burst slice   : {q.burst_rpm:,} RPM ({q.burst_fraction*100:.0f}%) / "
+        f"{q.burst_tpm:,} TPM ({q.burst_fraction*100:.0f}%)  [budget manager, future sim]"
+    )
     print(f"#")
     print(f"#  2s window caps: {q.rpm_2s_cap} req / {q.tpm_2s_cap:,} tok")
     print(f"#  60s window caps: {q.queue_capacity:,} req / {q.tpm_capacity:,} tok")
     print(f"#")
     print(f"#  Workload      : {cfg.workload.description}")
-    print(f"#  Avg tokens    : {cfg.workload.avg_total_tokens():,.0f}  "
-          f"max={cfg.workload.max_total_tokens():,}")
+    print(
+        f"#  Avg tokens    : {cfg.workload.avg_total_tokens():,.0f}  "
+        f"max={cfg.workload.max_total_tokens():,}"
+    )
     max_item = max(i.tokens for i in items)
-    oversized_2s  = sum(1 for i in items if i.tokens > q.tpm_2s_cap)
+    oversized_2s = sum(1 for i in items if i.tokens > q.tpm_2s_cap)
     oversized_60s = sum(1 for i in items if i.tokens > q.tpm_capacity)
     if oversized_2s > 0:
-        print(f"#  Oversized items: {oversized_2s}/{len(items)} exceed 2s window "
-              f"({q.tpm_2s_cap:,} tok), "
-              + (f"{oversized_60s} exceed 60s window ({q.tpm_capacity:,} tok)"
-                 if oversized_60s > 0 else "none exceed 60s window"))
-    print(f"#  Binding       : {cfg.binding_constraint}  "
-          f"→  expected TOKEN-AWARE RPS ≈ {cfg.expected_effective_rps:.2f}")
-    print(f"#  Items         : {len(items)}  batch_size={cfg.batch_size}  "
-          f"overhead={cfg.dispatch_overhead_ms:.0f}ms")
+        print(
+            f"#  Oversized items: {oversized_2s}/{len(items)} exceed 2s window "
+            f"({q.tpm_2s_cap:,} tok), "
+            + (
+                f"{oversized_60s} exceed 60s window ({q.tpm_capacity:,} tok)"
+                if oversized_60s > 0
+                else "none exceed 60s window"
+            )
+        )
+    print(
+        f"#  Binding       : {cfg.binding_constraint}  "
+        f"→  expected TOKEN-AWARE RPS ≈ {cfg.expected_effective_rps:.2f}"
+    )
+    print(
+        f"#  Items         : {len(items)}  batch_size={cfg.batch_size}  "
+        f"overhead={cfg.dispatch_overhead_ms:.0f}ms"
+    )
     print(f"{'#' * 72}")
 
     wall_start = real_time.perf_counter()
@@ -589,9 +641,9 @@ def run_scenario(cfg: SimConfig, verbose: bool = False) -> bool:
     print(f"  {'Algorithm':<44} {'2s tok violations':>18} {'60s tok violations':>18}")
     print(f"  {'─'*44} {'─'*18} {'─'*18}")
     for r in (r_current, r_proposed, r_token):
-        v2s  = r.token_window_violations(cfg.short_window_sec, q.tpm_2s_cap)  if q.tpm_2s_cap  else 0
-        v60s = r.token_window_violations(60.0,                 q.tpm_capacity) if q.tpm_capacity else 0
-        i2  = "⚠ " if v2s  > 0 else "✅"
+        v2s = r.token_window_violations(cfg.short_window_sec, q.tpm_2s_cap) if q.tpm_2s_cap else 0
+        v60s = r.token_window_violations(60.0, q.tpm_capacity) if q.tpm_capacity else 0
+        i2 = "⚠ " if v2s > 0 else "✅"
         i60 = "⚠ " if v60s > 0 else "✅"
         print(f"  {r.algo_name:<44} {i2} {v2s:>14}   {i60} {v60s:>14}")
 
@@ -621,13 +673,15 @@ def run_scenario(cfg: SimConfig, verbose: bool = False) -> bool:
 # Entry point
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--profile", default="prod",
+        "--profile",
+        default="prod",
         choices=list(QUOTA_PROFILES),
         help="Named quota profile (default: prod = 2000 RPM / 4M TPM total)",
     )
@@ -638,35 +692,49 @@ def parse_args() -> argparse.Namespace:
         help="Run only this workload (default: all three)",
     )
     parser.add_argument(
-        "--rpm", type=int, default=None,
+        "--rpm",
+        type=int,
+        default=None,
         help="Override total RPM (natural units, e.g. 2000)",
     )
     parser.add_argument(
-        "--tpm", type=int, default=None,
+        "--tpm",
+        type=int,
+        default=None,
         help="Override total TPM (natural units, e.g. 4000000)",
     )
     parser.add_argument(
-        "--burst-fraction", type=float, default=None,
+        "--burst-fraction",
+        type=float,
+        default=None,
         help="Override burst (budget manager) quota fraction (default: 0.50)",
     )
     parser.add_argument(
-        "--queue-fraction", type=float, default=None,
+        "--queue-fraction",
+        type=float,
+        default=None,
         help="Override queue (queue processor) quota fraction (default: 0.45)",
     )
     parser.add_argument(
-        "--num-items", type=int, default=None,
+        "--num-items",
+        type=int,
+        default=None,
         help="Override auto-sized item count",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=10,
+        "--batch-size",
+        type=int,
+        default=10,
         help="DynamoDB dequeue chunk size (default: 10)",
     )
     parser.add_argument(
-        "--no-smoke", action="store_true",
+        "--no-smoke",
+        action="store_true",
         help="Skip the smoke test (100 RPM / 100k TPM sanity check)",
     )
     parser.add_argument(
-        "--verbose", action="store_true",
+        "--verbose",
+        action="store_true",
         help="Print per-dispatch trace (token gate decisions)",
     )
     return parser.parse_args()
@@ -693,25 +761,29 @@ def main() -> None:
     configs: List[SimConfig] = []
 
     if not args.no_smoke:
-        configs.append(build_config(
-            profile="smoke",
-            workload_name="rpm-push",
-            num_items_override=60,
-            batch_size=args.batch_size,
-        ))
+        configs.append(
+            build_config(
+                profile="smoke",
+                workload_name="rpm-push",
+                num_items_override=60,
+                batch_size=args.batch_size,
+            )
+        )
 
     workloads = [args.workload] if args.workload else list(WORKLOAD_PRESETS.keys())
     for wl in workloads:
-        configs.append(build_config(
-            profile=args.profile,
-            workload_name=wl,
-            rpm_override=args.rpm,
-            tpm_override=args.tpm,
-            burst_fraction=args.burst_fraction,
-            queue_fraction=args.queue_fraction,
-            num_items_override=args.num_items,
-            batch_size=args.batch_size,
-        ))
+        configs.append(
+            build_config(
+                profile=args.profile,
+                workload_name=wl,
+                rpm_override=args.rpm,
+                tpm_override=args.tpm,
+                burst_fraction=args.burst_fraction,
+                queue_fraction=args.queue_fraction,
+                num_items_override=args.num_items,
+                batch_size=args.batch_size,
+            )
+        )
 
     # ── Print configuration summary ───────────────────────────────────────────
     print(f"\n  Scenarios to run: {len(configs)}")
@@ -724,7 +796,7 @@ def main() -> None:
         results.append(run_scenario(cfg, verbose=args.verbose))
 
     # ── Final summary ─────────────────────────────────────────────────────────
-    total  = len(results)
+    total = len(results)
     passed = sum(results)
     failed = total - passed
 

@@ -54,21 +54,21 @@ import boto3
 # Order = display order. `succeeded` is the ONLY success bucket.
 OUTCOMES = [
     "succeeded",
-    "throttled",          # Bedrock 429
-    "error",              # generic 503 (incl. Lambda.TooManyRequestsException — NOT throttled)
-    "timed_out",          # SM TimedOut → 504
-    "queue_expired",      # queue-TTL expiry → 504
-    "deadline",           # client-side wall-clock abort (excluded bucket, OBJ1)
-    "edge_throttled",     # WAF 403/429 at the edge (excluded bucket, OBJ1)
+    "throttled",  # Bedrock 429
+    "error",  # generic 503 (incl. Lambda.TooManyRequestsException — NOT throttled)
+    "timed_out",  # SM TimedOut → 504
+    "queue_expired",  # queue-TTL expiry → 504
+    "deadline",  # client-side wall-clock abort (excluded bucket, OBJ1)
+    "edge_throttled",  # WAF 403/429 at the edge (excluded bucket, OBJ1)
     "ingress_throttled",  # StartExecution throttle → 429 (Cato C-1)
-    "ingress_lost",       # sent, but no 202 and no terminal record — closes the denominator
-    "pending",            # still PENDING/QUEUED at reconcile time (counts against N)
+    "ingress_lost",  # sent, but no 202 and no terminal record — closes the denominator
+    "pending",  # still PENDING/QUEUED at reconcile time (counts against N)
 ]
 
 # CloudWatch reason -> outcome normalisation for the DDB `reason`/`state` fields.
 DDB_STATE_TO_OUTCOME = {
     "SUCCEEDED": "succeeded",
-    "FAILED": "error",       # refined by `reason` below
+    "FAILED": "error",  # refined by `reason` below
     "PENDING": "pending",
     "QUEUED": "pending",
 }
@@ -87,19 +87,30 @@ def load_manifest(path):
         data = json.load(f)
     records = data["requests"] if isinstance(data, dict) and "requests" in data else data
     if not isinstance(records, list):
-        sys.exit(f"❌ manifest must be a JSON list (or {{'requests': [...]}}); got {type(records).__name__}")
+        sys.exit(
+            f"❌ manifest must be a JSON list (or {{'requests': [...]}}); got {type(records).__name__}"
+        )
     out = []
     for i, r in enumerate(records):
         if not isinstance(r, dict) or "correlation_id" not in r:
             print(f"  ⚠ manifest entry {i} missing correlation_id — treated as malformed")
-            out.append({"correlation_id": None, "request_id": None, "submit_ts": None, "_malformed": True})
+            out.append(
+                {
+                    "correlation_id": None,
+                    "request_id": None,
+                    "submit_ts": None,
+                    "_malformed": True,
+                }
+            )
             continue
-        out.append({
-            "correlation_id": r.get("correlation_id"),
-            "request_id": r.get("request_id"),
-            "submit_ts": r.get("submit_ts"),
-            "_malformed": False,
-        })
+        out.append(
+            {
+                "correlation_id": r.get("correlation_id"),
+                "request_id": r.get("request_id"),
+                "submit_ts": r.get("submit_ts"),
+                "_malformed": False,
+            }
+        )
     return out
 
 
@@ -283,29 +294,55 @@ def report(outcomes_by_cid, n_sent):
     honest_rate = (succeeded / n_sent * 100.0) if n_sent else 0.0
     print(f"\n  {'─' * 38}")
     print(f"  HONEST success rate = succeeded / N = {succeeded} / {n_sent} = {honest_rate:.3f}%")
-    print(f"  (N includes ingress_lost + pending — the shaper cannot drop its own front-door failures)")
+    print(
+        f"  (N includes ingress_lost + pending — the shaper cannot drop its own front-door failures)"
+    )
     print(f"{'=' * 70}\n")
     return honest_rate
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Honest terminal-outcome reconciliation for a load-test run")
-    ap.add_argument("manifest", help="Run manifest JSON: [{correlation_id, request_id, submit_ts}, ...]")
+    ap = argparse.ArgumentParser(
+        description="Honest terminal-outcome reconciliation for a load-test run"
+    )
+    ap.add_argument(
+        "manifest",
+        help="Run manifest JSON: [{correlation_id, request_id, submit_ts}, ...]",
+    )
     ap.add_argument("--region", default="us-east-1", help="AWS region (default: us-east-1)")
-    ap.add_argument("--table", default="semaphore-single-table", help="Status table (default: semaphore-single-table)")
-    ap.add_argument("--source", choices=["ddb", "emf", "both"], default="both",
-                    help="Terminal-outcome source (default: both — DDB authoritative, EMF backfill)")
-    ap.add_argument("--log-group", default="/bedrock-shaper/request-outcome",
-                    help="CloudWatch log group carrying RequestOutcome EMF (for --source emf/both)")
-    ap.add_argument("--hours", type=int, default=2, help="EMF lookback window in hours (default: 2)")
-    ap.add_argument("--dedup-abort-pct", type=float, default=1.0,
-                    help="Abort if dropped correlation_id rate exceeds this pct (default: 1.0)")
+    ap.add_argument(
+        "--table",
+        default="semaphore-single-table",
+        help="Status table (default: semaphore-single-table)",
+    )
+    ap.add_argument(
+        "--source",
+        choices=["ddb", "emf", "both"],
+        default="both",
+        help="Terminal-outcome source (default: both — DDB authoritative, EMF backfill)",
+    )
+    ap.add_argument(
+        "--log-group",
+        default="/bedrock-shaper/request-outcome",
+        help="CloudWatch log group carrying RequestOutcome EMF (for --source emf/both)",
+    )
+    ap.add_argument(
+        "--hours", type=int, default=2, help="EMF lookback window in hours (default: 2)"
+    )
+    ap.add_argument(
+        "--dedup-abort-pct",
+        type=float,
+        default=1.0,
+        help="Abort if dropped correlation_id rate exceeds this pct (default: 1.0)",
+    )
     args = ap.parse_args()
 
     if not os.path.exists(args.manifest):
         sys.exit(f"❌ manifest not found: {args.manifest}")
 
-    print(f"Reconciling {args.manifest} | region={args.region} | table={args.table} | source={args.source}")
+    print(
+        f"Reconciling {args.manifest} | region={args.region} | table={args.table} | source={args.source}"
+    )
     raw = load_manifest(args.manifest)
     records = dedup_manifest(raw, abort_threshold_pct=args.dedup_abort_pct)
     n_sent = len(records)

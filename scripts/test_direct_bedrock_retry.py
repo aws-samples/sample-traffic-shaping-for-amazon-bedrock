@@ -27,7 +27,9 @@ from botocore.config import Config
 import config_loader
 
 # Add lambda layer to Python path to import shared_service
-layer_path = os.path.join(os.path.dirname(__file__), '..', 'infrastructure', 'lambda_layer', 'python')
+layer_path = os.path.join(
+    os.path.dirname(__file__), "..", "infrastructure", "lambda_layer", "python"
+)
 sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
@@ -37,9 +39,9 @@ from create_model_config import MODEL_MAP
 
 # Retry configuration (typical customer implementation)
 MAX_RETRIES = 3
-BASE_DELAY = 1.0       # seconds
-MAX_DELAY = 30.0        # cap for exponential growth
-JITTER_RANGE = 1.0      # full jitter: uniform(0, computed_delay)
+BASE_DELAY = 1.0  # seconds
+MAX_DELAY = 30.0  # cap for exponential growth
+JITTER_RANGE = 1.0  # full jitter: uniform(0, computed_delay)
 
 
 def resolve_model_id(model_input: str) -> str:
@@ -67,7 +69,7 @@ def validate_model_config(dynamo_service: DynamoService, model_id: str) -> None:
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description='Load test direct Bedrock calls WITH retry+jitter (customer baseline)',
+        description="Load test direct Bedrock calls WITH retry+jitter (customer baseline)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 This test simulates the typical customer retry pattern:
@@ -82,16 +84,37 @@ Traffic Shaper achieves 100%% success by queuing instead of retrying.
 Examples:
   python scripts/test_direct_bedrock_retry.py --model nova-2-lite --num-requests 50
   python scripts/test_direct_bedrock_retry.py --model nova-lite --num-requests 200 --max-workers 20
-        """
+        """,
     )
 
-    parser.add_argument('--model', type=str, help='Model ID or alias (nova-2-lite, sonnet-5, opus-5)')
-    parser.add_argument('--num-requests', type=int, help='Number of requests (default: config.env)')
-    parser.add_argument('--max-workers', type=int, help='Concurrent threads (default: config.env)')
-    parser.add_argument('--submission-duration', type=int, help='Submission spread in seconds (default: config.env)')
-    parser.add_argument('--max-retries', type=int, default=MAX_RETRIES, help=f'Max retries per request (default: {MAX_RETRIES})')
-    parser.add_argument('--prompt-size', type=int, default=None, help='Prompt size in chars (for TPM testing)')
-    parser.add_argument('--max-tokens', type=int, default=20, help='max_tokens per request (default: 20)')
+    parser.add_argument(
+        "--model", type=str, help="Model ID or alias (nova-2-lite, sonnet-5, opus-5)"
+    )
+    parser.add_argument("--num-requests", type=int, help="Number of requests (default: config.env)")
+    parser.add_argument("--max-workers", type=int, help="Concurrent threads (default: config.env)")
+    parser.add_argument(
+        "--submission-duration",
+        type=int,
+        help="Submission spread in seconds (default: config.env)",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=MAX_RETRIES,
+        help=f"Max retries per request (default: {MAX_RETRIES})",
+    )
+    parser.add_argument(
+        "--prompt-size",
+        type=int,
+        default=None,
+        help="Prompt size in chars (for TPM testing)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=20,
+        help="max_tokens per request (default: 20)",
+    )
 
     return parser.parse_args()
 
@@ -101,12 +124,20 @@ config = config_loader.get_config_with_aws_check()
 args = parse_args()
 
 # Apply CLI overrides or use config.env defaults
-AWS_REGION = config.get('AWS_REGION', 'us-east-1')
-BEDROCK_MODEL_ID = resolve_model_id(args.model) if args.model else config.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
-SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
-NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get('NUM_REQUESTS', '125'))
-MAX_WORKERS = args.max_workers if args.max_workers else int(config.get('MAX_WORKERS', '10'))
-SUBMISSION_DURATION = args.submission_duration if args.submission_duration is not None else int(config.get('SUBMISSION_DURATION', '10'))
+AWS_REGION = config.get("AWS_REGION", "us-east-1")
+BEDROCK_MODEL_ID = (
+    resolve_model_id(args.model)
+    if args.model
+    else config.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
+)
+SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
+NUM_REQUESTS = args.num_requests if args.num_requests else int(config.get("NUM_REQUESTS", "125"))
+MAX_WORKERS = args.max_workers if args.max_workers else int(config.get("MAX_WORKERS", "10"))
+SUBMISSION_DURATION = (
+    args.submission_duration
+    if args.submission_duration is not None
+    else int(config.get("SUBMISSION_DURATION", "10"))
+)
 MAX_RETRIES_ACTUAL = args.max_retries
 PROMPT_SIZE = args.prompt_size
 MAX_TOKENS = args.max_tokens
@@ -120,7 +151,7 @@ def build_prompt(request_num, prompt_size=None):
     """Build a prompt of the requested size."""
     base = f'Say "Request {request_num} completed"'
     if prompt_size and prompt_size > len(base):
-        padding = ' This is padding text for TPM validation testing.'
+        padding = " This is padding text for TPM validation testing."
         reps = (prompt_size - len(base)) // len(padding) + 1
         base = (base + padding * reps)[:prompt_size]
     return base
@@ -148,39 +179,39 @@ def make_bedrock_call_with_retry(bedrock, request_num):
         try:
             bedrock.converse(
                 modelId=BEDROCK_MODEL_ID,
-                messages=[
-                    {
-                        'role': 'user',
-                        'content': [{'text': prompt}]
-                    }
-                ],
-                inferenceConfig={
-                    'maxTokens': MAX_TOKENS
-                }
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={"maxTokens": MAX_TOKENS},
             )
 
             total_time = time.time() - start_time
             return {
-                'request_num': request_num,
-                'success': True,
-                'error': None,
-                'attempts': attempts,
-                'total_time': total_time,
-                'retry_delays': retry_delays
+                "request_num": request_num,
+                "success": True,
+                "error": None,
+                "attempts": attempts,
+                "total_time": total_time,
+                "retry_delays": retry_delays,
             }
 
         except ClientError as e:
-            error_code = e.response['Error']['Code']
-            is_throttle = error_code in ['ThrottlingException', 'TooManyRequestsException',
-                                         'ServiceQuotaExceededException']
-            last_error = '429' if is_throttle else error_code
+            error_code = e.response["Error"]["Code"]
+            is_throttle = error_code in [
+                "ThrottlingException",
+                "TooManyRequestsException",
+                "ServiceQuotaExceededException",
+            ]
+            last_error = "429" if is_throttle else error_code
 
             if is_throttle and attempt < MAX_RETRIES_ACTUAL:
                 # Exponential backoff with full jitter
-                computed_delay = min(MAX_DELAY, BASE_DELAY * (2 ** attempt))
-                actual_delay = random.uniform(0, computed_delay)  # nosec B311  # non-crypto: backoff jitter
+                computed_delay = min(MAX_DELAY, BASE_DELAY * (2**attempt))
+                actual_delay = random.uniform(
+                    0, computed_delay
+                )  # nosec B311  # non-crypto: backoff jitter
                 retry_delays.append(actual_delay)
-                time.sleep(actual_delay)  # nosemgrep: arbitrary-sleep -- deliberate exponential backoff on Bedrock throttle
+                time.sleep(
+                    actual_delay
+                )  # nosemgrep: arbitrary-sleep -- deliberate exponential backoff on Bedrock throttle
             else:
                 # Non-throttle error or max retries exceeded
                 break
@@ -191,12 +222,12 @@ def make_bedrock_call_with_retry(bedrock, request_num):
 
     total_time = time.time() - start_time
     return {
-        'request_num': request_num,
-        'success': False,
-        'error': last_error,
-        'attempts': attempts,
-        'total_time': total_time,
-        'retry_delays': retry_delays
+        "request_num": request_num,
+        "success": False,
+        "error": last_error,
+        "attempts": attempts,
+        "total_time": total_time,
+        "retry_delays": retry_delays,
     }
 
 
@@ -223,15 +254,17 @@ def test_direct_bedrock_with_retry():
     print(f"{'='*60}\n")
 
     # Initialize client — disable SDK built-in retries (we handle them)
-    config_obj = Config(retries={'max_attempts': 1, 'mode': 'standard'})
-    bedrock = boto3.client('bedrock-runtime', region_name=AWS_REGION, config=config_obj)
+    config_obj = Config(retries={"max_attempts": 1, "mode": "standard"})
+    bedrock = boto3.client("bedrock-runtime", region_name=AWS_REGION, config=config_obj)
 
     results = []
     start_time = time.time()
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = []
-        delay_between_requests = SUBMISSION_DURATION / NUM_REQUESTS if SUBMISSION_DURATION > 0 else 0
+        delay_between_requests = (
+            SUBMISSION_DURATION / NUM_REQUESTS if SUBMISSION_DURATION > 0 else 0
+        )
 
         for i in range(NUM_REQUESTS):
             future = executor.submit(make_bedrock_call_with_retry, bedrock, i)
@@ -239,7 +272,10 @@ def test_direct_bedrock_with_retry():
 
             if delay_between_requests > 0:
                 time.sleep(delay_between_requests)
-                print(f"  Submitted {i+1}/{NUM_REQUESTS} ({(i+1)/NUM_REQUESTS*100:.0f}%)", end='\r')
+                print(
+                    f"  Submitted {i+1}/{NUM_REQUESTS} ({(i+1)/NUM_REQUESTS*100:.0f}%)",
+                    end="\r",
+                )
 
         if SUBMISSION_DURATION > 0:
             print(f"\n\nAll requests submitted. Waiting for completion...")
@@ -250,34 +286,40 @@ def test_direct_bedrock_with_retry():
             results.append(result)
             completed += 1
 
-            status = f"ok ({result['attempts']} attempts)" if result['success'] else f"FAIL {result['error']} ({result['attempts']} attempts)"
-            print(f"  Completed {completed}/{NUM_REQUESTS}: {status}", end='\r')
+            status = (
+                f"ok ({result['attempts']} attempts)"
+                if result["success"]
+                else f"FAIL {result['error']} ({result['attempts']} attempts)"
+            )
+            print(f"  Completed {completed}/{NUM_REQUESTS}: {status}", end="\r")
 
     total_time = time.time() - start_time
 
     # Calculate statistics
-    success_count = sum(1 for r in results if r['success'])
+    success_count = sum(1 for r in results if r["success"])
     fail_count = NUM_REQUESTS - success_count
-    throttle_fail_count = sum(1 for r in results if not r['success'] and r['error'] == '429')
+    throttle_fail_count = sum(1 for r in results if not r["success"] and r["error"] == "429")
     other_fail_count = fail_count - throttle_fail_count
 
-    total_attempts = sum(r['attempts'] for r in results)
+    total_attempts = sum(r["attempts"] for r in results)
     total_retries = total_attempts - NUM_REQUESTS
-    wasted_retries = sum(r['attempts'] - 1 for r in results if not r['success'])
-    successful_retries = sum(r['attempts'] - 1 for r in results if r['success'] and r['attempts'] > 1)
+    wasted_retries = sum(r["attempts"] - 1 for r in results if not r["success"])
+    successful_retries = sum(
+        r["attempts"] - 1 for r in results if r["success"] and r["attempts"] > 1
+    )
 
     # Latency stats
-    times = [r['total_time'] for r in results]
+    times = [r["total_time"] for r in results]
     times.sort()
     p50 = times[len(times) // 2] if times else 0
     p95 = times[int(len(times) * 0.95)] if times else 0
     p99 = times[int(len(times) * 0.99)] if times else 0
 
-    success_times = sorted([r['total_time'] for r in results if r['success']])
+    success_times = sorted([r["total_time"] for r in results if r["success"]])
     success_p50 = success_times[len(success_times) // 2] if success_times else 0
     success_p99 = success_times[int(len(success_times) * 0.99)] if success_times else 0
 
-    retry_times = [d for r in results for d in r['retry_delays']]
+    retry_times = [d for r in results for d in r["retry_delays"]]
 
     print(f"\n\n{'='*60}")
     print(f"RESULTS: Direct Bedrock with Retry + Jitter")
@@ -287,12 +329,16 @@ def test_direct_bedrock_with_retry():
     print(f"  {'─'*40}")
     print(f"  Total requests:       {NUM_REQUESTS}")
     print(f"  Successful:           {success_count} ({success_count/NUM_REQUESTS*100:.1f}%)")
-    print(f"  Failed (throttled):   {throttle_fail_count} ({throttle_fail_count/NUM_REQUESTS*100:.1f}%)")
+    print(
+        f"  Failed (throttled):   {throttle_fail_count} ({throttle_fail_count/NUM_REQUESTS*100:.1f}%)"
+    )
     print(f"  Failed (other):       {other_fail_count}")
     print(f"")
     print(f"  Retry Overhead")
     print(f"  {'─'*40}")
-    print(f"  Total API calls:      {total_attempts} ({total_attempts/NUM_REQUESTS:.1f}x amplification)")
+    print(
+        f"  Total API calls:      {total_attempts} ({total_attempts/NUM_REQUESTS:.1f}x amplification)"
+    )
     print(f"  Total retries:        {total_retries}")
     print(f"  Retries that helped:  {successful_retries} (led to success)")
     print(f"  Retries wasted:       {wasted_retries} (still failed)")
@@ -316,13 +362,19 @@ def test_direct_bedrock_with_retry():
 
     # Summary comparison hint
     print(f"\n  Compare against Traffic Shaper:")
-    print(f"  make test-budget-manager ARGS=\"--model {args.model or 'nova-2-lite'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\"")
+    print(
+        f"  make test-budget-manager ARGS=\"--model {args.model or 'nova-2-lite'} --num-requests {NUM_REQUESTS} --max-workers {MAX_WORKERS}\""
+    )
 
     if throttle_fail_count > 0:
-        print(f"\n  {throttle_fail_count} requests exhausted all {MAX_RETRIES_ACTUAL} retries and still failed.")
+        print(
+            f"\n  {throttle_fail_count} requests exhausted all {MAX_RETRIES_ACTUAL} retries and still failed."
+        )
         print(f"  The Traffic Shaper would queue these instead of dropping them.")
     elif success_count == NUM_REQUESTS and total_retries > 0:
-        print(f"\n  All succeeded but required {total_retries} retries ({total_attempts/NUM_REQUESTS:.1f}x API call amplification).")
+        print(
+            f"\n  All succeeded but required {total_retries} retries ({total_attempts/NUM_REQUESTS:.1f}x API call amplification)."
+        )
         print(f"  Each retry consumes quota, making throttling worse for other callers.")
 
     print()

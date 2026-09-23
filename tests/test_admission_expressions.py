@@ -8,6 +8,7 @@ read-gate logic against a real table.
 
 Run: python -m pytest tests/test_admission_expressions.py -q
 """
+
 import sys
 import pathlib
 import boto3
@@ -27,10 +28,14 @@ def _make_table():
     ddb = boto3.resource("dynamodb", region_name="us-east-1")
     ddb.create_table(
         TableName=TABLE,
-        KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"},
-                   {"AttributeName": "sk", "KeyType": "RANGE"}],
-        AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"},
-                              {"AttributeName": "sk", "AttributeType": "S"}],
+        KeySchema=[
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "pk", "AttributeType": "S"},
+            {"AttributeName": "sk", "AttributeType": "S"},
+        ],
         BillingMode="PAY_PER_REQUEST",
     )
     return ddb
@@ -42,17 +47,19 @@ def _make_table():
 #   cap_long_tok  = tpm_burst_regen_rate * 15
 # With tpm_burst_regen_rate=100_000 tok/s: 2s cap = 200k, 15s cap = 1.5M.
 TPM_MODEL = dict(
-    burst_capacity=10_000_000,        # sentinel; rpm_quota_enabled False → no req cap
+    burst_capacity=10_000_000,  # sentinel; rpm_quota_enabled False → no req cap
     burst_regen_rate=0.0,
-    tpm_burst_capacity=6_000_000,     # unused by the window gate (kept for signature)
-    tpm_burst_regen_rate=100_000.0,   # → 2s cap 200k, 15s cap 1.5M
+    tpm_burst_capacity=6_000_000,  # unused by the window gate (kept for signature)
+    tpm_burst_regen_rate=100_000.0,  # → 2s cap 200k, 15s cap 1.5M
     rpm_quota_enabled=False,
 )
 
 
 def _put(svc, model_id, request_id, tokens):
     return svc.put_allocation(
-        model_id, request_id, estimated_tokens=tokens,
+        model_id,
+        request_id,
+        estimated_tokens=tokens,
         burst_capacity=TPM_MODEL["burst_capacity"],
         burst_regen_rate=TPM_MODEL["burst_regen_rate"],
         tpm_burst_capacity=TPM_MODEL["tpm_burst_capacity"],
@@ -102,6 +109,7 @@ def test_long_window_cap_binds_when_short_ok():
     near the 15s cap, then a new request should be rejected by the LONG window.
     """
     import time as _t
+
     _make_table()
     svc = DynamoService(single_table_name=TABLE)
     table = svc.single_table
@@ -110,12 +118,14 @@ def test_long_window_cap_binds_when_short_ok():
     # the 15s window) = 1.5M == the 15s cap.
     for i in range(15):
         ts = now_ms - (2500 + i * 800)
-        table.put_item(Item={
-            "pk": "MODEL#m4#BURST#CONSUMPTION",
-            "sk": f"{ts}#seed{i}",
-            "estimated_tokens": 100_000,
-            "count": 1,
-        })
+        table.put_item(
+            Item={
+                "pk": "MODEL#m4#BURST#CONSUMPTION",
+                "sk": f"{ts}#seed{i}",
+                "estimated_tokens": 100_000,
+                "count": 1,
+            }
+        )
     # 2s window empty, but 15s window already at 1.5M (== cap). Any token request rejects.
     with pytest.raises(BurstCapacityExceeded):
         _put(svc, "m4", "late", 50_000)
@@ -128,9 +138,12 @@ def test_rpm_dimension_binds_when_enabled():
     svc = DynamoService(single_table_name=TABLE)
     # short_window_rps=1 → 2s req cap = 2, 15s req cap = 15. No token gate.
     common = dict(
-        burst_capacity=100, burst_regen_rate=1.0,
-        tpm_burst_capacity=0, tpm_burst_regen_rate=0.0,
-        rpm_quota_enabled=True, short_window_rps=1.0,
+        burst_capacity=100,
+        burst_regen_rate=1.0,
+        tpm_burst_capacity=0,
+        tpm_burst_regen_rate=0.0,
+        rpm_quota_enabled=True,
+        short_window_rps=1.0,
     )
     svc.put_allocation("m5", "r1", estimated_tokens=0, **common)
     svc.put_allocation("m5", "r2", estimated_tokens=0, **common)
@@ -145,17 +158,33 @@ def test_mantle_split_windows():
     _make_table()
     svc = DynamoService(single_table_name=TABLE)
     common = dict(
-        backend="mantle", rpm_quota_enabled=False,
-        burst_capacity=10_000_000, burst_regen_rate=0.0,
-        itpm_burst_capacity=1, itpm_burst_regen_rate=100_000.0,  # iTPM 2s cap 200k
-        otpm_burst_capacity=1, otpm_burst_regen_rate=10_000.0,   # oTPM 2s cap 20k (tighter)
+        backend="mantle",
+        rpm_quota_enabled=False,
+        burst_capacity=10_000_000,
+        burst_regen_rate=0.0,
+        itpm_burst_capacity=1,
+        itpm_burst_regen_rate=100_000.0,  # iTPM 2s cap 200k
+        otpm_burst_capacity=1,
+        otpm_burst_regen_rate=10_000.0,  # oTPM 2s cap 20k (tighter)
     )
     # First request fits both. Second breaches the tighter oTPM 2s cap.
-    svc.put_allocation("m6", "r1", estimated_tokens=30_000,
-                       estimated_input_tokens=15_000, estimated_output_tokens=15_000, **common)
+    svc.put_allocation(
+        "m6",
+        "r1",
+        estimated_tokens=30_000,
+        estimated_input_tokens=15_000,
+        estimated_output_tokens=15_000,
+        **common,
+    )
     with pytest.raises(BurstCapacityExceeded):
-        svc.put_allocation("m6", "r2", estimated_tokens=30_000,
-                           estimated_input_tokens=15_000, estimated_output_tokens=15_000, **common)
+        svc.put_allocation(
+            "m6",
+            "r2",
+            estimated_tokens=30_000,
+            estimated_input_tokens=15_000,
+            estimated_output_tokens=15_000,
+            **common,
+        )
 
 
 @mock_aws
@@ -170,9 +199,13 @@ def test_burst_disabled_rejects_everything():
     svc = DynamoService(single_table_name=TABLE)
     with pytest.raises(BurstCapacityExceeded):
         svc.put_allocation(
-            "m7", "r1", estimated_tokens=5_000,
-            burst_capacity=0, burst_regen_rate=0.0,
-            tpm_burst_capacity=0, tpm_burst_regen_rate=0.0,
+            "m7",
+            "r1",
+            estimated_tokens=5_000,
+            burst_capacity=0,
+            burst_regen_rate=0.0,
+            tpm_burst_capacity=0,
+            tpm_burst_regen_rate=0.0,
             rpm_quota_enabled=False,
         )
 

@@ -9,6 +9,7 @@ over-admission worse. This test pins that units contract.
 
 Run: python -m pytest tests/test_runtime_reconciliation.py -q
 """
+
 import sys
 import pathlib
 import boto3
@@ -27,10 +28,14 @@ def _make_table():
     ddb = boto3.resource("dynamodb", region_name="us-east-1")
     ddb.create_table(
         TableName=TABLE,
-        KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"},
-                   {"AttributeName": "sk", "KeyType": "RANGE"}],
-        AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"},
-                              {"AttributeName": "sk", "AttributeType": "S"}],
+        KeySchema=[
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "pk", "AttributeType": "S"},
+            {"AttributeName": "sk", "AttributeType": "S"},
+        ],
         BillingMode="PAY_PER_REQUEST",
     )
     return ddb
@@ -58,12 +63,16 @@ def test_runtime_reconcile_writes_burndown_weighted_combined():
     _make_table()
     svc = DynamoService(single_table_name=TABLE)
     common = dict(
-        burst_capacity=10_000_000, burst_regen_rate=0.0, max_burst_multiplier=5.0,
-        counter_shards=1, tpm_burst_capacity=3_000_000, tpm_burst_regen_rate=0.0,
+        burst_capacity=10_000_000,
+        burst_regen_rate=0.0,
+        max_burst_multiplier=5.0,
+        counter_shards=1,
+        tpm_burst_capacity=3_000_000,
+        tpm_burst_regen_rate=0.0,
     )
     # Admit with an ESTIMATE (burndown-weighted): input 1000 + max_tokens*burndown.
     res = svc.put_allocation("rt-model", "rc-1", estimated_tokens=1000 + 1200 * 5, **common)
-    alloc_id = res["item"]["sk"]   # '{now_ms}#{request_id}' — matches BURST#CONSUMPTION sort key
+    alloc_id = res["item"]["sk"]  # '{now_ms}#{request_id}' — matches BURST#CONSUMPTION sort key
 
     # Actuals came back smaller than the estimate; reconcile with burndown=5.
     combined = _reconcile_runtime(svc, "rt-model", alloc_id, ai=1200, ao=300, burndown=5)
@@ -73,7 +82,8 @@ def test_runtime_reconcile_writes_burndown_weighted_combined():
     assert combined == 2700, f"expected burndown-weighted 2700, got {combined}"
 
     item = svc.single_table.get_item(
-        Key={"pk": "MODEL#rt-model#BURST#CONSUMPTION", "sk": alloc_id}).get("Item")
+        Key={"pk": "MODEL#rt-model#BURST#CONSUMPTION", "sk": alloc_id}
+    ).get("Item")
     assert int(item["estimated_tokens"]) == 2700
     assert int(item["estimated_input_tokens"]) == 1200
     assert int(item["estimated_output_tokens"]) == 300
@@ -85,8 +95,12 @@ def test_burndown_1_reduces_to_raw_sum():
     _make_table()
     svc = DynamoService(single_table_name=TABLE)
     common = dict(
-        burst_capacity=10_000_000, burst_regen_rate=0.0, max_burst_multiplier=5.0,
-        counter_shards=1, tpm_burst_capacity=3_000_000, tpm_burst_regen_rate=0.0,
+        burst_capacity=10_000_000,
+        burst_regen_rate=0.0,
+        max_burst_multiplier=5.0,
+        counter_shards=1,
+        tpm_burst_capacity=3_000_000,
+        tpm_burst_regen_rate=0.0,
     )
     res = svc.put_allocation("nova-like", "rc-2", estimated_tokens=6000, **common)
     alloc_id = res["item"]["sk"]

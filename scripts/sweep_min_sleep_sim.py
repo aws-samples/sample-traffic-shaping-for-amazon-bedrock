@@ -24,17 +24,17 @@ Usage
     python scripts/sweep_min_sleep_sim.py
     python scripts/sweep_min_sleep_sim.py --doc "reports/queue-processor-pacer-sweep.md"
 """
+
 from __future__ import annotations
 
 import argparse
 import os
 import sys
 from collections import deque
-from typing import List
+from typing import Any, Dict, List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sim.core import Item, FakeClock, SimResult, make_uniform  # noqa: E402
-
 
 # ── Workload: mirror the live shaper-nova run ────────────────────────────────────
 # shaper-nova: prompt_tokens=5000 + max_tokens=1200, bytes_per_token=4.0, burndown 1.0
@@ -143,11 +143,18 @@ def run_token_aware_with_floor(
                 t2 = recent_tokens(short_window_sec)
                 if item.tokens > tpm_2s_cap:
                     if t2 > 0:
-                        in_win = [(ts, tok) for ts, tok in dispatch_log
-                                  if ts >= clock.now - short_window_sec]
-                        newest = max(ts for ts, _ in in_win) if in_win else \
-                            clock.now - short_window_sec
-                        do_sleep((newest + short_window_sec) - clock.now + 0.005, floored=True)
+                        in_win = [
+                            (ts, tok)
+                            for ts, tok in dispatch_log
+                            if ts >= clock.now - short_window_sec
+                        ]
+                        newest = (
+                            max(ts for ts, _ in in_win) if in_win else clock.now - short_window_sec
+                        )
+                        do_sleep(
+                            (newest + short_window_sec) - clock.now + 0.005,
+                            floored=True,
+                        )
                         prune(60.0)
                 elif t2 + item.tokens > tpm_2s_cap:
                     sleep_for_token_budget(item.tokens, short_window_sec, tpm_2s_cap)
@@ -223,36 +230,48 @@ def _run_even_spacing_sweep(items: List[Item], doc_path: str) -> None:
     rows = []
     for target_tpm in TARGET_RATES_TPM:
         r = run_even_spacing_pacer(items, target_tpm=target_tpm)
-        rows.append({
-            "target_tpm": target_tpm,
-            "sustained_tpm": r.effective_tps * 60.0,
-            "peak_1s_tpm": r.max_tokens_in_rolling_window(1.0) * 60.0,
-            "peak_60s_tpm": r.max_tokens_in_rolling_window(60.0),
-            "drain_s": r.total_sim_time,
-        })
+        rows.append(
+            {
+                "target_tpm": target_tpm,
+                "sustained_tpm": r.effective_tps * 60.0,
+                "peak_1s_tpm": r.max_tokens_in_rolling_window(1.0) * 60.0,
+                "peak_60s_tpm": r.max_tokens_in_rolling_window(60.0),
+                "drain_s": r.total_sim_time,
+            }
+        )
 
-    hdr = (f"{'target_TPM':>11} {'sustained_TPM':>14} {'peak_1s_TPM':>12} "
-           f"{'peak_60s_TPM':>13} {'drain_s':>8} {'<=8M?':>6}")
+    hdr = (
+        f"{'target_TPM':>11} {'sustained_TPM':>14} {'peak_1s_TPM':>12} "
+        f"{'peak_60s_TPM':>13} {'drain_s':>8} {'<=8M?':>6}"
+    )
     print(hdr)
     print("-" * len(hdr))
-    for r in rows:
-        safe = "OK" if r["peak_1s_tpm"] <= QUOTA_TPM else "OVER"
-        print(f"{r['target_tpm']:>11,} {r['sustained_tpm']:>14,.0f} "
-              f"{r['peak_1s_tpm']:>12,.0f} {r['peak_60s_tpm']:>13,.0f} "
-              f"{r['drain_s']:>8.1f} {safe:>6}")
+    for row in rows:
+        safe = "OK" if row["peak_1s_tpm"] <= QUOTA_TPM else "OVER"
+        print(
+            f"{row['target_tpm']:>11,} {row['sustained_tpm']:>14,.0f} "
+            f"{row['peak_1s_tpm']:>12,.0f} {row['peak_60s_tpm']:>13,.0f} "
+            f"{row['drain_s']:>8.1f} {safe:>6}"
+        )
 
     with open(doc_path, "a", encoding="utf-8") as f:
         f.write("## SIM sweep — EVEN-SPACING pacer (interval = item_tokens / target_rate)\n\n")
-        f.write("> Paces each item to a target token rate directly (GCRA/leaky-bucket). "
-                "Peak 1s ≈ sustained by construction — no batch clumping. Sim confirms the "
-                "RATE shape; live runs confirm no-throttle against Bedrock's real bucket.\n\n")
-        f.write("| target TPM | sustained TPM | peak 1s TPM | peak 60s TPM | drain (s) | peak ≤8M? |\n")
+        f.write(
+            "> Paces each item to a target token rate directly (GCRA/leaky-bucket). "
+            "Peak 1s ≈ sustained by construction — no batch clumping. Sim confirms the "
+            "RATE shape; live runs confirm no-throttle against Bedrock's real bucket.\n\n"
+        )
+        f.write(
+            "| target TPM | sustained TPM | peak 1s TPM | peak 60s TPM | drain (s) | peak ≤8M? |\n"
+        )
         f.write("|---|---|---|---|---|---|\n")
-        for r in rows:
-            safe = "✅ OK" if r["peak_1s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
-            f.write(f"| {r['target_tpm']:,} | {r['sustained_tpm']:,.0f} | "
-                    f"{r['peak_1s_tpm']:,.0f} | {r['peak_60s_tpm']:,.0f} | "
-                    f"{r['drain_s']:.1f} | {safe} |\n")
+        for row in rows:
+            safe = "✅ OK" if row["peak_1s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
+            f.write(
+                f"| {row['target_tpm']:,} | {row['sustained_tpm']:,.0f} | "
+                f"{row['peak_1s_tpm']:,.0f} | {row['peak_60s_tpm']:,.0f} | "
+                f"{row['drain_s']:.1f} | {safe} |\n"
+            )
         f.write("\n")
     print(f"\nAppended results to: {doc_path}")
 
@@ -260,8 +279,12 @@ def _run_even_spacing_sweep(items: List[Item], doc_path: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pacer sweep (offline sim)")
     parser.add_argument("--doc", default="reports/queue-processor-pacer-sweep.md")
-    parser.add_argument("--pacer", choices=["floor", "even-spacing"], default="even-spacing",
-                        help="Which pacing strategy to sweep")
+    parser.add_argument(
+        "--pacer",
+        choices=["floor", "even-spacing"],
+        default="even-spacing",
+        help="Which pacing strategy to sweep",
+    )
     args = parser.parse_args()
 
     items = make_uniform(BACKLOG, ITEM_TOKENS)
@@ -270,7 +293,7 @@ def main() -> None:
         _run_even_spacing_sweep(items, args.doc)
         return
 
-    rows = []
+    rows: List[Dict[str, Any]] = []
     for cfg_name, cfg in CONFIGS.items():
         for floor in SLEEP_FLOORS:
             r = run_token_aware_with_floor(
@@ -283,27 +306,33 @@ def main() -> None:
             peak_1s_tpm = r.max_tokens_in_rolling_window(1.0) * 60.0
             peak_60s_tpm = r.max_tokens_in_rolling_window(60.0)  # tokens in a 60s window = TPM
             drain_s = r.total_sim_time
-            rows.append({
-                "config": cfg_name,
-                "floor": floor,
-                "queue_slice": cfg["tpm_queue_capacity"],
-                "sustained_tpm": sustained_tpm,
-                "peak_1s_tpm": peak_1s_tpm,
-                "peak_60s_tpm": peak_60s_tpm,
-                "drain_s": drain_s,
-                "dispatched": r.total_dispatched,
-            })
+            rows.append(
+                {
+                    "config": cfg_name,
+                    "floor": floor,
+                    "queue_slice": cfg["tpm_queue_capacity"],
+                    "sustained_tpm": sustained_tpm,
+                    "peak_1s_tpm": peak_1s_tpm,
+                    "peak_60s_tpm": peak_60s_tpm,
+                    "drain_s": drain_s,
+                    "dispatched": r.total_dispatched,
+                }
+            )
 
     # ── Console table ─────────────────────────────────────────────────────────
-    hdr = (f"{'config':>8} {'floor':>6} {'queue_slice':>12} {'sustained_TPM':>14} "
-           f"{'peak_1s_TPM':>12} {'peak_60s_TPM':>13} {'drain_s':>8} {'<=8M?':>6}")
+    hdr = (
+        f"{'config':>8} {'floor':>6} {'queue_slice':>12} {'sustained_TPM':>14} "
+        f"{'peak_1s_TPM':>12} {'peak_60s_TPM':>13} {'drain_s':>8} {'<=8M?':>6}"
+    )
     print(hdr)
     print("-" * len(hdr))
-    for r in rows:
-        safe = "OK" if r["peak_60s_tpm"] <= QUOTA_TPM else "OVER"
-        print(f"{r['config']:>8} {r['floor']:>6.3f} {r['queue_slice']:>12,} "
-              f"{r['sustained_tpm']:>14,.0f} {r['peak_1s_tpm']:>12,.0f} "
-              f"{r['peak_60s_tpm']:>13,.0f} {r['drain_s']:>8.1f} {safe:>6}")
+    for row in rows:
+        safe = "OK" if row["peak_60s_tpm"] <= QUOTA_TPM else "OVER"
+        print(
+            f"{row['config']:>8} {row['floor']:>6.3f} {row['queue_slice']:>12,} "
+            f"{row['sustained_tpm']:>14,.0f} {row['peak_1s_tpm']:>12,.0f} "
+            f"{row['peak_60s_tpm']:>13,.0f} {row['drain_s']:>8.1f} {safe:>6}"
+        )
 
     # ── Append to results doc ───────────────────────────────────────────────────
     doc_path = args.doc
@@ -311,32 +340,44 @@ def main() -> None:
     with open(doc_path, "a", encoding="utf-8") as f:
         if new_file:
             f.write("# Ideal Queue Processor Configuration\n\n")
-            f.write("Tuning the TOKEN-AWARE dispatch gate's **minimum-sleep floor** and "
-                    "**queue TPM allocation** to hold dispatch near the 8M Bedrock quota "
-                    "WITHOUT throttling.\n\n")
-            f.write("Workload for all runs: shaper-nova — est **6,753 tokens/request** "
-                    f"(5000 prompt + 1200 max_tokens), backlog ~{BACKLOG} requests, "
-                    f"batch_size={BATCH_SIZE}, short_window={SHORT_WINDOW_SEC}s, "
-                    f"quota=8,000,000 TPM.\n\n")
-            f.write("## Test parameters recorded per run\n"
-                    "- **sleep floor** — minimum seconds the TPM gate sleeps when it trips\n"
-                    "- **queue capacity (TPM)** — `tpm_queue_capacity` (the queue's slice of quota)\n"
-                    "- **buffer capacity** — held-back fraction (100% − burst − queue)\n\n")
+            f.write(
+                "Tuning the TOKEN-AWARE dispatch gate's **minimum-sleep floor** and "
+                "**queue TPM allocation** to hold dispatch near the 8M Bedrock quota "
+                "WITHOUT throttling.\n\n"
+            )
+            f.write(
+                "Workload for all runs: shaper-nova — est **6,753 tokens/request** "
+                f"(5000 prompt + 1200 max_tokens), backlog ~{BACKLOG} requests, "
+                f"batch_size={BATCH_SIZE}, short_window={SHORT_WINDOW_SEC}s, "
+                f"quota=8,000,000 TPM.\n\n"
+            )
+            f.write(
+                "## Test parameters recorded per run\n"
+                "- **sleep floor** — minimum seconds the TPM gate sleeps when it trips\n"
+                "- **queue capacity (TPM)** — `tpm_queue_capacity` (the queue's slice of quota)\n"
+                "- **buffer capacity** — held-back fraction (100% − burst − queue)\n\n"
+            )
 
         f.write("## SIM sweep — min-sleep floor x allocation (OFFLINE, no Bedrock)\n\n")
-        f.write("> **Sim caveat:** models gate/sleep math only. Reports the dispatch RATE "
-                "each config produces; does NOT model Bedrock's token bucket, so it CANNOT "
-                "confirm throttling. `peak_60s_TPM <= 8M` is a *necessary* (not sufficient) "
-                "condition — live runs confirm no-throttle.\n\n")
-        f.write("| config (b/q/buf) | sleep floor (s) | queue cap (TPM) | buffer | "
-                "sustained TPM | peak 1s TPM | peak 60s TPM | drain (s) | ≤8M? |\n")
+        f.write(
+            "> **Sim caveat:** models gate/sleep math only. Reports the dispatch RATE "
+            "each config produces; does NOT model Bedrock's token bucket, so it CANNOT "
+            "confirm throttling. `peak_60s_TPM <= 8M` is a *necessary* (not sufficient) "
+            "condition — live runs confirm no-throttle.\n\n"
+        )
+        f.write(
+            "| config (b/q/buf) | sleep floor (s) | queue cap (TPM) | buffer | "
+            "sustained TPM | peak 1s TPM | peak 60s TPM | drain (s) | ≤8M? |\n"
+        )
         f.write("|---|---|---|---|---|---|---|---|---|\n")
-        for r in rows:
-            buf = "3%" if r["config"] == "1/96/3" else "5%"
-            safe = "✅ OK" if r["peak_60s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
-            f.write(f"| {r['config']} | {r['floor']:.3f} | {r['queue_slice']:,} | {buf} | "
-                    f"{r['sustained_tpm']:,.0f} | {r['peak_1s_tpm']:,.0f} | "
-                    f"{r['peak_60s_tpm']:,.0f} | {r['drain_s']:.1f} | {safe} |\n")
+        for row in rows:
+            buf = "3%" if row["config"] == "1/96/3" else "5%"
+            safe = "✅ OK" if row["peak_60s_tpm"] <= QUOTA_TPM else "⚠️ OVER"
+            f.write(
+                f"| {row['config']} | {row['floor']:.3f} | {row['queue_slice']:,} | {buf} | "
+                f"{row['sustained_tpm']:,.0f} | {row['peak_1s_tpm']:,.0f} | "
+                f"{row['peak_60s_tpm']:,.0f} | {row['drain_s']:.1f} | {safe} |\n"
+            )
         f.write("\n")
 
     print(f"\nAppended results to: {doc_path}")

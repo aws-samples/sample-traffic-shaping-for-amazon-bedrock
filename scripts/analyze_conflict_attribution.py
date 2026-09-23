@@ -38,8 +38,8 @@ import boto3
 import config_loader
 
 config = config_loader.get_config_with_aws_check()
-AWS_REGION = config.get('AWS_REGION', 'us-east-1')
-LOG_GROUP = config.get('BUDGET_MANAGER_LOG_GROUP')
+AWS_REGION = config.get("AWS_REGION", "us-east-1")
+LOG_GROUP = config.get("BUDGET_MANAGER_LOG_GROUP")
 
 
 def _run_insights_query(logs, log_group, query, start, end):
@@ -50,14 +50,14 @@ def _run_insights_query(logs, log_group, query, start, end):
         endTime=int(end),
         queryString=query,
     )
-    query_id = start_resp['queryId']
+    query_id = start_resp["queryId"]
     while True:
         resp = logs.get_query_results(queryId=query_id)
-        status = resp['status']
-        if status in ('Complete', 'Failed', 'Cancelled', 'Timeout'):
-            if status != 'Complete':
+        status = resp["status"]
+        if status in ("Complete", "Failed", "Cancelled", "Timeout"):
+            if status != "Complete":
                 raise RuntimeError(f"Logs Insights query {status}")
-            return resp['results']
+            return resp["results"]
         time.sleep(1)
 
 
@@ -65,7 +65,7 @@ def _rows_to_dicts(results):
     """Convert Insights result rows ([{field,value}, ...]) to plain dicts."""
     out = []
     for row in results:
-        out.append({cell['field']: cell['value'] for cell in row})
+        out.append({cell["field"]: cell["value"] for cell in row})
     return out
 
 
@@ -84,14 +84,25 @@ def _print_histogram(title, pairs, total):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--minutes', type=int, default=30,
-                        help='Look back this many minutes (default 30)')
-    parser.add_argument('--all-attempts', action='store_true',
-                        help='Include retried (non-final) conflicts, not just final sheds')
-    parser.add_argument('--log-group', default=LOG_GROUP,
-                        help='Override the Budget Manager log group name')
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--minutes",
+        type=int,
+        default=30,
+        help="Look back this many minutes (default 30)",
+    )
+    parser.add_argument(
+        "--all-attempts",
+        action="store_true",
+        help="Include retried (non-final) conflicts, not just final sheds",
+    )
+    parser.add_argument(
+        "--log-group",
+        default=LOG_GROUP,
+        help="Override the Budget Manager log group name",
+    )
     args = parser.parse_args()
 
     log_group = args.log_group
@@ -101,7 +112,7 @@ def main():
 
     end = time.time()
     start = end - args.minutes * 60
-    logs = boto3.client('logs', region_name=AWS_REGION)
+    logs = boto3.client("logs", region_name=AWS_REGION)
 
     final_filter = "" if args.all_attempts else "| filter is_final = 1"
     scope = "all attempts (incl. retried)" if args.all_attempts else "final sheds only"
@@ -119,10 +130,13 @@ fields shed_class
 | sort n desc
 """
     class_rows = _rows_to_dicts(_run_insights_query(logs, log_group, class_query, start, end))
-    class_pairs = [(r['shed_class'], int(r['n'])) for r in class_rows]
+    class_pairs = [(r["shed_class"], int(r["n"])) for r in class_rows]
     class_total = sum(n for _, n in class_pairs)
-    _print_histogram("shed_class breakdown (contention = should've admitted; "
-                     "cap_breach = real quota)", class_pairs, class_total)
+    _print_histogram(
+        "shed_class breakdown (contention = should've admitted; " "cap_breach = real quota)",
+        class_pairs,
+        class_total,
+    )
 
     # 2) conflict-item histogram: which transact item is named as conflicting.
     #    conflict_items is a JSON array on the log record; unnest via the parsed field.
@@ -136,11 +150,15 @@ fields log_type, is_final
 | limit 50
 """
     item_rows = _rows_to_dicts(_run_insights_query(logs, log_group, item_query, start, end))
-    item_pairs = [(r.get('conflict_items_raw', '(none)') or '(none)', int(r['n']))
-                  for r in item_rows]
+    item_pairs = [
+        (r.get("conflict_items_raw", "(none)") or "(none)", int(r["n"])) for r in item_rows
+    ]
     item_total = sum(n for _, n in item_pairs)
-    _print_histogram("conflicting transact item(s) — the serializer attribution",
-                     item_pairs, item_total)
+    _print_histogram(
+        "conflicting transact item(s) — the serializer attribution",
+        item_pairs,
+        item_total,
+    )
 
     print("\nInterpretation:")
     print("  • Mostly cap_breach  → 3.58 req/s is the configured quota, not a bug.")
@@ -148,8 +166,8 @@ fields log_type, is_final
     print("  • conflict item = rate2s only        → sharding RATE2S recovers throughput.")
     print("  • conflict item includes tpm_window/ → unsharded TPM singleton is the")
     print("    tpm_global/tok2s                      serializer; sharding RATE2S is inert.")
-    print("\n(Raw JSON lines: filter the log group on log_type=\"transaction_cancellation\".)")
+    print('\n(Raw JSON lines: filter the log group on log_type="transaction_cancellation".)')
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

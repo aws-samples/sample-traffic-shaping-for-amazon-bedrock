@@ -16,7 +16,9 @@ from collections import defaultdict
 import config_loader
 
 # Add lambda layer to Python path
-layer_path = os.path.join(os.path.dirname(__file__), '..', 'infrastructure', 'lambda_layer', 'python')
+layer_path = os.path.join(
+    os.path.dirname(__file__), "..", "infrastructure", "lambda_layer", "python"
+)
 sys.path.insert(0, layer_path)
 
 from shared_service import DynamoService
@@ -29,11 +31,11 @@ MODEL_ALIASES = MODEL_MAP
 
 # Load configuration
 config = config_loader.get_config_with_aws_check()
-AWS_REGION = config.get('AWS_REGION', 'us-east-1')
-STATE_MACHINE_ARN = config.get('STATE_MACHINE_ARN', '')
-SINGLE_TABLE_NAME = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
+AWS_REGION = config.get("AWS_REGION", "us-east-1")
+STATE_MACHINE_ARN = config.get("STATE_MACHINE_ARN", "")
+SINGLE_TABLE_NAME = config.get("SINGLE_TABLE_NAME", "semaphore-single-table")
 
-if not STATE_MACHINE_ARN or 'ACCOUNT' in STATE_MACHINE_ARN:
+if not STATE_MACHINE_ARN or "ACCOUNT" in STATE_MACHINE_ARN:
     print("Error: STATE_MACHINE_ARN not configured in config.env")
     sys.exit(1)
 
@@ -42,47 +44,46 @@ dynamo_service = DynamoService(single_table_name=SINGLE_TABLE_NAME)
 
 def classify_execution(exec_desc):
     """Classify a completed execution as immediate, queued, or failed."""
-    status = exec_desc['status']
-    if status == 'SUCCEEDED':
-        output = json.loads(exec_desc.get('output', '{}'))
-        if output.get('budget_result', {}).get('source') == 'queued':
-            return 'queued'
-        return 'immediate'
-    elif status == 'FAILED':
-        return 'failed'
-    elif status == 'TIMED_OUT':
-        return 'timed_out'
-    return 'running'
+    status = exec_desc["status"]
+    if status == "SUCCEEDED":
+        output = json.loads(exec_desc.get("output", "{}"))
+        if output.get("budget_result", {}).get("source") == "queued":
+            return "queued"
+        return "immediate"
+    elif status == "FAILED":
+        return "failed"
+    elif status == "TIMED_OUT":
+        return "timed_out"
+    return "running"
 
 
 def start_execution(sfn_client, model_alias, model_id, request_num):
     """Start a Step Function execution for a single request."""
     try:
         payload = {
-            'request_id': f'multi_{model_alias}_{request_num}',
-            'model_id': model_id,
-            'prompt': f'Multi-model test: {model_alias} request {request_num}',
+            "request_id": f"multi_{model_alias}_{request_num}",
+            "model_id": model_id,
+            "prompt": f"Multi-model test: {model_alias} request {request_num}",
         }
         execution_arn = sfn_client.start_execution(
-            stateMachineArn=STATE_MACHINE_ARN,
-            input=json.dumps(payload)
-        )['executionArn']
+            stateMachineArn=STATE_MACHINE_ARN, input=json.dumps(payload)
+        )["executionArn"]
         return {
-            'model_alias': model_alias,
-            'model_id': model_id,
-            'request_num': request_num,
-            'success': True,
-            'execution_arn': execution_arn,
-            'error': None,
+            "model_alias": model_alias,
+            "model_id": model_id,
+            "request_num": request_num,
+            "success": True,
+            "execution_arn": execution_arn,
+            "error": None,
         }
     except Exception as e:
         return {
-            'model_alias': model_alias,
-            'model_id': model_id,
-            'request_num': request_num,
-            'success': False,
-            'execution_arn': None,
-            'error': str(e),
+            "model_alias": model_alias,
+            "model_id": model_id,
+            "request_num": request_num,
+            "success": False,
+            "execution_arn": None,
+            "error": str(e),
         }
 
 
@@ -100,7 +101,9 @@ def run_multi_model_test(model_counts):
         model_id = MODEL_ALIASES[alias]
         try:
             cfg = dynamo_service.get_model_config(model_id)
-            print(f"  {alias:12s}: {count} requests | burst_capacity={cfg.get('burst_capacity')}, RPM={cfg.get('rpm_limit')}")
+            print(
+                f"  {alias:12s}: {count} requests | burst_capacity={cfg.get('burst_capacity')}, RPM={cfg.get('rpm_limit')}"
+            )
         except Exception as e:
             print(f"  Error: {alias} config not found: {e}")
             sys.exit(1)
@@ -109,7 +112,7 @@ def run_multi_model_test(model_counts):
     print(f"  {'Total':12s}: {total} requests")
     print(f"{'='*70}\n")
 
-    sfn_client = boto3.client('stepfunctions', region_name=AWS_REGION)
+    sfn_client = boto3.client("stepfunctions", region_name=AWS_REGION)
 
     # Phase 1: Submit all requests concurrently
     print("Phase 1: Submitting all requests concurrently...")
@@ -129,13 +132,13 @@ def run_multi_model_test(model_counts):
             all_results.append(result)
 
     submit_time = time.time() - start_time
-    started = sum(1 for r in all_results if r['success'])
-    errors = sum(1 for r in all_results if not r['success'])
+    started = sum(1 for r in all_results if r["success"])
+    errors = sum(1 for r in all_results if not r["success"])
     print(f"  Submitted {started}/{total} in {submit_time:.1f}s ({errors} errors)")
 
     if errors > 0:
         for r in all_results:
-            if not r['success']:
+            if not r["success"]:
                 print(f"    Error: {r['model_alias']}#{r['request_num']}: {r['error']}")
 
     # Phase 2: Monitor per-model independently
@@ -144,12 +147,13 @@ def run_multi_model_test(model_counts):
     # Group running executions by model
     running_by_model = defaultdict(dict)
     for r in all_results:
-        if r['success'] and r['execution_arn']:
-            running_by_model[r['model_alias']][r['execution_arn']] = r
+        if r["success"] and r["execution_arn"]:
+            running_by_model[r["model_alias"]][r["execution_arn"]] = r
 
     # Per-model counters
-    counters = {alias: {'immediate': 0, 'queued': 0, 'failed': 0, 'timed_out': 0}
-                for alias in model_counts}
+    counters = {
+        alias: {"immediate": 0, "queued": 0, "failed": 0, "timed_out": 0} for alias in model_counts
+    }
 
     max_wait = 600  # 10 minutes
     poll_interval = 3
@@ -166,7 +170,7 @@ def run_multi_model_test(model_counts):
                 try:
                     exec_desc = sfn_client.describe_execution(executionArn=exec_arn)
                     classification = classify_execution(exec_desc)
-                    if classification in ('immediate', 'queued', 'failed', 'timed_out'):
+                    if classification in ("immediate", "queued", "failed", "timed_out"):
                         counters[alias][classification] += 1
                     else:
                         still_running[exec_arn] = result
@@ -183,16 +187,21 @@ def run_multi_model_test(model_counts):
         for alias in model_counts:
             c = counters[alias]
             r = len(running_by_model[alias])
-            done = c['immediate'] + c['queued']
+            done = c["immediate"] + c["queued"]
             status_parts.append(f"{alias}:{done}/{model_counts[alias]}")
 
-        print(f"  {' | '.join(status_parts)} | running={total_running} | {elapsed:.0f}s", end='\r')
+        print(
+            f"  {' | '.join(status_parts)} | running={total_running} | {elapsed:.0f}s",
+            end="\r",
+        )
 
         if total_running == 0:
             print(f"\n  All executions complete after {elapsed:.1f}s")
             break
 
-        time.sleep(poll_interval)  # nosemgrep: arbitrary-sleep -- intentional monitor poll interval in load test
+        time.sleep(
+            poll_interval
+        )  # nosemgrep: arbitrary-sleep -- intentional monitor poll interval in load test
 
     # Check queue depths
     print(f"\nPhase 3: Final queue depths...")
@@ -211,7 +220,7 @@ def run_multi_model_test(model_counts):
     for alias in model_counts:
         c = counters[alias]
         count = model_counts[alias]
-        done = c['immediate'] + c['queued']
+        done = c["immediate"] + c["queued"]
         remaining = len(running_by_model[alias])
         success_rate = done / count * 100 if count > 0 else 0
 
@@ -224,39 +233,53 @@ def run_multi_model_test(model_counts):
         print(f"    Running:   {remaining}")
         print(f"    Success:   {success_rate:.1f}%")
 
-        if done < count or c['failed'] > 0:
+        if done < count or c["failed"] > 0:
             all_pass = False
 
     print(f"\n  Total time: {total_time:.1f}s")
     print(f"{'='*70}\n")
 
     if all_pass:
-        print(f"PASS: All {total} requests across {len(model_counts)} models processed successfully!")
+        print(
+            f"PASS: All {total} requests across {len(model_counts)} models processed successfully!"
+        )
         print(f"  Per-model isolation verified — no cross-model interference.")
     else:
         print(f"PARTIAL: Some requests did not complete successfully.")
         for alias in model_counts:
             c = counters[alias]
-            if c['failed'] > 0 or c['timed_out'] > 0:
+            if c["failed"] > 0 or c["timed_out"] > 0:
                 print(f"  {alias}: {c['failed']} failed, {c['timed_out']} timed out")
 
     return counters, all_pass
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Multi-model contention test')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Multi-model contention test")
     # Flag names are MODEL_MAP aliases. The old --opus / --jamba flags were
     # misleading: --jamba resolved to the nova-2-lite model ID, so a flag named
     # for one model billed another.
-    parser.add_argument('--opus-5', type=int, default=10, help='Number of Opus 5 requests (default: 10)')
-    parser.add_argument('--nova-2-lite', type=int, default=30, help='Number of Nova 2 Lite requests (default: 30)')
-    parser.add_argument('--nova-lite', type=int, default=30, help='Number of Nova Lite requests (default: 30)')
+    parser.add_argument(
+        "--opus-5", type=int, default=10, help="Number of Opus 5 requests (default: 10)"
+    )
+    parser.add_argument(
+        "--nova-2-lite",
+        type=int,
+        default=30,
+        help="Number of Nova 2 Lite requests (default: 30)",
+    )
+    parser.add_argument(
+        "--nova-lite",
+        type=int,
+        default=30,
+        help="Number of Nova Lite requests (default: 30)",
+    )
     args = parser.parse_args()
 
     model_counts = {
-        'opus-5': args.opus_5,
-        'nova-2-lite': args.nova_2_lite,
-        'nova-lite': args.nova_lite,
+        "opus-5": args.opus_5,
+        "nova-2-lite": args.nova_2_lite,
+        "nova-lite": args.nova_lite,
     }
 
     # Remove models with 0 requests

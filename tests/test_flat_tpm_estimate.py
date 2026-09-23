@@ -10,6 +10,7 @@ reproduction; this file locks the helper's behavior directly.
 
 Run: python -m pytest tests/test_flat_tpm_estimate.py -q
 """
+
 import sys
 import pathlib
 from collections import deque
@@ -26,8 +27,11 @@ from queue_processor import _flat_tpm_estimate, _token_gate_sleep  # noqa: E402
 
 def test_explicit_max_tokens_takes_precedence():
     """When default_max_tokens is set, use it (× burndown) + nominal input."""
-    cfg = {"default_max_tokens": 1200, "output_token_burndown_rate": 1.0,
-           "nominal_input_tokens": 5000}
+    cfg = {
+        "default_max_tokens": 1200,
+        "output_token_burndown_rate": 1.0,
+        "nominal_input_tokens": 5000,
+    }
     assert _flat_tpm_estimate(cfg, queue_target_tpm=5_520_000) == 6200
 
 
@@ -38,8 +42,11 @@ def test_max_tokens_per_request_alias():
 
 
 def test_burndown_multiplier_applied():
-    cfg = {"default_max_tokens": 1000, "output_token_burndown_rate": 5.0,
-           "nominal_input_tokens": 100}
+    cfg = {
+        "default_max_tokens": 1000,
+        "output_token_burndown_rate": 5.0,
+        "nominal_input_tokens": 100,
+    }
     assert _flat_tpm_estimate(cfg, queue_target_tpm=0) == 5100
 
 
@@ -78,28 +85,26 @@ def test_live_config_would_not_have_reproduced_the_bug():
 
 
 def test_split_gate_checks_only_the_selected_token_dimension():
-    dispatch_log = deque([
-        (100.0, 5500, 5000, 500),
-        (101.0, 5500, 5000, 500),
-    ])
+    dispatch_log = deque(
+        [
+            (100.0, 5500, 5000, 500),
+            (101.0, 5500, 5000, 500),
+        ]
+    )
 
-    assert _token_gate_sleep(
-        dispatch_log, 500, 3, 2.0, 1000, 101.5
-    ) > 0
-    assert _token_gate_sleep(
-        dispatch_log, 5000, 2, 2.0, 20000, 101.5
-    ) == 0
+    assert _token_gate_sleep(dispatch_log, 500, 3, 2.0, 1000, 101.5) > 0
+    assert _token_gate_sleep(dispatch_log, 5000, 2, 2.0, 20000, 101.5) == 0
 
 
 def test_split_gate_waits_until_enough_tokens_expire():
-    dispatch_log = deque([
-        (40.0, 5500, 5000, 500),
-        (50.0, 5500, 5000, 500),
-        (55.0, 5500, 5000, 500),
-    ])
-
-    sleep_for = _token_gate_sleep(
-        dispatch_log, 500, 3, 60.0, 1500, 60.0
+    dispatch_log = deque(
+        [
+            (40.0, 5500, 5000, 500),
+            (50.0, 5500, 5000, 500),
+            (55.0, 5500, 5000, 500),
+        ]
     )
+
+    sleep_for = _token_gate_sleep(dispatch_log, 500, 3, 60.0, 1500, 60.0)
 
     assert 40.0 < sleep_for < 40.01

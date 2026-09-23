@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Optional
 from aws_cdk import (
     Stack,
     aws_dynamodb as dynamodb,
@@ -27,6 +28,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 from cdk_nag import NagSuppressions
+
 # Shared INTERNAL helper: enforces a real (>=15 char, non-placeholder)
 # justification on every waiver. We reuse its validator to gate the
 # stack-wide entries below (see the suppression block for the rationale
@@ -66,7 +68,8 @@ class SemaphoreRateLimiterStack(Stack):
         layer_dir = Path(__file__).parent / "lambda_layer"
 
         shared_service_layer = lambda_.LayerVersion(
-            self, "SharedServiceLayer",
+            self,
+            "SharedServiceLayer",
             code=lambda_.Code.from_asset(str(layer_dir)),
             compatible_runtimes=[lambda_.Runtime.PYTHON_3_13],
             description="Shared service layer for DynamoDB operations (Phase 1: Hello World)",
@@ -83,7 +86,8 @@ class SemaphoreRateLimiterStack(Stack):
         # helpers (grant_read_write_data / bucket.grant_read) automatically add the
         # kms:Decrypt / kms:GenerateDataKey permissions to each consuming Lambda role.
         data_key = kms.Key(
-            self, "DataAtRestKey",
+            self,
+            "DataAtRestKey",
             description="Semaphore shaper: CMK for table, bucket, log groups, DLQ + Lambda env",
             enable_key_rotation=True,
             removal_policy=RemovalPolicy.DESTROY,
@@ -107,8 +111,7 @@ class SemaphoreRateLimiterStack(Stack):
                 resources=["*"],
                 conditions={
                     "ArnLike": {
-                        "kms:EncryptionContext:aws:logs:arn":
-                            f"arn:aws:logs:{self.region}:{self.account}:log-group:*"
+                        "kms:EncryptionContext:aws:logs:arn": f"arn:aws:logs:{self.region}:{self.account}:log-group:*"
                     }
                 },
             )
@@ -120,16 +123,11 @@ class SemaphoreRateLimiterStack(Stack):
 
         # Single Table
         single_table = dynamodb.Table(
-            self, "SingleTable",
+            self,
+            "SingleTable",
             table_name="semaphore-single-table",
-            partition_key=dynamodb.Attribute(
-                name="pk",
-                type=dynamodb.AttributeType.STRING
-            ),
-            sort_key=dynamodb.Attribute(
-                name="sk",
-                type=dynamodb.AttributeType.STRING
-            ),
+            partition_key=dynamodb.Attribute(name="pk", type=dynamodb.AttributeType.STRING),
+            sort_key=dynamodb.Attribute(name="sk", type=dynamodb.AttributeType.STRING),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
             time_to_live_attribute="ttl",
@@ -161,7 +159,8 @@ class SemaphoreRateLimiterStack(Stack):
         # keeps the DDB item small and dodges the 400KB item cliff (Cato C-3). ResultFn
         # presigns a GET on /result. Bodies are transient (2-day lifecycle expiry).
         outcome_output_bucket = s3.Bucket(
-            self, "OutcomeOutputBucket",
+            self,
+            "OutcomeOutputBucket",
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.KMS,
             encryption_key=data_key,
@@ -172,12 +171,14 @@ class SemaphoreRateLimiterStack(Stack):
             versioned=True,
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
-            lifecycle_rules=[s3.LifecycleRule(
-                id="expire-transient-outputs",
-                expiration=Duration.days(2),
-                noncurrent_version_expiration=Duration.days(2),
-                enabled=True,
-            )],
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="expire-transient-outputs",
+                    expiration=Duration.days(2),
+                    noncurrent_version_expiration=Duration.days(2),
+                    enabled=True,
+                )
+            ],
         )
         # CKV_AWS_18 (S3 access logging): skipped, consistent with the cdk-nag
         # AwsSolutions-S1 waiver below. This bucket holds only transient (2-day)
@@ -186,9 +187,12 @@ class SemaphoreRateLimiterStack(Stack):
         # for no operational value here. Enable before any production promotion.
         _checkov_skip(
             outcome_output_bucket,
-            ("CKV_AWS_18", "Transient 2-day inference bodies on an internal prototype; "
-                           "server access logging deliberately off to avoid a second "
-                           "log bucket + cost, consistent with the cdk-nag S1 waiver."),
+            (
+                "CKV_AWS_18",
+                "Transient 2-day inference bodies on an internal prototype; "
+                "server access logging deliberately off to avoid a second "
+                "log bucket + cost, consistent with the cdk-nag S1 waiver.",
+            ),
         )
 
         # ============================================================
@@ -197,7 +201,8 @@ class SemaphoreRateLimiterStack(Stack):
         # Declared before the Lambda functions so the async-invoked handlers can
         # attach it as their DeadLetterConfig (CKV_AWS_116) at construction time.
         dlq = sqs.Queue(
-            self, "BedrockProcessorDLQ",
+            self,
+            "BedrockProcessorDLQ",
             queue_name="bedrock-processor-dlq",
             retention_period=Duration.days(14),
             visibility_timeout=Duration.seconds(30),
@@ -216,7 +221,8 @@ class SemaphoreRateLimiterStack(Stack):
 
         # Bedrock Processor Lambda - Calls Bedrock and sends Step Functions callback
         bedrock_processor_log_group = logs.LogGroup(
-            self, "BedrockProcessorLogGroup",
+            self,
+            "BedrockProcessorLogGroup",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
             encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
@@ -241,10 +247,10 @@ class SemaphoreRateLimiterStack(Stack):
         # not for absorbing an unbounded Lambda invocation burst. For true burst
         # absorption, front the admission path with SQS or API Gateway throttling
         # (see docs/design/) — deferred as out-of-scope for the quota-shaping mission.
-        bedrock_processor_reserved = int(
+        bedrock_processor_reserved: Optional[int] = int(
             self.node.try_get_context("bedrock_processor_reserved_concurrency") or 0
         )
-        budget_manager_reserved = int(
+        budget_manager_reserved: Optional[int] = int(
             self.node.try_get_context("budget_manager_reserved_concurrency") or 0
         )
         # 0 → None so CDK OMITS reserved_concurrent_executions (unreserved, full-pool).
@@ -259,15 +265,12 @@ class SemaphoreRateLimiterStack(Stack):
         # vCPU; 1024MB gives ~0.6 vCPU. Bump the admission gate to 1024MB and the
         # processors to 512MB so the compute tier is not the bottleneck the hot-partition
         # fix is trying to remove. Context-overridable.
-        budget_manager_memory = int(
-            self.node.try_get_context("budget_manager_memory_mb") or 1024
-        )
-        processor_memory = int(
-            self.node.try_get_context("processor_memory_mb") or 512
-        )
+        budget_manager_memory = int(self.node.try_get_context("budget_manager_memory_mb") or 1024)
+        processor_memory = int(self.node.try_get_context("processor_memory_mb") or 512)
 
         bedrock_processor_lambda = lambda_.Function(
-            self, "BedrockProcessorFunction",
+            self,
+            "BedrockProcessorFunction",
             runtime=lambda_.Runtime.PYTHON_3_13,
             handler="bedrock_processor.handler",
             code=lambda_.Code.from_asset(str(lambda_dir)),
@@ -281,13 +284,13 @@ class SemaphoreRateLimiterStack(Stack):
             # in addition to the on_failure EventInvokeConfig destination wired below.
             dead_letter_queue=dlq,
             environment={
-                'SINGLE_TABLE_NAME': single_table.table_name,
+                "SINGLE_TABLE_NAME": single_table.table_name,
                 # Pre-invoke arrival jitter (ms). Re-spreads async-delivery-bunched
                 # invocations across the second so they don't clump against Bedrock's
                 # sub-minute token bucket. CDK-context overridable
                 # (-c bedrock_invoke_jitter_ms=N) so the window can be swept without
                 # a code change. See bedrock_processor.BEDROCK_INVOKE_JITTER_MS.
-                'BEDROCK_INVOKE_JITTER_MS': str(
+                "BEDROCK_INVOKE_JITTER_MS": str(
                     self.node.try_get_context("bedrock_invoke_jitter_ms") or 250
                 ),
             },
@@ -297,11 +300,17 @@ class SemaphoreRateLimiterStack(Stack):
         # checkov:skip=CKV_AWS_117 checkov:skip=CKV_AWS_115 (see CFN Metadata below)
         _checkov_skip(
             bedrock_processor_lambda,
-            ("CKV_AWS_117", "Reference impl has no VPC resources to reach; running "
-                            "outside a VPC is the intended design for this sample."),
-            ("CKV_AWS_115", "Admission-path function intentionally unbounded: it must "
-                            "draw from the full unreserved concurrency pool under burst; "
-                            "a reserved ceiling throttled throughput in 5x load testing."),
+            (
+                "CKV_AWS_117",
+                "Reference impl has no VPC resources to reach; running "
+                "outside a VPC is the intended design for this sample.",
+            ),
+            (
+                "CKV_AWS_115",
+                "Admission-path function intentionally unbounded: it must "
+                "draw from the full unreserved concurrency pool under burst; "
+                "a reserved ceiling throttled throughput in 5x load testing.",
+            ),
         )
 
         # Grant Bedrock permissions to Bedrock Processor
@@ -309,12 +318,15 @@ class SemaphoreRateLimiterStack(Stack):
         # (us.* prefixed model IDs route through inference profiles)
         bedrock_processor_lambda.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                actions=[
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream",
+                ],
                 resources=[
                     "arn:aws:bedrock:*:*:foundation-model/*",
                     "arn:aws:bedrock:*:*:inference-profile/*",
                     f"arn:aws:bedrock:*:{self.account}:inference-profile/*",
-                ]
+                ],
             )
         )
 
@@ -336,26 +348,28 @@ class SemaphoreRateLimiterStack(Stack):
         bedrock_processor_lambda.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:SendTaskSuccess", "states:SendTaskFailure"],
-                resources=[f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"]
+                resources=[f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"],
             )
         )
         bedrock_processor_lambda.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:DescribeExecution"],
-                resources=[f"arn:aws:states:{self.region}:{self.account}:execution:*"]
+                resources=[f"arn:aws:states:{self.region}:{self.account}:execution:*"],
             )
         )
 
         # Budget Manager Lambda - Handles reserve/release
         budget_manager_log_group = logs.LogGroup(
-            self, "BudgetManagerLogGroup",
+            self,
+            "BudgetManagerLogGroup",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
             encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
         )
 
         budget_manager_lambda = lambda_.Function(
-            self, "BudgetManagerFunction",
+            self,
+            "BudgetManagerFunction",
             runtime=lambda_.Runtime.PYTHON_3_13,
             handler="budget_manager.handler",
             code=lambda_.Code.from_asset(str(lambda_dir)),
@@ -365,8 +379,8 @@ class SemaphoreRateLimiterStack(Stack):
             # CKV_AWS_173: encrypt environment variables with the stack CMK.
             environment_encryption=data_key,
             environment={
-                'SINGLE_TABLE_NAME': single_table.table_name,
-                'BEDROCK_PROCESSOR_ARN': bedrock_processor_lambda.function_arn,
+                "SINGLE_TABLE_NAME": single_table.table_name,
+                "BEDROCK_PROCESSOR_ARN": bedrock_processor_lambda.function_arn,
             },
             log_group=budget_manager_log_group,
             layers=[shared_service_layer],
@@ -374,13 +388,22 @@ class SemaphoreRateLimiterStack(Stack):
         # checkov:skip=CKV_AWS_117 checkov:skip=CKV_AWS_115 checkov:skip=CKV_AWS_116
         _checkov_skip(
             budget_manager_lambda,
-            ("CKV_AWS_117", "Reference impl has no VPC resources to reach; running "
-                            "outside a VPC is the intended design for this sample."),
-            ("CKV_AWS_115", "Synchronous admission gate intentionally unbounded so it "
-                            "can draw from the full unreserved concurrency pool under "
-                            "burst; a reserved ceiling deadlocked it in 5x load testing."),
-            ("CKV_AWS_116", "Invoked synchronously by Step Functions (waitForTaskToken); "
-                            "an async DeadLetterConfig has no meaning for this call path."),
+            (
+                "CKV_AWS_117",
+                "Reference impl has no VPC resources to reach; running "
+                "outside a VPC is the intended design for this sample.",
+            ),
+            (
+                "CKV_AWS_115",
+                "Synchronous admission gate intentionally unbounded so it "
+                "can draw from the full unreserved concurrency pool under "
+                "burst; a reserved ceiling deadlocked it in 5x load testing.",
+            ),
+            (
+                "CKV_AWS_116",
+                "Invoked synchronously by Step Functions (waitForTaskToken); "
+                "an async DeadLetterConfig has no meaning for this call path.",
+            ),
         )
 
         single_table.grant_read_write_data(budget_manager_lambda)
@@ -391,10 +414,7 @@ class SemaphoreRateLimiterStack(Stack):
         # support" comment was outdated).
         default_event_bus_arn = f"arn:aws:events:{self.region}:{self.account}:event-bus/default"
         budget_manager_lambda.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["events:PutEvents"],
-                resources=[default_event_bus_arn]
-            )
+            iam.PolicyStatement(actions=["events:PutEvents"], resources=[default_event_bus_arn])
         )
 
         # Grant permission to invoke Bedrock Processor
@@ -406,20 +426,22 @@ class SemaphoreRateLimiterStack(Stack):
         budget_manager_lambda.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:SendTaskSuccess", "states:SendTaskFailure"],
-                resources=[f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"]
+                resources=[f"arn:aws:states:{self.region}:{self.account}:stateMachine:*"],
             )
         )
 
         # Queue Processor Lambda - Processes queued requests
         queue_processor_log_group = logs.LogGroup(
-            self, "QueueProcessorLogGroup",
+            self,
+            "QueueProcessorLogGroup",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
             encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
         )
-        
+
         queue_processor_lambda = lambda_.Function(
-            self, "QueueProcessorFunction",
+            self,
+            "QueueProcessorFunction",
             runtime=lambda_.Runtime.PYTHON_3_13,
             handler="queue_processor.handler",
             code=lambda_.Code.from_asset(str(lambda_dir)),
@@ -431,8 +453,8 @@ class SemaphoreRateLimiterStack(Stack):
             # capture pre/post-handler async failures to the shared DLQ.
             dead_letter_queue=dlq,
             environment={
-                'SINGLE_TABLE_NAME': single_table.table_name,
-                'BEDROCK_PROCESSOR_ARN': bedrock_processor_lambda.function_arn,
+                "SINGLE_TABLE_NAME": single_table.table_name,
+                "BEDROCK_PROCESSOR_ARN": bedrock_processor_lambda.function_arn,
             },
             log_group=queue_processor_log_group,
             layers=[shared_service_layer],
@@ -440,35 +462,41 @@ class SemaphoreRateLimiterStack(Stack):
         # checkov:skip=CKV_AWS_117 checkov:skip=CKV_AWS_115 (see CFN Metadata below)
         _checkov_skip(
             queue_processor_lambda,
-            ("CKV_AWS_117", "Reference impl has no VPC resources to reach; running "
-                            "outside a VPC is the intended design for this sample."),
-            ("CKV_AWS_115", "Queue-drain path intentionally unbounded so it can draw "
-                            "from the full unreserved concurrency pool; a reserved "
-                            "ceiling caps drain throughput under backlog."),
+            (
+                "CKV_AWS_117",
+                "Reference impl has no VPC resources to reach; running "
+                "outside a VPC is the intended design for this sample.",
+            ),
+            (
+                "CKV_AWS_115",
+                "Queue-drain path intentionally unbounded so it can draw "
+                "from the full unreserved concurrency pool; a reserved "
+                "ceiling caps drain throughput under backlog.",
+            ),
         )
 
         single_table.grant_read_write_data(queue_processor_lambda)
-        
+
         # Grant EventBridge permissions to Queue Processor (for self-triggering).
         # Scoped to the default event bus ARN (EventBridge supports resource-level
         # PutEvents permissions via the event-bus ARN).
         queue_processor_lambda.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["events:PutEvents"],
-                resources=[default_event_bus_arn]
-            )
+            iam.PolicyStatement(actions=["events:PutEvents"], resources=[default_event_bus_arn])
         )
-        
+
         # Grant Bedrock permissions to Queue Processor (for invoking models)
         # Converse API needs both foundation-model/* and inference-profile/*
         queue_processor_lambda.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                actions=[
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream",
+                ],
                 resources=[
                     "arn:aws:bedrock:*:*:foundation-model/*",
                     "arn:aws:bedrock:*:*:inference-profile/*",
                     f"arn:aws:bedrock:*:{self.account}:inference-profile/*",
-                ]
+                ],
             )
         )
 
@@ -491,21 +519,20 @@ class SemaphoreRateLimiterStack(Stack):
         # ============================================================
         # EventBridge Rule - Event-driven triggering
         # ============================================================
-        
+
         # EventBridge rule for queue processing events
         queue_processor_rule = events.Rule(
-            self, "QueueProcessorRule",
+            self,
+            "QueueProcessorRule",
             enabled=True,
             event_pattern=events.EventPattern(
                 source=["budget-manager", "queue-processor"],
-                detail_type=["QueueProcessingRequired"]
+                detail_type=["QueueProcessingRequired"],
             ),
-            description="Trigger queue processor when Budget Manager enqueues requests"
+            description="Trigger queue processor when Budget Manager enqueues requests",
         )
-        
-        queue_processor_rule.add_target(
-            targets.LambdaFunction(queue_processor_lambda)
-        )
+
+        queue_processor_rule.add_target(targets.LambdaFunction(queue_processor_lambda))
 
         # ============================================================
         # Step Functions State Machine - With Callback Pattern
@@ -519,31 +546,34 @@ class SemaphoreRateLimiterStack(Stack):
         # Note: Passing entire input ($) so Lambda can extract request_payload if present,
         # or construct it from loose params (prompt, max_tokens, etc.)
         reserve_budget_task = tasks.LambdaInvoke(
-            self, "ReserveBudget",
+            self,
+            "ReserveBudget",
             lambda_function=budget_manager_lambda,
             integration_pattern=sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-            payload=sfn.TaskInput.from_object({
-                "action": "reserve",
-                "request_id": sfn.JsonPath.string_at("$.request_id"),
-                "model_id": sfn.JsonPath.string_at("$.model_id"),
-                "input.$": "$",  # Pass entire input for flexible payload extraction
-                "task_token": sfn.JsonPath.task_token,
-                "execution_arn": sfn.JsonPath.string_at("$$.Execution.Id"),
-            }),
+            payload=sfn.TaskInput.from_object(
+                {
+                    "action": "reserve",
+                    "request_id": sfn.JsonPath.string_at("$.request_id"),
+                    "model_id": sfn.JsonPath.string_at("$.model_id"),
+                    "input.$": "$",  # Pass entire input for flexible payload extraction
+                    "task_token": sfn.JsonPath.task_token,
+                    "execution_arn": sfn.JsonPath.string_at("$$.Execution.Id"),
+                }
+            ),
             # Callback output becomes result directly - no result_selector needed
             result_path="$.budget_result",
         )
 
         # Success state - Bedrock response in budget_result (both immediate and queued paths)
         success_state = sfn.Succeed(
-            self, "Success",
-            comment="Workflow completed successfully - Bedrock response in budget_result"
+            self,
+            "Success",
+            comment="Workflow completed successfully - Bedrock response in budget_result",
         )
 
         # Failure state
         failure_state = sfn.Fail(
-            self, "ExecutionFailed",
-            comment="Workflow failed during processing"
+            self, "ExecutionFailed", comment="Workflow failed during processing"
         )
 
         # Retry on Lambda concurrency throttles before failing.
@@ -558,11 +588,7 @@ class SemaphoreRateLimiterStack(Stack):
         )
 
         # Add error handling for reserve task
-        reserve_budget_task.add_catch(
-            failure_state,
-            errors=["States.ALL"],
-            result_path="$.error"
-        )
+        reserve_budget_task.add_catch(failure_state, errors=["States.ALL"], result_path="$.error")
 
         # Define workflow - simplified with callback pattern
         # Both immediate and queued paths complete via Bedrock Processor callback
@@ -576,7 +602,8 @@ class SemaphoreRateLimiterStack(Stack):
         # token expired, wasting spend and silently dropping the result. 65 > 60 closes
         # the race (the queue item TTL-expires and is swept before the token dies).
         state_machine = sfn.StateMachine(
-            self, "SemaphoreWorkflow",
+            self,
+            "SemaphoreWorkflow",
             definition_body=sfn.DefinitionBody.from_chainable(workflow_definition),
             timeout=Duration.minutes(65),
             # AwsSolutions-SF2: enable X-Ray active tracing for end-to-end
@@ -584,7 +611,8 @@ class SemaphoreRateLimiterStack(Stack):
             tracing_enabled=True,
             logs=sfn.LogOptions(
                 destination=logs.LogGroup(
-                    self, "StateMachineLogs",
+                    self,
+                    "StateMachineLogs",
                     retention=logs.RetentionDays.ONE_WEEK,
                     removal_policy=RemovalPolicy.DESTROY,
                     encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
@@ -599,13 +627,15 @@ class SemaphoreRateLimiterStack(Stack):
 
         # -- OutcomeStreamFn: SOLE RequestOutcome EMF emitter, off the DDB stream --
         outcome_stream_log_group = logs.LogGroup(
-            self, "OutcomeStreamLogGroup",
+            self,
+            "OutcomeStreamLogGroup",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
             encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
         )
         outcome_stream_lambda = lambda_.Function(
-            self, "OutcomeStreamFunction",
+            self,
+            "OutcomeStreamFunction",
             runtime=lambda_.Runtime.PYTHON_3_13,
             handler="outcome_stream_fn.handler",
             code=lambda_.Code.from_asset(str(lambda_dir)),
@@ -616,18 +646,24 @@ class SemaphoreRateLimiterStack(Stack):
             # CKV_AWS_115: bounded reserved concurrency is safe here — this is a
             # DDB-stream poll consumer, not a burst-facing admission path.
             reserved_concurrent_executions=10,
-            environment={'SINGLE_TABLE_NAME': single_table.table_name},
+            environment={"SINGLE_TABLE_NAME": single_table.table_name},
             log_group=outcome_stream_log_group,
             layers=[shared_service_layer],
         )
         # checkov:skip=CKV_AWS_117 checkov:skip=CKV_AWS_116 (see CFN Metadata below)
         _checkov_skip(
             outcome_stream_lambda,
-            ("CKV_AWS_117", "Reference impl has no VPC resources to reach; running "
-                            "outside a VPC is the intended design for this sample."),
-            ("CKV_AWS_116", "Poll-based DDB stream consumer, not async-invoked: uses "
-                            "bisect-batch-on-error + retry_attempts for failure handling, "
-                            "so an async DeadLetterConfig does not apply."),
+            (
+                "CKV_AWS_117",
+                "Reference impl has no VPC resources to reach; running "
+                "outside a VPC is the intended design for this sample.",
+            ),
+            (
+                "CKV_AWS_116",
+                "Poll-based DDB stream consumer, not async-invoked: uses "
+                "bisect-batch-on-error + retry_attempts for failure handling, "
+                "so an async DeadLetterConfig does not apply.",
+            ),
         )
         # Read the stream + emit EMF only (no table writes). DynamoEventSource wires
         # the stream-read IAM perms automatically.
@@ -644,13 +680,15 @@ class SemaphoreRateLimiterStack(Stack):
 
         # -- FinalizerFn: EventBridge SFN-status handler (FAILED/TIMED_OUT/ABORTED) --
         finalizer_log_group = logs.LogGroup(
-            self, "FinalizerLogGroup",
+            self,
+            "FinalizerLogGroup",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
             encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
         )
         finalizer_lambda = lambda_.Function(
-            self, "FinalizerFunction",
+            self,
+            "FinalizerFunction",
             runtime=lambda_.Runtime.PYTHON_3_13,
             handler="finalizer_fn.handler",
             code=lambda_.Code.from_asset(str(lambda_dir)),
@@ -664,15 +702,18 @@ class SemaphoreRateLimiterStack(Stack):
             # CKV_AWS_116: invoked asynchronously by the EventBridge SFN-status
             # rule below; capture async failures to the shared DLQ.
             dead_letter_queue=dlq,
-            environment={'SINGLE_TABLE_NAME': single_table.table_name},
+            environment={"SINGLE_TABLE_NAME": single_table.table_name},
             log_group=finalizer_log_group,
             layers=[shared_service_layer],
         )
         # checkov:skip=CKV_AWS_117 (see CFN Metadata below)
         _checkov_skip(
             finalizer_lambda,
-            ("CKV_AWS_117", "Reference impl has no VPC resources to reach; running "
-                            "outside a VPC is the intended design for this sample."),
+            (
+                "CKV_AWS_117",
+                "Reference impl has no VPC resources to reach; running "
+                "outside a VPC is the intended design for this sample.",
+            ),
         )
         # Reads current state (queue_expired vs timed_out) + writes terminal status.
         single_table.grant_read_write_data(finalizer_lambda)
@@ -681,7 +722,8 @@ class SemaphoreRateLimiterStack(Stack):
         # the non-success statuses (SUCCEEDED is written by bedrock_processor before
         # send_task_success — there is deliberately NO success finalizer, design OBJ3).
         sfn_status_rule = events.Rule(
-            self, "SfnTerminalStatusRule",
+            self,
+            "SfnTerminalStatusRule",
             enabled=True,
             event_pattern=events.EventPattern(
                 source=["aws.states"],
@@ -697,13 +739,15 @@ class SemaphoreRateLimiterStack(Stack):
 
         # -- ResultFn: GET /result/{request_id} — GetItem + S3 presign only --
         result_log_group = logs.LogGroup(
-            self, "ResultFnLogGroup",
+            self,
+            "ResultFnLogGroup",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
             encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
         )
         result_lambda = lambda_.Function(
-            self, "ResultFunction",
+            self,
+            "ResultFunction",
             runtime=lambda_.Runtime.PYTHON_3_13,
             handler="result_fn.handler",
             code=lambda_.Code.from_asset(str(lambda_dir)),
@@ -715,8 +759,8 @@ class SemaphoreRateLimiterStack(Stack):
             # concurrent /result polls, while still declaring an explicit ceiling.
             reserved_concurrent_executions=20,
             environment={
-                'SINGLE_TABLE_NAME': single_table.table_name,
-                'OUTPUT_BUCKET': outcome_output_bucket.bucket_name,
+                "SINGLE_TABLE_NAME": single_table.table_name,
+                "OUTPUT_BUCKET": outcome_output_bucket.bucket_name,
             },
             log_group=result_log_group,
             layers=[shared_service_layer],
@@ -724,10 +768,16 @@ class SemaphoreRateLimiterStack(Stack):
         # checkov:skip=CKV_AWS_117 checkov:skip=CKV_AWS_116 (see CFN Metadata below)
         _checkov_skip(
             result_lambda,
-            ("CKV_AWS_117", "Reference impl has no VPC resources to reach; running "
-                            "outside a VPC is the intended design for this sample."),
-            ("CKV_AWS_116", "Synchronous request/response API handler (GET /result); "
-                            "an async DeadLetterConfig has no meaning for this path."),
+            (
+                "CKV_AWS_117",
+                "Reference impl has no VPC resources to reach; running "
+                "outside a VPC is the intended design for this sample.",
+            ),
+            (
+                "CKV_AWS_116",
+                "Synchronous request/response API handler (GET /result); "
+                "an async DeadLetterConfig has no meaning for this path.",
+            ),
         )
         # Pure read path: GetItem on the status item + GetObject/presign on the body.
         # No states:* — the item stores no executionArn, so ARN leakage is impossible.
@@ -740,7 +790,8 @@ class SemaphoreRateLimiterStack(Stack):
 
         # IAM role for API Gateway to invoke Step Functions
         apigw_sfn_role = iam.Role(
-            self, "ApiGatewayStepFunctionsRole",
+            self,
+            "ApiGatewayStepFunctionsRole",
             assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
         )
         apigw_sfn_role.add_to_policy(
@@ -752,7 +803,8 @@ class SemaphoreRateLimiterStack(Stack):
 
         # Access-log destination for the REST API stage (AwsSolutions-APIG1).
         api_access_log_group = logs.LogGroup(
-            self, "TrafficShaperApiAccessLogs",
+            self,
+            "TrafficShaperApiAccessLogs",
             retention=logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
             encryption_key=data_key,  # CKV_AWS_158: CMK-encrypt the log group
@@ -760,7 +812,8 @@ class SemaphoreRateLimiterStack(Stack):
 
         # REST API
         api = apigw.RestApi(
-            self, "TrafficShaperApi",
+            self,
+            "TrafficShaperApi",
             rest_api_name="Bedrock Traffic Shaper",
             description="HTTP entry point for the Bedrock Traffic Shaper",
             # Provision the account-level CloudWatch Logs role so stage
@@ -772,9 +825,15 @@ class SemaphoreRateLimiterStack(Stack):
                 # AwsSolutions-APIG1: structured access logging.
                 access_log_destination=apigw.LogGroupLogDestination(api_access_log_group),
                 access_log_format=apigw.AccessLogFormat.json_with_standard_fields(
-                    caller=True, http_method=True, ip=True, protocol=True,
-                    request_time=True, resource_path=True, response_length=True,
-                    status=True, user=True,
+                    caller=True,
+                    http_method=True,
+                    ip=True,
+                    protocol=True,
+                    request_time=True,
+                    resource_path=True,
+                    response_length=True,
+                    status=True,
+                    user=True,
                 ),
                 # AwsSolutions-APIG6: per-method CloudWatch execution logging.
                 logging_level=apigw.MethodLoggingLevel.INFO,
@@ -794,10 +853,10 @@ class SemaphoreRateLimiterStack(Stack):
                     credentials_role=apigw_sfn_role,
                     request_templates={
                         "application/json": (
-                            '{\n'
+                            "{\n"
                             '  "stateMachineArn": "' + state_machine.state_machine_arn + '",\n'
                             '  "input": "$util.escapeJavaScript($input.json(\'$\'))"\n'
-                            '}'
+                            "}"
                         ),
                     },
                     integration_responses=[
@@ -855,7 +914,8 @@ class SemaphoreRateLimiterStack(Stack):
         # ============================================================
 
         waf_acl = wafv2.CfnWebACL(
-            self, "TrafficShaperWaf",
+            self,
+            "TrafficShaperWaf",
             # REGIONAL scope so the web ACL can associate with the regional API
             # Gateway stage (was CLOUDFRONT when the ACL fronted a CloudFront dist).
             scope="REGIONAL",
@@ -940,7 +1000,8 @@ class SemaphoreRateLimiterStack(Stack):
         # yields the stage name and forces the association to depend on the stage.
         prod_stage = api.deployment_stage
         waf_association = wafv2.CfnWebACLAssociation(
-            self, "TrafficShaperWafAssociation",
+            self,
+            "TrafficShaperWafAssociation",
             resource_arn=(
                 f"arn:aws:apigateway:{self.region}::/restapis/"
                 f"{api.rest_api_id}/stages/{prod_stage.stage_name}"
@@ -977,7 +1038,8 @@ class SemaphoreRateLimiterStack(Stack):
 
         # CloudWatch alarm: DLQ has messages (any failed request is critical)
         dlq_alarm = cw.Alarm(
-            self, "DlqDepthAlarm",
+            self,
+            "DlqDepthAlarm",
             metric=dlq.metric_approximate_number_of_messages_visible(
                 period=Duration.minutes(1),
                 statistic="Maximum",
@@ -1000,12 +1062,15 @@ class SemaphoreRateLimiterStack(Stack):
         # longer needs depth for any decision, so no alarm is required here.
 
         lambda_error_alarm = cw.Alarm(
-            self, "LambdaErrorRateAlarm",
+            self,
+            "LambdaErrorRateAlarm",
             metric=cw.MathExpression(
                 expression="errors / invocations * 100",
                 using_metrics={
                     "errors": budget_manager_lambda.metric_errors(period=Duration.minutes(1)),
-                    "invocations": budget_manager_lambda.metric_invocations(period=Duration.minutes(1)),
+                    "invocations": budget_manager_lambda.metric_invocations(
+                        period=Duration.minutes(1)
+                    ),
                 },
                 period=Duration.minutes(1),
             ),
@@ -1017,7 +1082,8 @@ class SemaphoreRateLimiterStack(Stack):
         )
 
         sfn_failures_alarm = cw.Alarm(
-            self, "SfnFailuresAlarm",
+            self,
+            "SfnFailuresAlarm",
             metric=state_machine.metric_failed(period=Duration.minutes(1)),
             threshold=0,
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
@@ -1027,7 +1093,8 @@ class SemaphoreRateLimiterStack(Stack):
         )
 
         circuit_breaker_alarm = cw.Alarm(
-            self, "CircuitBreakerTrippedAlarm",
+            self,
+            "CircuitBreakerTrippedAlarm",
             metric=cw.Metric(
                 namespace="BedrockShaper",
                 metric_name="CircuitBreakerTripped",
@@ -1054,7 +1121,8 @@ class SemaphoreRateLimiterStack(Stack):
         # ============================================================
 
         dashboard = cw.Dashboard(
-            self, "TrafficShaperDashboard",
+            self,
+            "TrafficShaperDashboard",
             dashboard_name="BedrockTrafficShaper",
         )
 
@@ -1075,7 +1143,7 @@ class SemaphoreRateLimiterStack(Stack):
             return cw.MathExpression(
                 expression=(
                     f"SEARCH('{{{EMF_NS},ServiceName,model_id}} "
-                    f"MetricName=\"{name}\" ServiceName=\"TrafficShaper\"', "
+                    f'MetricName="{name}" ServiceName="TrafficShaper"\', '
                     f"'{statistic}', {period_s})"
                 ),
                 label="",  # CW labels each line by its model_id dimension
@@ -1094,7 +1162,7 @@ class SemaphoreRateLimiterStack(Stack):
             return cw.MathExpression(
                 expression=(
                     f"SEARCH('{{{EMF_NS},ServiceName,model_id,source}} "
-                    f"MetricName=\"{name}\" ServiceName=\"TrafficShaper\"', "
+                    f'MetricName="{name}" ServiceName="TrafficShaper"\', '
                     f"'{statistic}', {period_s})"
                 ),
                 label="",  # CW labels each line by its model_id + source dimensions
@@ -1111,7 +1179,8 @@ class SemaphoreRateLimiterStack(Stack):
                     "| Queue Depth | 0-10 | > 50 sustained |\n"
                     "| Burst Utilization | 0-80% | 100% for > 2 min |"
                 ),
-                width=24, height=3,
+                width=24,
+                height=3,
             ),
         )
 
@@ -1122,7 +1191,8 @@ class SemaphoreRateLimiterStack(Stack):
             cw.GraphWidget(
                 title="Burst Utilization",
                 left=[emf_metric("BurstUtilization", "Average")],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
         )
 
@@ -1148,11 +1218,11 @@ class SemaphoreRateLimiterStack(Stack):
         # Acceptable because the control loop no longer uses depth for ANY decision.
         derived_enqueued = (
             f"SUM(SEARCH('{{{EMF_NS},ServiceName,model_id}} "
-            f"MetricName=\"RequestQueued\" ServiceName=\"TrafficShaper\"', 'Sum', {period_s}))"
+            f'MetricName="RequestQueued" ServiceName="TrafficShaper"\', \'Sum\', {period_s}))'
         )
         derived_dequeued = (
             f"SUM(SEARCH('{{{EMF_NS},ServiceName,model_id,source}} "
-            f"MetricName=\"RequestsProcessed\" ServiceName=\"TrafficShaper\" source=\"queued\"', "
+            f'MetricName="RequestsProcessed" ServiceName="TrafficShaper" source="queued"\', '
             f"'Sum', {period_s}))"
         )
         derived_depth = cw.MathExpression(
@@ -1170,7 +1240,8 @@ class SemaphoreRateLimiterStack(Stack):
                 title="Derived Queue Depth (metric math — net delta, NOT absolute)",
                 left=[derived_depth],
                 right=[derived_net_rate],
-                width=24, height=6,
+                width=24,
+                height=6,
             ),
         )
 
@@ -1179,12 +1250,14 @@ class SemaphoreRateLimiterStack(Stack):
             cw.GraphWidget(
                 title="Processing Rate (items/min)",
                 left=[emf_metric("ProcessingRate", "Sum")],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
             cw.GraphWidget(
                 title="Queue Utilization",
                 left=[emf_metric("QueueUtilization", "Average")],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
         )
 
@@ -1197,12 +1270,14 @@ class SemaphoreRateLimiterStack(Stack):
             cw.GraphWidget(
                 title="Requests by Source (immediate vs queued)",
                 left=[emf_metric_by_source("RequestsProcessed", "Sum")],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
             cw.GraphWidget(
                 title="Throttles by Source (immediate vs queued)",
                 left=[emf_metric_by_source("BedrockThrottles", "Sum")],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
         )
 
@@ -1211,12 +1286,14 @@ class SemaphoreRateLimiterStack(Stack):
             cw.GraphWidget(
                 title="Bedrock Latency (P50/P95/P99)",
                 left=[emf_metric("BedrockLatency", s) for s in ("p50", "p95", "p99")],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
             cw.GraphWidget(
                 title="Bedrock Processor Invocations",
                 left=[bedrock_processor_lambda.metric_invocations(period=period_1m)],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
         )
 
@@ -1229,17 +1306,22 @@ class SemaphoreRateLimiterStack(Stack):
         dashboard.add_widgets(
             cw.GraphWidget(
                 title="Lambda Duration (P50/P95)",
-                left=[fn.metric_duration(period=period_1m, statistic="p50", label=f"{name} p50")
-                      for name, fn in all_lambdas],
-                right=[fn.metric_duration(period=period_1m, statistic="p95", label=f"{name} p95")
-                       for name, fn in all_lambdas],
-                width=12, height=6,
+                left=[
+                    fn.metric_duration(period=period_1m, statistic="p50", label=f"{name} p50")
+                    for name, fn in all_lambdas
+                ],
+                right=[
+                    fn.metric_duration(period=period_1m, statistic="p95", label=f"{name} p95")
+                    for name, fn in all_lambdas
+                ],
+                width=12,
+                height=6,
             ),
             cw.GraphWidget(
                 title="Lambda Errors",
-                left=[fn.metric_errors(period=period_1m, label=name)
-                      for name, fn in all_lambdas],
-                width=12, height=6,
+                left=[fn.metric_errors(period=period_1m, label=name) for name, fn in all_lambdas],
+                width=12,
+                height=6,
             ),
         )
 
@@ -1254,7 +1336,8 @@ class SemaphoreRateLimiterStack(Stack):
                     "| TimedOut | 0 | > 0 (queue backlog or timeout too short) |\n"
                     "| Succeeded | Matches Started | Divergence > 5% |"
                 ),
-                width=24, height=3,
+                width=24,
+                height=3,
             ),
         )
 
@@ -1266,7 +1349,8 @@ class SemaphoreRateLimiterStack(Stack):
                     state_machine.metric_started(period=period_1m),
                     state_machine.metric_succeeded(period=period_1m),
                 ],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
             cw.GraphWidget(
                 title="SFN Executions (Failed / TimedOut)",
@@ -1274,7 +1358,8 @@ class SemaphoreRateLimiterStack(Stack):
                     state_machine.metric_failed(period=period_1m),
                     state_machine.metric_timed_out(period=period_1m),
                 ],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
         )
 
@@ -1285,15 +1370,24 @@ class SemaphoreRateLimiterStack(Stack):
                 left=[dlq.metric_approximate_number_of_messages_visible(period=period_1m)],
                 # OrphanedRecordsSwept is emitted with ServiceName ONLY (no model_id),
                 # so it uses a plain single-dimension Metric, not the per-model SEARCH.
-                right=[cw.Metric(namespace=EMF_NS, metric_name="OrphanedRecordsSwept",
-                                 dimensions_map=EMF_DIMS, period=period_1m, statistic="Sum")],
-                width=12, height=6,
+                right=[
+                    cw.Metric(
+                        namespace=EMF_NS,
+                        metric_name="OrphanedRecordsSwept",
+                        dimensions_map=EMF_DIMS,
+                        period=period_1m,
+                        statistic="Sum",
+                    )
+                ],
+                width=12,
+                height=6,
             ),
             cw.GraphWidget(
                 title="DynamoDB Consumed Capacity",
                 left=[single_table.metric_consumed_read_capacity_units(period=period_1m)],
                 right=[single_table.metric_consumed_write_capacity_units(period=period_1m)],
-                width=12, height=6,
+                width=12,
+                height=6,
             ),
         )
 
@@ -1301,110 +1395,117 @@ class SemaphoreRateLimiterStack(Stack):
         dashboard.add_widgets(
             cw.AlarmStatusWidget(
                 title="Alarm Status",
-                alarms=[dlq_alarm, lambda_error_alarm, sfn_failures_alarm, circuit_breaker_alarm],
-                width=24, height=3,
+                alarms=[
+                    dlq_alarm,
+                    lambda_error_alarm,
+                    sfn_failures_alarm,
+                    circuit_breaker_alarm,
+                ],
+                width=24,
+                height=3,
             ),
         )
 
         # ============================================================
         # Outputs
         # ============================================================
-        
+
         CfnOutput(
-            self, "BudgetManagerFunctionArn",
+            self,
+            "BudgetManagerFunctionArn",
             value=budget_manager_lambda.function_arn,
-            description="Budget Manager Lambda ARN"
+            description="Budget Manager Lambda ARN",
         )
 
         CfnOutput(
-            self, "BedrockProcessorFunctionArn",
+            self,
+            "BedrockProcessorFunctionArn",
             value=bedrock_processor_lambda.function_arn,
-            description="Bedrock Processor Lambda ARN"
+            description="Bedrock Processor Lambda ARN",
         )
 
         CfnOutput(
-            self, "QueueProcessorFunctionArn",
+            self,
+            "QueueProcessorFunctionArn",
             value=queue_processor_lambda.function_arn,
-            description="Queue Processor Lambda ARN"
+            description="Queue Processor Lambda ARN",
         )
 
         CfnOutput(
-            self, "StateMachineArn",
+            self,
+            "StateMachineArn",
             value=state_machine.state_machine_arn,
-            description="Step Functions State Machine ARN"
+            description="Step Functions State Machine ARN",
         )
 
         CfnOutput(
-            self, "StateMachineConsoleUrl",
+            self,
+            "StateMachineConsoleUrl",
             value=f"https://console.aws.amazon.com/states/home?region={self.region}#/statemachines/view/{state_machine.state_machine_arn}",
-            description="Step Functions Console URL"
+            description="Step Functions Console URL",
         )
 
         CfnOutput(
-            self, "SingleTableName",
+            self,
+            "SingleTableName",
             value=single_table.table_name,
-            description="Single table for leaky bucket consumption tracking"
+            description="Single table for leaky bucket consumption tracking",
         )
 
         CfnOutput(
-            self, "SharedServiceLayerArn",
+            self,
+            "SharedServiceLayerArn",
             value=shared_service_layer.layer_version_arn,
-            description="Shared Service Layer ARN"
+            description="Shared Service Layer ARN",
         )
 
-        CfnOutput(
-            self, "ApiGatewayUrl",
-            value=api.url,
-            description="API Gateway REST API URL"
-        )
+        CfnOutput(self, "ApiGatewayUrl", value=api.url, description="API Gateway REST API URL")
 
         CfnOutput(
-            self, "WafWebAclArn",
+            self,
+            "WafWebAclArn",
             value=waf_acl.attr_arn,
-            description="WAF WebACL ARN (REGIONAL, associated to the API GW prod stage)"
+            description="WAF WebACL ARN (REGIONAL, associated to the API GW prod stage)",
         )
 
-        CfnOutput(
-            self, "DlqUrl",
-            value=dlq.queue_url,
-            description="Dead Letter Queue URL"
-        )
+        CfnOutput(self, "DlqUrl", value=dlq.queue_url, description="Dead Letter Queue URL")
+
+        CfnOutput(self, "DlqArn", value=dlq.queue_arn, description="Dead Letter Queue ARN")
 
         CfnOutput(
-            self, "DlqArn",
-            value=dlq.queue_arn,
-            description="Dead Letter Queue ARN"
-        )
-
-        CfnOutput(
-            self, "DashboardUrl",
+            self,
+            "DashboardUrl",
             value=f"https://console.aws.amazon.com/cloudwatch/home?region={self.region}#dashboards:name=BedrockTrafficShaper",
-            description="CloudWatch Dashboard URL"
+            description="CloudWatch Dashboard URL",
         )
 
         # Honest-outcomes (OBJ3) outputs
         CfnOutput(
-            self, "OutputBucketName",
+            self,
+            "OutputBucketName",
             value=outcome_output_bucket.bucket_name,
-            description="S3 bucket holding inference-output bodies (output_ref target)"
+            description="S3 bucket holding inference-output bodies (output_ref target)",
         )
 
         CfnOutput(
-            self, "ResultEndpoint",
+            self,
+            "ResultEndpoint",
             value=f"{api.url}result/",
-            description="GET /result/{request_id} honest-outcomes poll endpoint"
+            description="GET /result/{request_id} honest-outcomes poll endpoint",
         )
 
         CfnOutput(
-            self, "FinalizerFunctionArn",
+            self,
+            "FinalizerFunctionArn",
             value=finalizer_lambda.function_arn,
-            description="Finalizer Lambda ARN (EventBridge SFN-status handler)"
+            description="Finalizer Lambda ARN (EventBridge SFN-status handler)",
         )
 
         CfnOutput(
-            self, "OutcomeStreamFunctionArn",
+            self,
+            "OutcomeStreamFunctionArn",
             value=outcome_stream_lambda.function_arn,
-            description="Outcome Stream Lambda ARN (sole RequestOutcome EMF emitter)"
+            description="Outcome Stream Lambda ARN (sole RequestOutcome EMF emitter)",
         )
 
         # ------------------------------------------------------------------

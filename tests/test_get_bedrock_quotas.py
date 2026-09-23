@@ -9,6 +9,7 @@ not weaken it.
 
 Run: python -m pytest tests/test_get_bedrock_quotas.py -q
 """
+
 import pathlib
 import sys
 
@@ -19,7 +20,6 @@ from get_bedrock_quotas import (  # noqa: E402
     build_profiles_cache,
     match_profile_driven_quotas,
 )
-
 
 BASE_MODEL_ID = "anthropic.claude-sonnet-5"
 
@@ -101,7 +101,13 @@ def test_denylisted_base_model_is_excluded():
     from get_bedrock_quotas import PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS
 
     denylisted_id = PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS[0]
-    models = [{"modelId": denylisted_id, "providerName": "Meta", "modelName": "Llama 4 Maverick"}]
+    models = [
+        {
+            "modelId": denylisted_id,
+            "providerName": "Meta",
+            "modelName": "Llama 4 Maverick",
+        }
+    ]
     profiles = [
         {
             "inferenceProfileId": f"us.{denylisted_id}",
@@ -159,7 +165,13 @@ def test_profiles_cache_emits_null_tpm_for_unmatched_or_denylisted():
     from get_bedrock_quotas import PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS
 
     denylisted_id = PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS[0]
-    models = [{"modelId": denylisted_id, "providerName": "Meta", "modelName": "Llama 4 Maverick"}]
+    models = [
+        {
+            "modelId": denylisted_id,
+            "providerName": "Meta",
+            "modelName": "Llama 4 Maverick",
+        }
+    ]
     profiles = [
         {
             "inferenceProfileId": f"us.{denylisted_id}",
@@ -212,9 +224,21 @@ def test_profiles_cache_ignores_inactive_profiles():
 # was removed.
 
 FIXER_MODELS = [
-    {"modelId": "deepseek.r1-v1:0", "providerName": "DeepSeek", "modelName": "DeepSeek-R1"},
-    {"modelId": "writer.palmyra-x4-v1:0", "providerName": "Writer", "modelName": "Palmyra X4"},
-    {"modelId": "writer.palmyra-x5-v1:0", "providerName": "Writer", "modelName": "Palmyra X5"},
+    {
+        "modelId": "deepseek.r1-v1:0",
+        "providerName": "DeepSeek",
+        "modelName": "DeepSeek-R1",
+    },
+    {
+        "modelId": "writer.palmyra-x4-v1:0",
+        "providerName": "Writer",
+        "modelName": "Palmyra X4",
+    },
+    {
+        "modelId": "writer.palmyra-x5-v1:0",
+        "providerName": "Writer",
+        "modelName": "Palmyra X5",
+    },
     {
         "modelId": "mistral.pixtral-large-2502-v1:0",
         "providerName": "Mistral AI",
@@ -258,9 +282,18 @@ def test_matching_resolves_provider_name_spelled_differently():
     this on their own; the suffix fallback must resolve it via the model's bare name alone,
     and must still give each Palmyra sibling its own distinct value."""
     quotas = [
-        {"QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X4 V1", "Value": 150_000},
-        {"QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X5 V1", "Value": 151_000},
-        {"QuotaName": "Cross-region model inference tokens per minute for Mistral Pixtral Large 25.02 V1", "Value": 80_000},
+        {
+            "QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X4 V1",
+            "Value": 150_000,
+        },
+        {
+            "QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X5 V1",
+            "Value": 151_000,
+        },
+        {
+            "QuotaName": "Cross-region model inference tokens per minute for Mistral Pixtral Large 25.02 V1",
+            "Value": 80_000,
+        },
     ]
 
     results = match_profile_driven_quotas(quotas, FIXER_MODELS, us_profiles(FIXER_MODELS))
@@ -281,10 +314,22 @@ def test_matching_refuses_ambiguous_suffix_with_two_candidate_quotas():
     variant/metric family ends with its bare name. Here two quotas both end with
     'Nano Pro' at different values -- picking either would be a coin flip, so the model
     must come back with no TPM at all."""
-    models = [{"modelId": "acme.nano-pro-v1:0", "providerName": "Acme", "modelName": "Nano Pro"}]
+    models = [
+        {
+            "modelId": "acme.nano-pro-v1:0",
+            "providerName": "Acme",
+            "modelName": "Nano Pro",
+        }
+    ]
     quotas = [
-        {"QuotaName": "Cross-region model inference tokens per minute for Acme AI Nano Pro V1", "Value": 100_000},
-        {"QuotaName": "Cross-region model inference tokens per minute for Acme Labs Nano Pro V1", "Value": 200_000},
+        {
+            "QuotaName": "Cross-region model inference tokens per minute for Acme AI Nano Pro V1",
+            "Value": 100_000,
+        },
+        {
+            "QuotaName": "Cross-region model inference tokens per minute for Acme Labs Nano Pro V1",
+            "Value": 200_000,
+        },
     ]
 
     results = match_profile_driven_quotas(quotas, models, us_profiles(models))
@@ -310,8 +355,14 @@ def test_matching_never_credits_a_sibling_with_an_underspecified_quota():
     ]
     quotas = [
         # Underspecified -- could tempt a loose matcher into crediting either sibling.
-        {"QuotaName": "Cross-region model inference requests per minute for Twelve Labs Marengo", "Value": 200},
-        {"QuotaName": "Cross-region model inference requests per minute for TwelveLabs Marengo Embed 3.0", "Value": 1000},
+        {
+            "QuotaName": "Cross-region model inference requests per minute for Twelve Labs Marengo",
+            "Value": 200,
+        },
+        {
+            "QuotaName": "Cross-region model inference requests per minute for TwelveLabs Marengo Embed 3.0",
+            "Value": 1000,
+        },
     ]
 
     results = match_profile_driven_quotas(quotas, siblings, us_profiles(siblings))

@@ -16,12 +16,12 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Environment variables
-SINGLE_TABLE_NAME = os.environ.get('SINGLE_TABLE_NAME')
-BEDROCK_PROCESSOR_ARN = os.environ.get('BEDROCK_PROCESSOR_ARN')
+SINGLE_TABLE_NAME = os.environ.get("SINGLE_TABLE_NAME")
+BEDROCK_PROCESSOR_ARN = os.environ.get("BEDROCK_PROCESSOR_ARN")
 
 # Clients
-lambda_client = boto3.client('lambda')
-eventbridge = boto3.client('events')
+lambda_client = boto3.client("lambda")
+eventbridge = boto3.client("events")
 
 # EventBridge event constants — mirror budget_manager's QueueProcessingRequired
 # emit so the same rule (source ∈ {budget-manager, queue-processor}) re-triggers
@@ -70,21 +70,22 @@ def _flat_tpm_estimate(config: Dict[str, Any], queue_target_tpm: int = 0) -> int
          real request (a bare prompt + a few hundred output tokens), so it was the
          amplifier that turned a missing estimate into a 6× overshoot.
     """
-    default_max_tokens = config.get('default_max_tokens', config.get('max_tokens_per_request'))
+    default_max_tokens = config.get("default_max_tokens", config.get("max_tokens_per_request"))
     if default_max_tokens is not None:
-        burndown_rate = float(config.get('output_token_burndown_rate', 1.0))
-        nominal_input_tokens = int(config.get('nominal_input_tokens', 0))
+        burndown_rate = float(config.get("output_token_burndown_rate", 1.0))
+        nominal_input_tokens = int(config.get("nominal_input_tokens", 0))
         return int(int(default_max_tokens) * burndown_rate) + nominal_input_tokens
 
-    queue_capacity = int(config.get('queue_capacity', 0) or 0)
+    queue_capacity = int(config.get("queue_capacity", 0) or 0)
     if queue_target_tpm > 0 and queue_capacity > 0:
         return max(1, int(queue_target_tpm / queue_capacity))
 
     return 4096
 
 
-def _sleep_for_token_budget(dispatch_log, item_tokens: int, window_sec: float,
-                            cap: int, now: float) -> float:
+def _sleep_for_token_budget(
+    dispatch_log, item_tokens: int, window_sec: float, cap: int, now: float
+) -> float:
     """Return the minimum sleep until (tokens_in_window + item_tokens) <= cap.
 
     Walks the in-window dispatch entries oldest-first, accumulating freed tokens,
@@ -101,7 +102,7 @@ def _sleep_for_token_budget(dispatch_log, item_tokens: int, window_sec: float,
         return 0.0
     freed = 0
     sleep_until = now
-    for ts, tok in in_win:          # oldest first
+    for ts, tok in in_win:  # oldest first
         freed += tok
         sleep_until = ts + window_sec
         if freed >= deficit:
@@ -109,8 +110,14 @@ def _sleep_for_token_budget(dispatch_log, item_tokens: int, window_sec: float,
     return max(0.001, sleep_until - now + 0.005)
 
 
-def _token_gate_sleep(dispatch_log, item_tokens: int, token_index: int,
-                      window_sec: float, cap: int, now: float) -> float:
+def _token_gate_sleep(
+    dispatch_log,
+    item_tokens: int,
+    token_index: int,
+    window_sec: float,
+    cap: int,
+    now: float,
+) -> float:
     """Return the sleep required for one token dimension to fit its window."""
     if cap <= 0 or item_tokens <= 0:
         return 0.0
@@ -131,9 +138,7 @@ def _token_gate_sleep(dispatch_log, item_tokens: int, token_index: int,
     if consumed + item_tokens <= cap:
         return 0.0
 
-    return _sleep_for_token_budget(
-        in_window, item_tokens, window_sec, cap, now
-    )
+    return _sleep_for_token_budget(in_window, item_tokens, window_sec, cap, now)
 
 
 def trigger_successor(model_id: str) -> None:
@@ -149,15 +154,19 @@ def trigger_successor(model_id: str) -> None:
     """
     try:
         eventbridge.put_events(
-            Entries=[{
-                'Source': 'queue-processor',
-                'DetailType': 'QueueProcessingRequired',
-                'Detail': json.dumps({
-                    'semaphore_id': SEMAPHORE_ID,
-                    'model_id': model_id,
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-            }]
+            Entries=[
+                {
+                    "Source": "queue-processor",
+                    "DetailType": "QueueProcessingRequired",
+                    "Detail": json.dumps(
+                        {
+                            "semaphore_id": SEMAPHORE_ID,
+                            "model_id": model_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                    ),
+                }
+            ]
         )
         logger.info(f"Re-triggered queue processor via EventBridge for model: {model_id}")
     except Exception as e:
@@ -167,10 +176,7 @@ def trigger_successor(model_id: str) -> None:
 
 
 def try_reserve_queue_capacity_batch(
-    dynamo_service: DynamoService,
-    model_id: str,
-    batch_size: int,
-    processor_id: str
+    dynamo_service: DynamoService, model_id: str, batch_size: int, processor_id: str
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Reserve batch capacity using leaky bucket pattern.
@@ -191,17 +197,17 @@ def try_reserve_queue_capacity_batch(
     # Step 1: Get model config (required)
     try:
         config = dynamo_service.get_model_config(model_id)
-        queue_capacity = int(config['queue_capacity'])
-        queue_regen_rate = float(config['queue_regeneration_rate'])
+        queue_capacity = int(config["queue_capacity"])
+        queue_regen_rate = float(config["queue_regeneration_rate"])
         # TPM config (optional)
-        tpm_queue_capacity = int(config.get('tpm_queue_capacity', 0))
-        tpm_queue_regen_rate = float(config.get('tpm_queue_regeneration_rate', 0))
+        tpm_queue_capacity = int(config.get("tpm_queue_capacity", 0))
+        tpm_queue_regen_rate = float(config.get("tpm_queue_regeneration_rate", 0))
         # Tier 2: mantle split-quota queue config (optional; only set on backend=mantle)
-        backend = config.get('backend', 'runtime')
-        itpm_queue_capacity = int(config.get('itpm_queue_capacity', 0))
-        itpm_queue_regen_rate = float(config.get('itpm_queue_regeneration_rate', 0))
-        otpm_queue_capacity = int(config.get('otpm_queue_capacity', 0))
-        otpm_queue_regen_rate = float(config.get('otpm_queue_regeneration_rate', 0))
+        backend = config.get("backend", "runtime")
+        itpm_queue_capacity = int(config.get("itpm_queue_capacity", 0))
+        itpm_queue_regen_rate = float(config.get("itpm_queue_regeneration_rate", 0))
+        otpm_queue_capacity = int(config.get("otpm_queue_capacity", 0))
+        otpm_queue_regen_rate = float(config.get("otpm_queue_regeneration_rate", 0))
         # Stage-1a flat per-slot TPM estimate. The processor writes consumption
         # records BEFORE it dequeues items, so it has no per-request prompt at
         # reserve time — seed each record with a config-derived flat estimate so
@@ -209,16 +215,16 @@ def try_reserve_queue_capacity_batch(
         # (stage 1b) will later overwrite these with real usage. Uses the shared
         # _flat_tpm_estimate() so it can never collapse to the catastrophic 1024
         # default (see the helper's docstring + test_queue_overshoot_sim.py).
-        burndown_rate = float(config.get('output_token_burndown_rate', 1.0))
-        nominal_input_tokens = int(config.get('nominal_input_tokens', 0))
-        flat_tpm_estimate = _flat_tpm_estimate(config, int(config.get('queue_target_tpm', 0)))
+        burndown_rate = float(config.get("output_token_burndown_rate", 1.0))
+        nominal_input_tokens = int(config.get("nominal_input_tokens", 0))
+        flat_tpm_estimate = _flat_tpm_estimate(config, int(config.get("queue_target_tpm", 0)))
         flat_output_estimate = max(1, flat_tpm_estimate - nominal_input_tokens)
         # Sub-minute (2s) rate cap — same smoothing the burst gate applies, done here
         # as a FREE in-memory filter of the 60s records already fetched below (the
         # queue processor holds a single-owner lock, so a read-then-decide is race-free
         # unlike the concurrent burst path, which uses an atomic counter instead).
         # Defaults to queue_regeneration_rate (≈ the drain's sustained quota req/s).
-        short_window_rps = float(config.get('short_window_rps', 0)) or queue_regen_rate
+        short_window_rps = float(config.get("short_window_rps", 0)) or queue_regen_rate
     except KeyError:
         raise ValueError(f"Model config not found: {model_id}. Run 'make create-config MODEL=...'")
     except Exception as e:
@@ -226,9 +232,7 @@ def try_reserve_queue_capacity_batch(
 
     # Step 2: Query current consumption to determine available capacity
     consumption_records = dynamo_service.query_queue_consumption_records(
-        model_id=model_id,
-        window_seconds=60,
-        consistent_read=True
+        model_id=model_id, window_seconds=60, consistent_read=True
     )
 
     current_time = time.time()
@@ -236,7 +240,7 @@ def try_reserve_queue_capacity_batch(
         capacity=queue_capacity,
         consumption_records=consumption_records,
         regeneration_rate=queue_regen_rate,
-        current_time=current_time
+        current_time=current_time,
     )
 
     # Step 2a: Sub-minute (2s) rate cap. FREE in-memory filter of the 60s records
@@ -247,10 +251,7 @@ def try_reserve_queue_capacity_batch(
     # the queue processor holds a single-owner lock, so this reader is the only writer.
     SHORT_WINDOW_SECONDS = 2
     cutoff_ms = int((current_time - SHORT_WINDOW_SECONDS) * 1000)
-    recent_records = [
-        r for r in consumption_records
-        if int(r['sk'].split('#')[0]) >= cutoff_ms
-    ]
+    recent_records = [r for r in consumption_records if int(r["sk"].split("#")[0]) >= cutoff_ms]
 
     # RPS dimension: cap requests dispatched per 2s.
     short_window_cap = max(1, int(short_window_rps * SHORT_WINDOW_SECONDS))
@@ -265,7 +266,7 @@ def try_reserve_queue_capacity_batch(
     tps_slot_headroom = short_window_headroom  # default: TPS not gating
     if tpm_queue_regen_rate > 0 and flat_tpm_estimate > 0:
         short_window_tps_cap = max(1, int(tpm_queue_regen_rate * SHORT_WINDOW_SECONDS))
-        recent_tokens_2s = sum(int(r.get('estimated_tokens', 0) or 0) for r in recent_records)
+        recent_tokens_2s = sum(int(r.get("estimated_tokens", 0) or 0) for r in recent_records)
         token_headroom = max(0, short_window_tps_cap - recent_tokens_2s)
         tps_slot_headroom = token_headroom // flat_tpm_estimate
 
@@ -273,15 +274,20 @@ def try_reserve_queue_capacity_batch(
     short_window_headroom = min(short_window_headroom, tps_slot_headroom)
     if short_window_headroom <= 0:
         # 2s window full on RPS or TPS — wait for it to roll rather than dispatch a spike.
-        logger.info(f"Sub-minute cap reached: recent_2s={recent_2s}, rps_cap={short_window_cap}, "
-                    f"tps_slot_headroom={tps_slot_headroom}, waiting")
-        return (False, {
-            'reason': 'short_window_rate_cap',
-            'available_capacity': available_capacity,
-            'recent_2s': recent_2s,
-            'short_window_cap': short_window_cap,
-            'wait_seconds': 1.0,
-        })
+        logger.info(
+            f"Sub-minute cap reached: recent_2s={recent_2s}, rps_cap={short_window_cap}, "
+            f"tps_slot_headroom={tps_slot_headroom}, waiting"
+        )
+        return (
+            False,
+            {
+                "reason": "short_window_rate_cap",
+                "available_capacity": available_capacity,
+                "recent_2s": recent_2s,
+                "short_window_cap": short_window_cap,
+                "wait_seconds": 1.0,
+            },
+        )
 
     # Step 2b: Check TPM capacity (if configured)
     available_tpm = None
@@ -291,58 +297,87 @@ def try_reserve_queue_capacity_batch(
             tpm_capacity=tpm_queue_capacity,
             consumption_records=consumption_records,
             tpm_regeneration_rate=tpm_queue_regen_rate,
-            current_time=current_time
+            current_time=current_time,
         )
-        logger.info(f"TPM queue check: available_tpm={available_tpm:.0f}, "
-                    f"tpm_queue_capacity={tpm_queue_capacity}")
+        logger.info(
+            f"TPM queue check: available_tpm={available_tpm:.0f}, "
+            f"tpm_queue_capacity={tpm_queue_capacity}"
+        )
 
         if available_tpm <= 0:
-            wait_seconds = max(1.0, (1 - available_tpm) / tpm_queue_regen_rate) if tpm_queue_regen_rate > 0 else 10
-            logger.info(f"No TPM queue capacity: {available_tpm:.0f}, wait_seconds={wait_seconds:.2f}")
-            return (False, {
-                'reason': 'no_tpm_capacity',
-                'available_capacity': available_capacity,
-                'available_tpm': available_tpm,
-                'wait_seconds': wait_seconds
-            })
+            wait_seconds = (
+                max(1.0, (1 - available_tpm) / tpm_queue_regen_rate)
+                if tpm_queue_regen_rate > 0
+                else 10
+            )
+            logger.info(
+                f"No TPM queue capacity: {available_tpm:.0f}, wait_seconds={wait_seconds:.2f}"
+            )
+            return (
+                False,
+                {
+                    "reason": "no_tpm_capacity",
+                    "available_capacity": available_capacity,
+                    "available_tpm": available_tpm,
+                    "wait_seconds": wait_seconds,
+                },
+            )
 
     # Step 2c: Mantle split-quota gate — drain only when BOTH iTPM and oTPM queue
     # capacity is available (min-of-both). oTPM (the tighter 2M bucket) usually binds first.
-    if backend == 'mantle' and (itpm_queue_capacity > 0 or otpm_queue_capacity > 0):
+    if backend == "mantle" and (itpm_queue_capacity > 0 or otpm_queue_capacity > 0):
         available_itpm = dynamo_service.calculate_available_split_tpm(
-            tpm_capacity=itpm_queue_capacity, consumption_records=consumption_records,
-            tpm_regeneration_rate=itpm_queue_regen_rate, dimension='INPUT', current_time=current_time,
+            tpm_capacity=itpm_queue_capacity,
+            consumption_records=consumption_records,
+            tpm_regeneration_rate=itpm_queue_regen_rate,
+            dimension="INPUT",
+            current_time=current_time,
         )
         available_otpm = dynamo_service.calculate_available_split_tpm(
-            tpm_capacity=otpm_queue_capacity, consumption_records=consumption_records,
-            tpm_regeneration_rate=otpm_queue_regen_rate, dimension='OUTPUT', current_time=current_time,
+            tpm_capacity=otpm_queue_capacity,
+            consumption_records=consumption_records,
+            tpm_regeneration_rate=otpm_queue_regen_rate,
+            dimension="OUTPUT",
+            current_time=current_time,
         )
-        logger.info(f"Mantle queue check: available_itpm={available_itpm:.0f}, available_otpm={available_otpm:.0f}")
+        logger.info(
+            f"Mantle queue check: available_itpm={available_itpm:.0f}, available_otpm={available_otpm:.0f}"
+        )
         tighter, regen = (available_otpm, otpm_queue_regen_rate)
         if available_itpm < available_otpm:
             tighter, regen = (available_itpm, itpm_queue_regen_rate)
         if tighter <= 0:
             wait_seconds = max(1.0, (1 - tighter) / regen) if regen > 0 else 10
-            logger.info(f"No mantle queue capacity (tighter dim={tighter:.0f}), wait_seconds={wait_seconds:.2f}")
-            return (False, {
-                'reason': 'no_mantle_capacity',
-                'available_capacity': available_capacity,
-                'available_itpm': available_itpm,
-                'available_otpm': available_otpm,
-                'wait_seconds': wait_seconds,
-            })
+            logger.info(
+                f"No mantle queue capacity (tighter dim={tighter:.0f}), wait_seconds={wait_seconds:.2f}"
+            )
+            return (
+                False,
+                {
+                    "reason": "no_mantle_capacity",
+                    "available_capacity": available_capacity,
+                    "available_itpm": available_itpm,
+                    "available_otpm": available_otpm,
+                    "wait_seconds": wait_seconds,
+                },
+            )
 
     # Step 3: Determine how many tokens we can reserve (RPM dimension)
     if available_capacity <= 0:
         # Calculate wait time until 1 token is available
         wait_seconds = (1 - available_capacity) / queue_regen_rate
-        logger.info(f"No RPM queue capacity available: {available_capacity:.2f}, wait_seconds={wait_seconds:.2f}")
-        return (False, {
-            'reason': 'no_capacity',
-            'available_capacity': available_capacity,
-            'available_tpm': available_tpm,
-            'wait_seconds': wait_seconds
-        })
+        logger.info(
+            f"No RPM queue capacity available: {available_capacity:.2f}, wait_seconds={wait_seconds:.2f}"
+        )
+        return (
+            False,
+            {
+                "reason": "no_capacity",
+                "available_capacity": available_capacity,
+                "available_tpm": available_tpm,
+                "wait_seconds": wait_seconds,
+            },
+        )
 
     # Reserve up to available capacity, but not more than requested batch_size, and
     # never more than the sub-minute (2s) headroom — this is what actually smooths
@@ -351,38 +386,43 @@ def try_reserve_queue_capacity_batch(
     if actual_reserve < 1:
         # Fractional capacity available but less than 1
         wait_seconds = (1 - available_capacity) / queue_regen_rate
-        return (False, {
-            'reason': 'insufficient_capacity',
-            'available_capacity': available_capacity,
-            'available_tpm': available_tpm,
-            'wait_seconds': wait_seconds
-        })
+        return (
+            False,
+            {
+                "reason": "insufficient_capacity",
+                "available_capacity": available_capacity,
+                "available_tpm": available_tpm,
+                "wait_seconds": wait_seconds,
+            },
+        )
 
     # Step 4: Write consumption records for each reserved token
     consumption_records_written = []
     timestamp_base = int(time.time() * 1000)
 
     for i in range(actual_reserve):
-        request_id = f'{processor_id}_batch_{timestamp_base}_{i}'
+        request_id = f"{processor_id}_batch_{timestamp_base}_{i}"
         try:
             # Stage 1a: seed the consumption record with the flat per-slot estimate
             # so the TPM window-sum is non-zero and trackable. Mantle splits the
             # estimate across input/output; runtime tracks the combined value only.
-            if backend == 'mantle':
+            if backend == "mantle":
                 result = dynamo_service.put_queue_consumption(
-                    model_id, request_id,
+                    model_id,
+                    request_id,
                     estimated_tokens=flat_tpm_estimate,
                     estimated_input_tokens=nominal_input_tokens,
                     estimated_output_tokens=flat_output_estimate,
                 )
             else:
                 result = dynamo_service.put_queue_consumption(
-                    model_id, request_id, estimated_tokens=flat_tpm_estimate,
+                    model_id,
+                    request_id,
+                    estimated_tokens=flat_tpm_estimate,
                 )
-            consumption_records_written.append({
-                'request_id': request_id,
-                'timestamp_ms': result['timestamp_ms']
-            })
+            consumption_records_written.append(
+                {"request_id": request_id, "timestamp_ms": result["timestamp_ms"]}
+            )
         except Exception as e:
             logger.warning(f"Failed to write consumption record {i}: {e}")
             # Continue - we'll reserve what we can
@@ -390,30 +430,33 @@ def try_reserve_queue_capacity_batch(
     reserved_count = len(consumption_records_written)
 
     if reserved_count == 0:
-        return (False, {
-            'reason': 'write_failed',
-            'available_capacity': available_capacity
-        })
+        return (
+            False,
+            {"reason": "write_failed", "available_capacity": available_capacity},
+        )
 
     # TPM consumed in the last 60s = sum of estimated_tokens over the records already
     # queried above (free — no extra read). This is the "consumed" signal the dispatch
     # log pairs with each request's own estimate to compute would_exceed.
-    tpm_consumed_last_60s = sum(
-        int(r.get('estimated_tokens', 0) or 0) for r in consumption_records
+    tpm_consumed_last_60s = sum(int(r.get("estimated_tokens", 0) or 0) for r in consumption_records)
+
+    logger.info(
+        f"Batch capacity reserved: requested={batch_size}, reserved={reserved_count}, "
+        f"available={available_capacity:.2f}, flat_tpm_estimate={flat_tpm_estimate}, "
+        f"tpm_consumed_last_60s={tpm_consumed_last_60s}"
     )
 
-    logger.info(f"Batch capacity reserved: requested={batch_size}, reserved={reserved_count}, "
-                f"available={available_capacity:.2f}, flat_tpm_estimate={flat_tpm_estimate}, "
-                f"tpm_consumed_last_60s={tpm_consumed_last_60s}")
-
-    return (True, {
-        'reserved': reserved_count,
-        'available_capacity': available_capacity,
-        'consumption_records': consumption_records_written,
-        'flat_tpm_estimate': flat_tpm_estimate,
-        'tpm_consumed_last_60s': tpm_consumed_last_60s,
-        'tpm_queue_capacity': tpm_queue_capacity,
-    })
+    return (
+        True,
+        {
+            "reserved": reserved_count,
+            "available_capacity": available_capacity,
+            "consumption_records": consumption_records_written,
+            "flat_tpm_estimate": flat_tpm_estimate,
+            "tpm_consumed_last_60s": tpm_consumed_last_60s,
+            "tpm_queue_capacity": tpm_queue_capacity,
+        },
+    )
 
 
 def process_single_item(item: Dict[str, Any], model_id: str) -> Dict[str, Any]:
@@ -432,40 +475,52 @@ def process_single_item(item: Dict[str, Any], model_id: str) -> Dict[str, Any]:
     Returns:
         Dict with 'item', 'success', 'error' keys
     """
-    request_id = item.get('request_id', 'unknown')
-    correlation_id = item.get('correlation_id', '')
-    task_token = item.get('task_token')
-    execution_arn = item.get('execution_arn')
+    request_id = item.get("request_id", "unknown")
+    correlation_id = item.get("correlation_id", "")
+    task_token = item.get("task_token")
+    execution_arn = item.get("execution_arn")
     # Honest-outcomes (Cato C-5): bedrock_processor requires tenant_id to have
     # propagated or it fails the request without spending quota. enqueue_request
     # stores it on the queue item; forward it through the async invoke so the
     # queued path carries the same propagation the immediate (SFN) path does.
-    tenant_id = item.get('tenant_id')
+    tenant_id = item.get("tenant_id")
 
     if not task_token or not execution_arn:
-        logger.error(f"Missing task_token or execution_arn: request_id={request_id}, correlation_id={correlation_id}")
-        return {'item': item, 'success': False, 'error': 'Missing task_token or execution_arn'}
+        logger.error(
+            f"Missing task_token or execution_arn: request_id={request_id}, correlation_id={correlation_id}"
+        )
+        return {
+            "item": item,
+            "success": False,
+            "error": "Missing task_token or execution_arn",
+        }
 
     try:
         # Invoke Bedrock Processor with execution_arn (it will resolve payload)
         lambda_client.invoke(
             FunctionName=BEDROCK_PROCESSOR_ARN,
-            InvocationType='Event',  # Async invocation
-            Payload=json.dumps({
-                'task_token': task_token,
-                'model_id': model_id,
-                'request_id': request_id,
-                'tenant_id': tenant_id,
-                'execution_arn': execution_arn,  # Processor will call describe_execution
-                'correlation_id': correlation_id
-            })
+            InvocationType="Event",  # Async invocation
+            Payload=json.dumps(
+                {
+                    "task_token": task_token,
+                    "model_id": model_id,
+                    "request_id": request_id,
+                    "tenant_id": tenant_id,
+                    "execution_arn": execution_arn,  # Processor will call describe_execution
+                    "correlation_id": correlation_id,
+                }
+            ),
         )
-        logger.info(f"Forwarded to Bedrock Processor: request_id={request_id}, correlation_id={correlation_id}")
-        return {'item': item, 'success': True, 'error': None}
+        logger.info(
+            f"Forwarded to Bedrock Processor: request_id={request_id}, correlation_id={correlation_id}"
+        )
+        return {"item": item, "success": True, "error": None}
 
     except Exception as e:
-        logger.error(f"Failed to invoke Bedrock Processor: request_id={request_id}, correlation_id={correlation_id}, error={e}")
-        return {'item': item, 'success': False, 'error': str(e)}
+        logger.error(
+            f"Failed to invoke Bedrock Processor: request_id={request_id}, correlation_id={correlation_id}, error={e}"
+        )
+        return {"item": item, "success": False, "error": str(e)}
 
 
 def handler(event, context):
@@ -473,10 +528,10 @@ def handler(event, context):
     logger.info(f"Queue Processor triggered: {json.dumps(event)}")
 
     # Extract model_id from EventBridge event
-    model_id = event.get('detail', {}).get('model_id')
+    model_id = event.get("detail", {}).get("model_id")
     if not model_id:
         logger.error("No model_id in event, cannot process queue")
-        return {'processed': 0, 'error': 'No model_id in event'}
+        return {"processed": 0, "error": "No model_id in event"}
 
     logger.info(f"Processing queue for model: {model_id}")
 
@@ -486,26 +541,26 @@ def handler(event, context):
     # Load configuration from DynamoDB (with fallbacks)
     try:
         config = dynamo_service.get_model_config(model_id)
-        batch_size = int(config.get('queue_batch_size', 10))
-        queue_capacity = int(config.get('queue_capacity', 100))
-        queue_regen_rate = float(config.get('queue_regeneration_rate', 0.75))
+        batch_size = int(config.get("queue_batch_size", 10))
+        queue_capacity = int(config.get("queue_capacity", 100))
+        queue_regen_rate = float(config.get("queue_regeneration_rate", 0.75))
         # TOKEN-AWARE dispatch config (optional; 0 = TPM gating disabled)
-        tpm_queue_capacity = int(config.get('tpm_queue_capacity', 0))
-        tpm_queue_regen_rate = float(config.get('tpm_queue_regeneration_rate', 0))
-        backend = config.get('backend', 'runtime')
-        itpm_queue_capacity = int(config.get('itpm_queue_capacity', 0))
-        itpm_queue_regen_rate = float(config.get('itpm_queue_regeneration_rate', 0))
-        otpm_queue_capacity = int(config.get('otpm_queue_capacity', 0))
-        otpm_queue_regen_rate = float(config.get('otpm_queue_regeneration_rate', 0))
+        tpm_queue_capacity = int(config.get("tpm_queue_capacity", 0))
+        tpm_queue_regen_rate = float(config.get("tpm_queue_regeneration_rate", 0))
+        backend = config.get("backend", "runtime")
+        itpm_queue_capacity = int(config.get("itpm_queue_capacity", 0))
+        itpm_queue_regen_rate = float(config.get("itpm_queue_regeneration_rate", 0))
+        otpm_queue_capacity = int(config.get("otpm_queue_capacity", 0))
+        otpm_queue_regen_rate = float(config.get("otpm_queue_regeneration_rate", 0))
         # Sub-minute rate cap defaults to the sustained queue quota (req/s)
-        short_window_rps = float(config.get('short_window_rps', 0)) or queue_regen_rate
+        short_window_rps = float(config.get("short_window_rps", 0)) or queue_regen_rate
         # EVEN-SPACING pacer target (tokens/min). When > 0, each item waits
         # item_tokens / (target/60) seconds since the previous dispatch — a GCRA/
         # leaky-bucket pacer that holds the ACTUAL Bedrock arrival rate at `target`
         # with no batch clumping or sub-second bursts (the 2s-window gates allowed
         # 9-13M 1s peaks that throttled — see "Ideal queue processor configuration").
         # 0 = disabled (fall back to the four sliding-window gates only).
-        queue_target_tpm = int(config.get('queue_target_tpm', 0))
+        queue_target_tpm = int(config.get("queue_target_tpm", 0))
         # Flat per-slot TPM estimate — used when a dequeued item carries no
         # per-request estimate (runtime path). Mirrors try_reserve_*'s derivation.
         flat_tpm_estimate = _flat_tpm_estimate(config, queue_target_tpm)
@@ -516,7 +571,7 @@ def handler(event, context):
         queue_regen_rate = 0.75
         tpm_queue_capacity = 0
         tpm_queue_regen_rate = 0
-        backend = 'runtime'
+        backend = "runtime"
         itpm_queue_capacity = 0
         itpm_queue_regen_rate = 0
         otpm_queue_capacity = 0
@@ -537,17 +592,19 @@ def handler(event, context):
     otpm_2s_cap = int(otpm_queue_regen_rate * SHORT_WINDOW_SEC) if otpm_queue_regen_rate > 0 else 0
     # Even-spacing pacer: target tokens/second (0 = disabled).
     queue_target_tps = queue_target_tpm / 60.0 if queue_target_tpm > 0 else 0.0
-    logger.info(f"Config loaded: batch_size={batch_size}, queue_capacity={queue_capacity}, "
-                f"rpm_2s_cap={rpm_2s_cap}, tpm_2s_cap={tpm_2s_cap}, "
-                f"itpm_2s_cap={itpm_2s_cap}, otpm_2s_cap={otpm_2s_cap}, "
-                f"tpm_queue_capacity={tpm_queue_capacity}, flat_tpm_estimate={flat_tpm_estimate}, "
-                f"queue_target_tpm={queue_target_tpm}")
+    logger.info(
+        f"Config loaded: batch_size={batch_size}, queue_capacity={queue_capacity}, "
+        f"rpm_2s_cap={rpm_2s_cap}, tpm_2s_cap={tpm_2s_cap}, "
+        f"itpm_2s_cap={itpm_2s_cap}, otpm_2s_cap={otpm_2s_cap}, "
+        f"tpm_queue_capacity={tpm_queue_capacity}, flat_tpm_estimate={flat_tpm_estimate}, "
+        f"queue_target_tpm={queue_target_tpm}"
+    )
 
     # Acquire processing lock using heartbeat-based locking
     processor_id = context.aws_request_id
     if not dynamo_service.acquire_processor_lock(model_id, processor_id):
         logger.info("Another processor running (active lock exists), exiting")
-        return {'processed': 0, 'message': 'Another processor running'}
+        return {"processed": 0, "message": "Another processor running"}
 
     logger.info(f"Acquired processor lock: model={model_id}, processor_id={processor_id}")
 
@@ -587,9 +644,9 @@ def handler(event, context):
                 if not dynamo_service.refresh_processor_heartbeat(model_id, processor_id):
                     logger.warning(f"Lost lock ownership, exiting: model={model_id}")
                     return {
-                        'processed': processed_count,
-                        'failed': failed_count,
-                        'status': 'lock_lost'
+                        "processed": processed_count,
+                        "failed": failed_count,
+                        "status": "lock_lost",
                     }
                 logger.info(f"Heartbeat refreshed: model={model_id}, processed={processed_count}")
                 last_heartbeat = time.time()
@@ -604,10 +661,10 @@ def handler(event, context):
                     )
                     rebuilt = deque()
                     for r in records:
-                        ts = int(r['sk'].split('#')[0]) / 1000.0
-                        combined = int(r.get('estimated_tokens') or 0)
-                        input_tokens = int(r.get('estimated_input_tokens') or 0)
-                        output_tokens = int(r.get('estimated_output_tokens') or 0)
+                        ts = int(r["sk"].split("#")[0]) / 1000.0
+                        combined = int(r.get("estimated_tokens") or 0)
+                        input_tokens = int(r.get("estimated_input_tokens") or 0)
+                        output_tokens = int(r.get("estimated_output_tokens") or 0)
                         rebuilt.append((ts, combined, input_tokens, output_tokens))
                     dispatch_log = deque(sorted(rebuilt, key=lambda e: e[0]))
                     logger.info(f"dispatch_log resynced from DynamoDB: {len(dispatch_log)} records")
@@ -629,8 +686,10 @@ def handler(event, context):
                 should_reschedule = False
                 break
 
-            logger.info(f"Dequeued {len(items)} items for streaming dispatch "
-                        f"(total processed={processed_count})")
+            logger.info(
+                f"Dequeued {len(items)} items for streaming dispatch "
+                f"(total processed={processed_count})"
+            )
 
             # A full chunk means the queue is still deep — hand off to a successor on
             # exit (Bug 2). A short chunk means the queue is nearly drained, so leave
@@ -654,34 +713,33 @@ def handler(event, context):
                     dispatch_log.popleft()
 
                 now = time.time()
-                item_tokens = int(item.get('estimated_tokens') or flat_tpm_estimate)
-                item_input_tokens = int(item.get('estimated_input_tokens') or 0)
-                item_output_tokens = int(item.get('estimated_output_tokens') or 0)
+                item_tokens = int(item.get("estimated_tokens") or flat_tpm_estimate)
+                item_input_tokens = int(item.get("estimated_input_tokens") or 0)
+                item_output_tokens = int(item.get("estimated_output_tokens") or 0)
 
                 # ── Gate 1: RPM 2s ────────────────────────────────────────────────
                 recent_2s_count = sum(
-                    1 for entry in dispatch_log
-                    if entry[0] >= now - SHORT_WINDOW_SEC
+                    1 for entry in dispatch_log if entry[0] >= now - SHORT_WINDOW_SEC
                 )
                 if recent_2s_count >= rpm_2s_cap:
                     in_win = [
-                        entry[0] for entry in dispatch_log
-                        if entry[0] >= now - SHORT_WINDOW_SEC
+                        entry[0] for entry in dispatch_log if entry[0] >= now - SHORT_WINDOW_SEC
                     ]
                     sleep_for = max(0.001, (min(in_win) + SHORT_WINDOW_SEC) - now + 0.005)
-                    logger.info(f"Gate RPM-2s: count={recent_2s_count}>={rpm_2s_cap}, sleeping {sleep_for:.3f}s")
+                    logger.info(
+                        f"Gate RPM-2s: count={recent_2s_count}>={rpm_2s_cap}, sleeping {sleep_for:.3f}s"
+                    )
                     time.sleep(sleep_for)
                     now = time.time()
 
                 # ── Gate 2: token 2s windows ───────────────────────────────────────
-                if backend == 'mantle':
+                if backend == "mantle":
                     for label, tokens, index, cap in (
-                        ('iTPM', item_input_tokens, 2, itpm_2s_cap),
-                        ('oTPM', item_output_tokens, 3, otpm_2s_cap),
+                        ("iTPM", item_input_tokens, 2, itpm_2s_cap),
+                        ("oTPM", item_output_tokens, 3, otpm_2s_cap),
                     ):
                         sleep_for = _token_gate_sleep(
-                            dispatch_log, tokens, index,
-                            SHORT_WINDOW_SEC, cap, now
+                            dispatch_log, tokens, index, SHORT_WINDOW_SEC, cap, now
                         )
                         if sleep_for > 0:
                             logger.info(
@@ -692,8 +750,7 @@ def handler(event, context):
                             now = time.time()
                 elif tpm_2s_cap > 0:
                     sleep_for = _token_gate_sleep(
-                        dispatch_log, item_tokens, 1,
-                        SHORT_WINDOW_SEC, tpm_2s_cap, now
+                        dispatch_log, item_tokens, 1, SHORT_WINDOW_SEC, tpm_2s_cap, now
                     )
                     if sleep_for > 0:
                         logger.info(
@@ -704,28 +761,23 @@ def handler(event, context):
                         now = time.time()
 
                 # ── Gate 3: RPM 60s ────────────────────────────────────────────────
-                recent_60s_count = sum(
-                    1 for entry in dispatch_log if entry[0] >= now - 60.0
-                )
+                recent_60s_count = sum(1 for entry in dispatch_log if entry[0] >= now - 60.0)
                 if recent_60s_count >= queue_capacity:
-                    in_win_60 = [
-                        entry[0] for entry in dispatch_log
-                        if entry[0] >= now - 60.0
-                    ]
+                    in_win_60 = [entry[0] for entry in dispatch_log if entry[0] >= now - 60.0]
                     sleep_for = max(0.001, (min(in_win_60) + 60.0) - now + 0.005)
-                    logger.info(f"Gate RPM-60s: count={recent_60s_count}>={queue_capacity}, sleeping {sleep_for:.3f}s")
+                    logger.info(
+                        f"Gate RPM-60s: count={recent_60s_count}>={queue_capacity}, sleeping {sleep_for:.3f}s"
+                    )
                     time.sleep(sleep_for)
                     now = time.time()
 
                 # ── Gate 4: token 60s windows ──────────────────────────────────────
-                if backend == 'mantle':
+                if backend == "mantle":
                     for label, tokens, index, cap in (
-                        ('iTPM', item_input_tokens, 2, itpm_queue_capacity),
-                        ('oTPM', item_output_tokens, 3, otpm_queue_capacity),
+                        ("iTPM", item_input_tokens, 2, itpm_queue_capacity),
+                        ("oTPM", item_output_tokens, 3, otpm_queue_capacity),
                     ):
-                        sleep_for = _token_gate_sleep(
-                            dispatch_log, tokens, index, 60.0, cap, now
-                        )
+                        sleep_for = _token_gate_sleep(dispatch_log, tokens, index, 60.0, cap, now)
                         if sleep_for > 0:
                             logger.info(
                                 f"Gate {label}-60s: item={tokens}, cap={cap}, "
@@ -735,8 +787,7 @@ def handler(event, context):
                             now = time.time()
                 elif tpm_queue_capacity > 0:
                     sleep_for = _token_gate_sleep(
-                        dispatch_log, item_tokens, 1,
-                        60.0, tpm_queue_capacity, now
+                        dispatch_log, item_tokens, 1, 60.0, tpm_queue_capacity, now
                     )
                     if sleep_for > 0:
                         logger.info(
@@ -769,14 +820,19 @@ def handler(event, context):
                 # invoke's completion, so the emitted rate tracks the target.
                 dispatch_ts = time.time()
                 last_dispatch_ts = dispatch_ts
-                dispatch_log.append((
-                    dispatch_ts,
-                    item_tokens,
-                    item_input_tokens,
-                    item_output_tokens,
-                ))
+                dispatch_log.append(
+                    (
+                        dispatch_ts,
+                        item_tokens,
+                        item_input_tokens,
+                        item_output_tokens,
+                    )
+                )
                 chunk_futures.append(
-                    (item, dispatch_executor.submit(process_single_item, item, model_id))
+                    (
+                        item,
+                        dispatch_executor.submit(process_single_item, item, model_id),
+                    )
                 )
 
             # Reconcile the chunk: block on each future (they have largely resolved during
@@ -786,29 +842,33 @@ def handler(event, context):
                 try:
                     result = future.result(timeout=60)
                 except Exception as e:
-                    result = {'item': item, 'success': False, 'error': str(e)}
-                if result['success']:
+                    result = {"item": item, "success": False, "error": str(e)}
+                if result["success"]:
                     chunk_success += 1
                     processed_count += 1
                 else:
                     chunk_failed += 1
                     failed_count += 1
-                    error_reason = result['error'] or 'Unknown error'
+                    error_reason = result["error"] or "Unknown error"
                     chunk_errors.append(error_reason)
                     dynamo_service.record_invocation_error(
                         model_id=model_id,
-                        request_id=item.get('request_id', 'unknown'),
-                        execution_arn=item.get('execution_arn'),
-                        error=error_reason
+                        request_id=item.get("request_id", "unknown"),
+                        execution_arn=item.get("execution_arn"),
+                        error=error_reason,
                     )
 
             # Log chunk summary with error details when failures occur
             if chunk_errors:
-                logger.info(f"Chunk complete: {chunk_success} success, {chunk_failed} failed, "
-                           f"total processed={processed_count}, errors={chunk_errors}")
+                logger.info(
+                    f"Chunk complete: {chunk_success} success, {chunk_failed} failed, "
+                    f"total processed={processed_count}, errors={chunk_errors}"
+                )
             else:
-                logger.info(f"Chunk complete: {chunk_success} success, {chunk_failed} failed, "
-                           f"total processed={processed_count}")
+                logger.info(
+                    f"Chunk complete: {chunk_success} success, {chunk_failed} failed, "
+                    f"total processed={processed_count}"
+                )
 
             # Circuit breaker: track consecutive full-chunk failures
             if chunk_success == 0 and chunk_failed > 0:
@@ -821,26 +881,37 @@ def handler(event, context):
                         fresh_config = dynamo_service.get_model_config(model_id)
                     except Exception:
                         fresh_config = config  # Fall back to stale config if reload fails
-                    if fresh_config.get('circuit_breaker_disabled'):
-                        logger.warning("Circuit breaker would trip but is DISABLED via config — continuing")
+                    if fresh_config.get("circuit_breaker_disabled"):
+                        logger.warning(
+                            "Circuit breaker would trip but is DISABLED via config — continuing"
+                        )
                         consecutive_batch_failures = 0
                     else:
-                        logger.error("Circuit breaker tripped: 3 consecutive chunk failures, exiting")
+                        logger.error(
+                            "Circuit breaker tripped: 3 consecutive chunk failures, exiting"
+                        )
                         # Emit EMF metric for CloudWatch alarm
                         try:
                             cb_emf = {
                                 "_aws": {
                                     "Timestamp": int(time.time() * 1000),
-                                    "CloudWatchMetrics": [{
-                                        "Namespace": "BedrockShaper",
-                                        "Dimensions": [["ServiceName", "model_id"]],
-                                        "Metrics": [{"Name": "CircuitBreakerTripped", "Unit": "Count"}]
-                                    }]
+                                    "CloudWatchMetrics": [
+                                        {
+                                            "Namespace": "BedrockShaper",
+                                            "Dimensions": [["ServiceName", "model_id"]],
+                                            "Metrics": [
+                                                {
+                                                    "Name": "CircuitBreakerTripped",
+                                                    "Unit": "Count",
+                                                }
+                                            ],
+                                        }
+                                    ],
                                 },
                                 "ServiceName": "TrafficShaper",
                                 "model_id": model_id,
                                 "processor_id": processor_id,
-                                "CircuitBreakerTripped": 1
+                                "CircuitBreakerTripped": 1,
                             }
                             print(json.dumps(cb_emf))
                         except Exception:
@@ -857,28 +928,30 @@ def handler(event, context):
                 emf = {
                     "_aws": {
                         "Timestamp": int(time.time() * 1000),
-                        "CloudWatchMetrics": [{
-                            "Namespace": "BedrockShaper",
-                            "Dimensions": [["ServiceName", "model_id"]],
-                            "Metrics": [
-                                {"Name": "ProcessingRate", "Unit": "Count"}
-                            ]
-                        }]
+                        "CloudWatchMetrics": [
+                            {
+                                "Namespace": "BedrockShaper",
+                                "Dimensions": [["ServiceName", "model_id"]],
+                                "Metrics": [{"Name": "ProcessingRate", "Unit": "Count"}],
+                            }
+                        ],
                     },
                     "ServiceName": "TrafficShaper",
                     "model_id": model_id,
                     "processor_id": processor_id,
-                    "ProcessingRate": chunk_success
+                    "ProcessingRate": chunk_success,
                 }
                 print(json.dumps(emf))
             except Exception:
                 logger.debug("Failed to emit EMF metrics", exc_info=True)
 
-        logger.info(f"Queue processing complete: model={model_id}, processed={processed_count}, failed={failed_count}")
+        logger.info(
+            f"Queue processing complete: model={model_id}, processed={processed_count}, failed={failed_count}"
+        )
         return {
-            'processed': processed_count,
-            'failed': failed_count,
-            'status': 'complete'
+            "processed": processed_count,
+            "failed": failed_count,
+            "status": "complete",
         }
 
     finally:

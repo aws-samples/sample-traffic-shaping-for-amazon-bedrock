@@ -35,7 +35,9 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
-OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.bedrock_quota_cache.json')
+OUTPUT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", ".bedrock_quota_cache.json"
+)
 
 # Base model IDs excluded from quota matching (see docs/bedrock-inference-endpoints.md).
 # Everything else with an ACTIVE inference profile and a list_foundation_models record
@@ -44,8 +46,8 @@ OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.b
 # being filled from the wrong pool. IDs are bare (CRIS-prefix-stripped), matching
 # baseModelId as returned by get_inference_profiles().
 PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS = (
-    'meta.llama4-maverick-17b-instruct-v1:0',
-    'meta.llama4-scout-17b-instruct-v1:0',
+    "meta.llama4-maverick-17b-instruct-v1:0",
+    "meta.llama4-scout-17b-instruct-v1:0",
 )
 
 # Only keep quotas that shape our rate limiter: per-model TPM/RPM (runtime) and
@@ -53,11 +55,11 @@ PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS = (
 # provisioned throughput, model customization, tokens-per-day ceilings, and
 # unrelated Bedrock features (Guardrails, Agents, Flows, etc.) — is noise here.
 RATE_QUOTA_PATTERNS = [
-    re.compile(r'model inference tokens per minute for .+'),
-    re.compile(r'model inference requests per minute for .+'),
-    re.compile(r'^InvokeModel requests per minute for .+'),
-    re.compile(r'^\[bedrock-mantle endpoint\] Input tokens per minute for .+'),
-    re.compile(r'^\[bedrock-mantle endpoint\] Output tokens per minute for .+'),
+    re.compile(r"model inference tokens per minute for .+"),
+    re.compile(r"model inference requests per minute for .+"),
+    re.compile(r"^InvokeModel requests per minute for .+"),
+    re.compile(r"^\[bedrock-mantle endpoint\] Input tokens per minute for .+"),
+    re.compile(r"^\[bedrock-mantle endpoint\] Output tokens per minute for .+"),
 ]
 
 
@@ -71,7 +73,7 @@ def is_rate_quota(quota_name):
 # quota-name suffixes with no corresponding meaning in the model record. The negative lookahead
 # protects a *real* decimal version ('v2.7', 'V3.2') from being mangled into a dangling
 # fragment -- those digits are meaningful model-family identity, not noise to strip.
-VERSION_TOKEN_RE = re.compile(r'\bv\d+(:\d+)?\b(?!\.\d)', re.IGNORECASE)
+VERSION_TOKEN_RE = re.compile(r"\bv\d+(:\d+)?\b(?!\.\d)", re.IGNORECASE)
 
 
 def normalize_match_key(s):
@@ -83,8 +85,8 @@ def normalize_match_key(s):
     '(25.02)' / '25.02' -- these are spacing/punctuation quirks, not different models.
     """
     s = s.lower()
-    s = VERSION_TOKEN_RE.sub('', s)
-    s = re.sub(r'[^a-z0-9]+', '', s)
+    s = VERSION_TOKEN_RE.sub("", s)
+    s = re.sub(r"[^a-z0-9]+", "", s)
     return s
 
 
@@ -97,8 +99,8 @@ def match_key_tokens(s):
     partial-word collision the fallback must avoid.
     """
     s = s.lower()
-    s = VERSION_TOKEN_RE.sub('', s)
-    return tuple(re.findall(r'[a-z0-9]+', s))
+    s = VERSION_TOKEN_RE.sub("", s)
+    return tuple(re.findall(r"[a-z0-9]+", s))
 
 
 def _is_token_suffix(haystack_tokens, needle_tokens):
@@ -111,49 +113,49 @@ def _is_token_suffix(haystack_tokens, needle_tokens):
     return (
         len(needle_tokens) >= 2
         and len(haystack_tokens) >= len(needle_tokens)
-        and haystack_tokens[-len(needle_tokens):] == needle_tokens
+        and haystack_tokens[-len(needle_tokens) :] == needle_tokens
     )
 
 
 def split_suffix(quota_name):
-    idx = quota_name.lower().rfind(' for ')
+    idx = quota_name.lower().rfind(" for ")
     if idx == -1:
         return None
-    return quota_name[idx + len(' for '):]
+    return quota_name[idx + len(" for ") :]
 
 
 def classify_quota(quota_name):
     """Return ('mantle', 'itpm'|'otpm') or ('runtime', 'tpm'|'rpm', variant), or None."""
     lname = quota_name.lower()
-    if 'bedrock-mantle' in lname:
-        if 'input tokens' in lname:
-            return ('mantle', 'itpm')
-        if 'output tokens' in lname:
-            return ('mantle', 'otpm')
+    if "bedrock-mantle" in lname:
+        if "input tokens" in lname:
+            return ("mantle", "itpm")
+        if "output tokens" in lname:
+            return ("mantle", "otpm")
         return None
 
-    if 'tokens per minute' in lname:
-        metric = 'tpm'
-    elif 'requests per minute' in lname:
-        metric = 'rpm'
+    if "tokens per minute" in lname:
+        metric = "tpm"
+    elif "requests per minute" in lname:
+        metric = "rpm"
     else:
         return None
 
-    if 'global cross-region' in lname or 'global cross region' in lname:
-        variant = 'global_cross_region'
-    elif 'cross-region' in lname or 'cross region' in lname:
-        variant = 'cross_region'
-    elif 'latency' in lname and ('on-demand' in lname or 'on demand' in lname):
-        variant = 'on_demand_latency_optimized'
-    elif 'on-demand' in lname or 'on demand' in lname:
-        variant = 'on_demand'
-    elif lname.startswith('invokemodel'):
+    if "global cross-region" in lname or "global cross region" in lname:
+        variant = "global_cross_region"
+    elif "cross-region" in lname or "cross region" in lname:
+        variant = "cross_region"
+    elif "latency" in lname and ("on-demand" in lname or "on demand" in lname):
+        variant = "on_demand_latency_optimized"
+    elif "on-demand" in lname or "on demand" in lname:
+        variant = "on_demand"
+    elif lname.startswith("invokemodel"):
         # Generic AWS-documented RPM name with no explicit variant; treated as on-demand.
-        variant = 'on_demand'
+        variant = "on_demand"
     else:
         return None
 
-    return ('runtime', metric, variant)
+    return ("runtime", metric, variant)
 
 
 def profile_variant(inference_profile_id):
@@ -163,7 +165,11 @@ def profile_variant(inference_profile_id):
     match_profile_driven_quotas() and by build_profiles_cache() -- so there is
     never a second, possibly-drifting way to compute it.
     """
-    return 'global_cross_region' if (inference_profile_id or '').startswith('global.') else 'cross_region'
+    return (
+        "global_cross_region"
+        if (inference_profile_id or "").startswith("global.")
+        else "cross_region"
+    )
 
 
 def match_profile_driven_quotas(quotas, models, inference_profiles):
@@ -181,7 +187,7 @@ def match_profile_driven_quotas(quotas, models, inference_profiles):
     Returns {base_model_id: {'tpm': {variant: value}, 'rpm': {variant: value}}},
     where variant is always 'cross_region' or 'global_cross_region'.
     """
-    models_by_id = {m['modelId']: m for m in models}
+    models_by_id = {m["modelId"]: m for m in models}
 
     # Quota values usable by this path: runtime cross_region/global_cross_region only,
     # indexed by (variant, metric, normalized "for X" suffix key) for the exact-match fast
@@ -190,39 +196,41 @@ def match_profile_driven_quotas(quotas, models, inference_profiles):
     quota_index = {}
     quota_token_index = {}
     for q in quotas:
-        classification = classify_quota(q.get('QuotaName', ''))
-        if classification is None or classification[0] != 'runtime':
+        classification = classify_quota(q.get("QuotaName", ""))
+        if classification is None or classification[0] != "runtime":
             continue
         _, metric, variant = classification
-        if variant not in ('cross_region', 'global_cross_region'):
+        if variant not in ("cross_region", "global_cross_region"):
             continue
-        suffix = split_suffix(q.get('QuotaName', ''))
+        suffix = split_suffix(q.get("QuotaName", ""))
         if suffix is None:
             continue
         key = normalize_match_key(suffix)
-        quota_index.setdefault((variant, metric), {})[key] = q.get('Value')
+        quota_index.setdefault((variant, metric), {})[key] = q.get("Value")
         quota_token_index.setdefault((variant, metric), []).append(
-            (match_key_tokens(suffix), q.get('Value')),
+            (match_key_tokens(suffix), q.get("Value")),
         )
 
     results = {}
     for p in inference_profiles:
-        if p.get('status') != 'ACTIVE':
+        if p.get("status") != "ACTIVE":
             continue
-        base_model_id = p.get('baseModelId')
+        base_model_id = p.get("baseModelId")
         if base_model_id is None or base_model_id in PROFILE_MATCH_EXCLUDED_BASE_MODEL_IDS:
             continue
         model = models_by_id.get(base_model_id)
         if model is None:
             continue
 
-        variant = profile_variant(p.get('inferenceProfileId'))
-        full_key = normalize_match_key(f"{model.get('providerName') or ''} {model.get('modelName') or ''}")
-        bare_key = normalize_match_key(model.get('modelName') or '')
-        bare_tokens = match_key_tokens(model.get('modelName') or '')
+        variant = profile_variant(p.get("inferenceProfileId"))
+        full_key = normalize_match_key(
+            f"{model.get('providerName') or ''} {model.get('modelName') or ''}"
+        )
+        bare_key = normalize_match_key(model.get("modelName") or "")
+        bare_tokens = match_key_tokens(model.get("modelName") or "")
 
-        entry = results.setdefault(base_model_id, {'tpm': {}, 'rpm': {}})
-        for metric in ('tpm', 'rpm'):
+        entry = results.setdefault(base_model_id, {"tpm": {}, "rpm": {}})
+        for metric in ("tpm", "rpm"):
             variant_map = quota_index.get((variant, metric), {})
             value = variant_map.get(full_key, variant_map.get(bare_key))
             if value is None:
@@ -235,7 +243,8 @@ def match_profile_driven_quotas(quotas, models, inference_profiles):
                 # e.g. 'Twelve Labs Marengo' carries no token distinguishing the 2.7 sibling
                 # from the 3.0 one, so it must resolve to nothing rather than pick one.
                 candidates = {
-                    v for toks, v in quota_token_index.get((variant, metric), [])
+                    v
+                    for toks, v in quota_token_index.get((variant, metric), [])
                     if _is_token_suffix(toks, bare_tokens)
                 }
                 if len(candidates) == 1:
@@ -260,27 +269,27 @@ def build_profiles_cache(models, inference_profiles, profile_matches):
     visible in the cache rather than silently inheriting the wrong pool or being
     omitted.
     """
-    models_by_id = {m['modelId']: m for m in models}
+    models_by_id = {m["modelId"]: m for m in models}
     profiles_cache = {}
     for p in inference_profiles:
-        if p.get('status') != 'ACTIVE':
+        if p.get("status") != "ACTIVE":
             continue
-        profile_id = p.get('inferenceProfileId')
+        profile_id = p.get("inferenceProfileId")
         if profile_id is None:
             continue
 
-        base_model_id = p.get('baseModelId')
+        base_model_id = p.get("baseModelId")
         variant = profile_variant(profile_id)
         model = models_by_id.get(base_model_id, {})
-        tpm = profile_matches.get(base_model_id, {}).get('tpm', {}).get(variant)
+        tpm = profile_matches.get(base_model_id, {}).get("tpm", {}).get(variant)
 
         profiles_cache[profile_id] = {
-            'inferenceProfileId': profile_id,
-            'baseModelId': base_model_id,
-            'variant': variant,
-            'providerName': model.get('providerName'),
-            'modelName': model.get('modelName'),
-            'tpm': tpm,
+            "inferenceProfileId": profile_id,
+            "baseModelId": base_model_id,
+            "variant": variant,
+            "providerName": model.get("providerName"),
+            "modelName": model.get("modelName"),
+            "tpm": tpm,
         }
 
     return profiles_cache
@@ -290,19 +299,19 @@ def get_models(bedrock):
     response = bedrock.list_foundation_models()
     return [
         {
-            'modelId': m['modelId'],
-            'providerName': m.get('providerName'),
-            'modelName': m.get('modelName'),
+            "modelId": m["modelId"],
+            "providerName": m.get("providerName"),
+            "modelName": m.get("modelName"),
         }
-        for m in response.get('modelSummaries', [])
+        for m in response.get("modelSummaries", [])
     ]
 
 
 def base_model_id_from_arn(model_arn):
-    idx = model_arn.rfind('foundation-model/')
+    idx = model_arn.rfind("foundation-model/")
     if idx == -1:
         return None
-    return model_arn[idx + len('foundation-model/'):]
+    return model_arn[idx + len("foundation-model/") :]
 
 
 def get_inference_profiles(bedrock):
@@ -317,21 +326,23 @@ def get_inference_profiles(bedrock):
     while True:
         kwargs = {}
         if next_token:
-            kwargs['nextToken'] = next_token
+            kwargs["nextToken"] = next_token
         response = bedrock.list_inference_profiles(**kwargs)
-        for p in response.get('inferenceProfileSummaries', []):
+        for p in response.get("inferenceProfileSummaries", []):
             base_model_ids = []
-            for model in p.get('models', []):
-                base_model_id = base_model_id_from_arn(model.get('modelArn', ''))
+            for model in p.get("models", []):
+                base_model_id = base_model_id_from_arn(model.get("modelArn", ""))
                 if base_model_id and base_model_id not in base_model_ids:
                     base_model_ids.append(base_model_id)
-            profiles.append({
-                'inferenceProfileId': p.get('inferenceProfileId'),
-                'inferenceProfileName': p.get('inferenceProfileName'),
-                'status': p.get('status'),
-                'baseModelId': base_model_ids[0] if base_model_ids else None,
-            })
-        next_token = response.get('nextToken')
+            profiles.append(
+                {
+                    "inferenceProfileId": p.get("inferenceProfileId"),
+                    "inferenceProfileName": p.get("inferenceProfileName"),
+                    "status": p.get("status"),
+                    "baseModelId": base_model_ids[0] if base_model_ids else None,
+                }
+            )
+        next_token = response.get("nextToken")
         if not next_token:
             break
     return profiles
@@ -346,40 +357,42 @@ def resolve_region(session):
     which sys.exit(1)s if config.env is missing -- that would break `make refresh-quotas`
     run standalone before a first deploy.
     """
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.env')
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.env")
     if os.path.exists(config_path):
-        with open(config_path, encoding='utf-8') as f:
+        with open(config_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith('#'):
+                if not line or line.startswith("#"):
                     continue
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    if key.strip() == 'AWS_REGION' and value.strip():
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    if key.strip() == "AWS_REGION" and value.strip():
                         return value.strip()
 
-    return session.region_name or 'us-east-1'
+    return session.region_name or "us-east-1"
 
 
 def get_quotas(service_quotas):
     quotas = []
     next_token = None
     while True:
-        kwargs = {'ServiceCode': 'bedrock'}
+        kwargs = {"ServiceCode": "bedrock"}
         if next_token:
-            kwargs['NextToken'] = next_token
+            kwargs["NextToken"] = next_token
         response = service_quotas.list_service_quotas(**kwargs)
-        for q in response.get('Quotas', []):
-            if not is_rate_quota(q.get('QuotaName', '')):
+        for q in response.get("Quotas", []):
+            if not is_rate_quota(q.get("QuotaName", "")):
                 continue
-            quotas.append({
-                'QuotaCode': q.get('QuotaCode'),
-                'QuotaName': q.get('QuotaName'),
-                'Value': q.get('Value'),
-                'Unit': q.get('Unit'),
-                'Adjustable': q.get('Adjustable'),
-            })
-        next_token = response.get('NextToken')
+            quotas.append(
+                {
+                    "QuotaCode": q.get("QuotaCode"),
+                    "QuotaName": q.get("QuotaName"),
+                    "Value": q.get("Value"),
+                    "Unit": q.get("Unit"),
+                    "Adjustable": q.get("Adjustable"),
+                }
+            )
+        next_token = response.get("NextToken")
         if not next_token:
             break
     return quotas
@@ -389,49 +402,53 @@ def main():
     session = boto3.Session()
     region = resolve_region(session)
 
-    bedrock = session.client('bedrock', region_name=region)
-    service_quotas = session.client('service-quotas', region_name=region)
+    bedrock = session.client("bedrock", region_name=region)
+    service_quotas = session.client("service-quotas", region_name=region)
 
     output = {
-        'lastRefreshedAt': datetime.now(timezone.utc).isoformat(),
-        'region': region,
-        'models': get_models(bedrock),
+        "lastRefreshedAt": datetime.now(timezone.utc).isoformat(),
+        "region": region,
+        "models": get_models(bedrock),
     }
 
     try:
-        output['quotas'] = get_quotas(service_quotas)
+        output["quotas"] = get_quotas(service_quotas)
     except ClientError as e:
-        if e.response.get('Error', {}).get('Code') != 'AccessDeniedException':
+        if e.response.get("Error", {}).get("Code") != "AccessDeniedException":
             raise
-        message = 'AccessDenied: missing IAM action servicequotas:ListServiceQuotas'
-        output['quotas'] = []
-        output['quota_access_error'] = message
+        message = "AccessDenied: missing IAM action servicequotas:ListServiceQuotas"
+        output["quotas"] = []
+        output["quota_access_error"] = message
         print(message, file=sys.stderr)
 
     try:
-        output['inference_profiles'] = get_inference_profiles(bedrock)
+        output["inference_profiles"] = get_inference_profiles(bedrock)
     except ClientError as e:
-        if e.response.get('Error', {}).get('Code') != 'AccessDeniedException':
+        if e.response.get("Error", {}).get("Code") != "AccessDeniedException":
             raise
-        message = 'AccessDenied: missing IAM action bedrock:ListInferenceProfiles'
-        output['inference_profiles'] = []
-        output['inference_profile_access_error'] = message
+        message = "AccessDenied: missing IAM action bedrock:ListInferenceProfiles"
+        output["inference_profiles"] = []
+        output["inference_profile_access_error"] = message
         print(message, file=sys.stderr)
 
     # The consumed output: one entry per ACTIVE inference profile, each carrying only
     # its own pool's TPM. See build_profiles_cache() for the tpm sourcing rule.
     profile_matches = match_profile_driven_quotas(
-        output['quotas'], output['models'], output['inference_profiles'],
+        output["quotas"],
+        output["models"],
+        output["inference_profiles"],
     )
-    output['profiles'] = build_profiles_cache(
-        output['models'], output['inference_profiles'], profile_matches,
+    output["profiles"] = build_profiles_cache(
+        output["models"],
+        output["inference_profiles"],
+        profile_matches,
     )
 
-    with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 
     print(f"Wrote {OUTPUT_PATH}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

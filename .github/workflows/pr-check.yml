@@ -62,6 +62,18 @@ jobs:
           make SHELL=/bin/bash test-queue-processor-sim
           make SHELL=/bin/bash test-budget-manager-sim
 
+      - name: Code formatting (black)
+        run: make SHELL=/bin/bash format-check
+
+      - name: Type checking (mypy)
+        run: make SHELL=/bin/bash type-check
+
+      - name: Static security analysis (bandit)
+        run: make SHELL=/bin/bash security-scan
+
+      - name: Secret scanning (detect-secrets)
+        run: make SHELL=/bin/bash secrets-scan
+
       - name: Detect infrastructure changes
         id: infra-changes
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
