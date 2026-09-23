@@ -17,7 +17,7 @@ cryptography==50.0.0
 # Pinned to the v2 line: v3 removed the NagSuppressions API in favor of
 # CDK-native Validations.of().acknowledge(), which requires a newer CDK than
 # this stack targets (aws-cdk-lib 2.x). See infrastructure/semaphore_stack.py.
-cdk-nag==2.38.2
+cdk-nag==3.0.2
 
 # Testing dependencies
 pytest==9.1.1
