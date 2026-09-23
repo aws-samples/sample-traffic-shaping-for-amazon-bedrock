@@ -20,7 +20,7 @@ setup(
     extras_require={
         "test": [
             "pytest==9.1.1",
-            "hypothesis==6.165.10",
+            "hypothesis==6.168.0",
             "pytest-asyncio==1.4.0",
             "moto==5.2.2",
         ],
