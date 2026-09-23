@@ -15,7 +15,7 @@ setup(
         "constructs==10.8.1",
         # Security floor for a transitive dependency: CVE-2026-69247 /
         # GHSA-g6cj-pr64-35w5 affects cryptography 49.0.0; 50.0.0 is the fix.
-        "cryptography==50.0.0",
+        "cryptography==50.0.1",
     ],
     extras_require={
         "test": [
