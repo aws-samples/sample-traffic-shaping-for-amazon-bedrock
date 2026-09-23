@@ -10,7 +10,7 @@ setup(
     # Pinned to exact tested versions (mirrors requirements.txt) for reproducible,
     # supply-chain-safe installs. Bump deliberately; keep in sync with requirements.txt.
     install_requires=[
-        "boto3==1.43.78",
+        "boto3==1.43.98",
         "aws-cdk-lib==2.266.0",
         "constructs==10.8.1",
         # Security floor for a transitive dependency: CVE-2026-69247 /
