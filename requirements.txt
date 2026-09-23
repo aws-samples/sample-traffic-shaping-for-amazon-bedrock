@@ -13,7 +13,7 @@ constructs==10.8.1
 apscheduler==3.11.3
 # Explicit security floor for a transitive dependency (pulled in via moto/AWS libs).
 # CVE-2026-69247 / GHSA-g6cj-pr64-35w5 affects cryptography 49.0.0; 50.0.0 is the fix.
-cryptography==50.0.0
+cryptography==50.0.1
 # Pinned to the v2 line: v3 removed the NagSuppressions API in favor of
 # CDK-native Validations.of().acknowledge(), which requires a newer CDK than
 # this stack targets (aws-cdk-lib 2.x). See infrastructure/semaphore_stack.py.
