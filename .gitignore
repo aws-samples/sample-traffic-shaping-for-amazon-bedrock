@@ -138,6 +138,8 @@ prompts*
 .beads-credential-key
 .beads/proxieddb/
 .beads*
+.pi*
+.playwright*
 
 # ASH / detect-secrets scan output (never ship scan artifacts)
 .ash/

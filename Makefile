@@ -9,7 +9,7 @@
 	logs-recent logs-budget-recent logs-queue-recent logs-bedrock-recent logs-errors \
 	set-capacity get-capacity create-config create-starter-configs refresh-quotas \
 	inspect-dlq drain-dlq \
-	dashboard
+	dashboard demo
 
 # Default target
 help:
@@ -83,6 +83,9 @@ help:
 	@echo ""
 	@echo "Dashboard:"
 	@echo "  make dashboard          - Launch test initiation dashboard (http://localhost:8080)"
+	@echo ""
+	@echo "Demo:"
+	@echo "  make demo               - Walking skeleton: override/restore model config (0 invocations)"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean              - Clean up DynamoDB tables"
@@ -406,6 +409,10 @@ drain-dlq:
 dashboard:
 	@echo "Launching Test Dashboard..."
 	@source .venv/bin/activate && python scripts/test_dashboard.py
+
+# Demo
+demo:
+	@source .venv/bin/activate && python scripts/demo.py
 
 # Clean up DynamoDB tables
 clean:

@@ -32,10 +32,32 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config_loader
 from create_model_config import MODEL_MAP  # shared alias source
 
-CFG = config_loader.get_config_with_aws_check()
-REGION = CFG.get("AWS_REGION", "us-east-1")
-TABLE = CFG.get("SINGLE_TABLE_NAME", "semaphore-single-table")
-SFN_ARN = CFG.get("STATE_MACHINE_ARN")
+# Config is loaded on FIRST USE, not at import time. get_config_with_aws_check()
+# reads config.env and calls Bedrock, and sys.exit(1)s when either is missing --
+# doing that at module scope made this module unimportable (and, via
+# scripts/demo.py, made tests/test_demo_aggregation.py skip itself into a false
+# green) on any machine without config.env or working credentials.
+_CFG = None
+
+
+def _config():
+    """Load config + verify AWS access once per process, on demand."""
+    global _CFG
+    if _CFG is None:
+        _CFG = config_loader.get_config_with_aws_check()
+    return _CFG
+
+
+def _region():
+    return _config().get("AWS_REGION", "us-east-1")
+
+
+def _table_name():
+    return _config().get("SINGLE_TABLE_NAME", "semaphore-single-table")
+
+
+def _sfn_arn():
+    return _config().get("STATE_MACHINE_ARN")
 
 # One attempt, no boto retries — throttles must surface, not be silently absorbed.
 # Bounded read timeout so a slow model (e.g. grok under burst) fails fast as an
@@ -62,7 +84,7 @@ def pctl(values, p):
 
 def load_configs(dynamodb):
     """Return {model_id: config_dict} for every model_config CONFIG row."""
-    table = dynamodb.Table(TABLE)
+    table = dynamodb.Table(_table_name())
     resp = table.scan(
         FilterExpression="sk = :c AND entity_type = :t",
         ExpressionAttributeValues={":c": "CONFIG", ":t": "model_config"},
@@ -118,7 +140,7 @@ def baseline_call(brt, model_id, max_tokens):
 
 
 def run_baseline(model_id, n, interval, max_tokens):
-    brt = boto3.client("bedrock-runtime", region_name=REGION, config=_NO_RETRY)
+    brt = boto3.client("bedrock-runtime", region_name=_region(), config=_NO_RETRY)
     results = []
     start = time.time()
     with cf.ThreadPoolExecutor(max_workers=40) as ex:
@@ -144,7 +166,7 @@ def shaper_submit(sfn, model_id, req_id, max_tokens):
         "max_tokens": max_tokens,
     }
     try:
-        arn = sfn.start_execution(stateMachineArn=SFN_ARN, input=json.dumps(payload))[
+        arn = sfn.start_execution(stateMachineArn=_sfn_arn(), input=json.dumps(payload))[
             "executionArn"
         ]
         return arn
@@ -153,7 +175,7 @@ def shaper_submit(sfn, model_id, req_id, max_tokens):
 
 
 def run_shaper(model_id, n, interval, max_tokens):
-    sfn = boto3.client("stepfunctions", region_name=REGION)
+    sfn = boto3.client("stepfunctions", region_name=_region())
     arns = []
     start = time.time()
     with cf.ThreadPoolExecutor(max_workers=40) as ex:
@@ -204,7 +226,7 @@ def run_shaper(model_id, n, interval, max_tokens):
 
 def shaper_tokens(model_id, start_epoch, end_epoch):
     """Sum real input/output tokens the shaper reconciled, from its EMF metrics."""
-    cw = boto3.client("cloudwatch", region_name=REGION)
+    cw = boto3.client("cloudwatch", region_name=_region())
     dims = [
         {"Name": "ServiceName", "Value": "TrafficShaper"},
         {"Name": "model_id", "Value": model_id},
@@ -283,7 +305,11 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=48)
     args = ap.parse_args()
 
-    dynamodb = boto3.resource("dynamodb", region_name=REGION)
+    # Load config here, so the script still fails fast on a missing config.env or
+    # bad credentials before it does any work.
+    region = _region()
+
+    dynamodb = boto3.resource("dynamodb", region_name=region)
     configs = load_configs(dynamodb)
 
     if args.models:
@@ -294,7 +320,7 @@ def main():
     print(f"\n{'='*118}")
     print(
         f"2x BURST BENCHMARK — shaper vs baseline | duration={args.duration}s "
-        f"multiplier={args.multiplier}x max_tokens={args.max_tokens} region={REGION}"
+        f"multiplier={args.multiplier}x max_tokens={args.max_tokens} region={region}"
     )
     print(f"{'='*118}\n")
 
