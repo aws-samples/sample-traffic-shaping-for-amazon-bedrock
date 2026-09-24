@@ -59,6 +59,7 @@ def _table_name():
 def _sfn_arn():
     return _config().get("STATE_MACHINE_ARN")
 
+
 # One attempt, no boto retries — throttles must surface, not be silently absorbed.
 # Bounded read timeout so a slow model (e.g. grok under burst) fails fast as an
 # error instead of hanging the pool for the default 60s.

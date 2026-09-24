@@ -25,6 +25,7 @@ the validation path for this behavior.
 
 Run: python -m pytest tests/test_demo_aggregation.py -q
 """
+
 import sys
 import pathlib
 from decimal import Decimal
@@ -95,11 +96,20 @@ LIVE_CONFIG_ITEM = {
 def _rejected(attempts):
     """A request the simulated gate rejected on every one of its `attempts`
     tries, reaching converse() zero times (the retries-exhausted outcome)."""
-    return {"ok": False, "simulated_throttle": True, "real_throttle_code": None,
-            "error": None, "in": 0, "out": 0, "ms": 1200.0,
-            "attempts": attempts, "bedrock_calls": 0,
-            "sim_throttle_attempts": attempts, "real_throttle_codes": [],
-            "completed_ts": 1000.0}
+    return {
+        "ok": False,
+        "simulated_throttle": True,
+        "real_throttle_code": None,
+        "error": None,
+        "in": 0,
+        "out": 0,
+        "ms": 1200.0,
+        "attempts": attempts,
+        "bedrock_calls": 0,
+        "sim_throttle_attempts": attempts,
+        "real_throttle_codes": [],
+        "completed_ts": 1000.0,
+    }
 
 
 def _succeeded(sim_rejections=0, real_codes=(), in_tok=1800, out_tok=800):
@@ -108,23 +118,40 @@ def _succeeded(sim_rejections=0, real_codes=(), in_tok=1800, out_tok=800):
     every try; bedrock_calls is the subset that got past the gate."""
     real_codes = list(real_codes)
     calls = len(real_codes) + 1
-    return {"ok": True, "simulated_throttle": False, "real_throttle_code": None,
-            "error": None, "in": in_tok, "out": out_tok, "ms": 5500.0,
-            "attempts": sim_rejections + calls, "bedrock_calls": calls,
-            "sim_throttle_attempts": sim_rejections,
-            "real_throttle_codes": real_codes,
-            "completed_ts": 1000.0}
+    return {
+        "ok": True,
+        "simulated_throttle": False,
+        "real_throttle_code": None,
+        "error": None,
+        "in": in_tok,
+        "out": out_tok,
+        "ms": 5500.0,
+        "attempts": sim_rejections + calls,
+        "bedrock_calls": calls,
+        "sim_throttle_attempts": sim_rejections,
+        "real_throttle_codes": real_codes,
+        "completed_ts": 1000.0,
+    }
 
 
 def _timed_out():
     """A request still unresolved at the DEMO_DIRECT_TIMEOUT_S wait bound. Its
     true counts are unknowable (the thread may be mid-backoff), so they are None
     -- see _run_direct_arm."""
-    return {"ok": False, "simulated_throttle": False, "real_throttle_code": None,
-            "error": "timeout", "in": 0, "out": 0, "ms": None,
-            "attempts": None, "bedrock_calls": None,
-            "sim_throttle_attempts": None, "real_throttle_codes": None,
-            "completed_ts": None}
+    return {
+        "ok": False,
+        "simulated_throttle": False,
+        "real_throttle_code": None,
+        "error": "timeout",
+        "in": 0,
+        "out": 0,
+        "ms": None,
+        "attempts": None,
+        "bedrock_calls": None,
+        "sim_throttle_attempts": None,
+        "real_throttle_codes": None,
+        "completed_ts": None,
+    }
 
 
 def _no_retry_arm():
@@ -147,17 +174,21 @@ def _retry_arm():
     magic number; note it EXCEEDS the 61 requests offered, because a request
     rejected four times is counted four times.
     """
-    return ([_rejected(4) for _ in range(24)]
-            + [_succeeded() for _ in range(36)]
-            + [_succeeded(sim_rejections=1)])
+    return (
+        [_rejected(4) for _ in range(24)]
+        + [_succeeded() for _ in range(36)]
+        + [_succeeded(sim_rejections=1)]
+    )
 
 
-@pytest.mark.parametrize("label,results,exp_attempts,exp_calls,exp_sim_thr", [
-    ("direct", _no_retry_arm(), 61, 37, 24),
-    ("direct+retry", _retry_arm(), 134, 37, 97),
-])
-def test_attempts_equals_calls_plus_sim_thr(label, results, exp_attempts,
-                                            exp_calls, exp_sim_thr):
+@pytest.mark.parametrize(
+    "label,results,exp_attempts,exp_calls,exp_sim_thr",
+    [
+        ("direct", _no_retry_arm(), 61, 37, 24),
+        ("direct+retry", _retry_arm(), 134, 37, 97),
+    ],
+)
+def test_attempts_equals_calls_plus_sim_thr(label, results, exp_attempts, exp_calls, exp_sim_thr):
     """The invariant, on both arms that flow through this helper."""
     agg = _aggregate_direct_results(results, OFFERED, ELAPSED_MIN)
     assert agg["unknown_attempts"] == 0
@@ -199,8 +230,7 @@ def test_real_thr_counts_throttles_that_were_retried_away():
     succeeded leaves no terminal real_throttle_code, so it used to be invisible.
     The codes list must survive too -- a nonzero real_thr with an empty code
     list would print "N real throttle(s) ... code(s):" with nothing after it."""
-    results = [_succeeded(real_codes=(THROTTLE_CODE, THROTTLE_CODE)),
-               _succeeded()]
+    results = [_succeeded(real_codes=(THROTTLE_CODE, THROTTLE_CODE)), _succeeded()]
     agg = _aggregate_direct_results(results, OFFERED, ELAPSED_MIN)
     assert sum(1 for r in results if r.get("real_throttle_code")) == 0
     assert agg["real_thr"] == 2
@@ -213,8 +243,9 @@ def test_timed_out_requests_are_excluded_not_counted_as_zero():
     unknown_attempts. Counting them as 0 would assert they were never throttled,
     which is a guess -- their real counts are unknowable."""
     baseline = _aggregate_direct_results(_retry_arm(), OFFERED, ELAPSED_MIN)
-    with_timeouts = _aggregate_direct_results(_retry_arm() + [_timed_out(), _timed_out()],
-                                              OFFERED, ELAPSED_MIN)
+    with_timeouts = _aggregate_direct_results(
+        _retry_arm() + [_timed_out(), _timed_out()], OFFERED, ELAPSED_MIN
+    )
     assert with_timeouts["unknown_attempts"] == 2
     for key in ("attempts", "bedrock_calls", "sim_thr", "real_thr"):
         assert with_timeouts[key] == baseline[key], key
@@ -227,8 +258,7 @@ def test_timed_out_requests_are_excluded_not_counted_as_zero():
 def test_rejected_only_arm_never_reaches_bedrock():
     """Degenerate end of the range: every request rejected on every try means
     zero real spend, and the invariant reduces to attempts == sim_thr."""
-    agg = _aggregate_direct_results([_rejected(4) for _ in range(61)],
-                                    OFFERED, ELAPSED_MIN)
+    agg = _aggregate_direct_results([_rejected(4) for _ in range(61)], OFFERED, ELAPSED_MIN)
     assert agg["bedrock_calls"] == 0
     assert agg["attempts"] == 244
     assert agg["sim_thr"] == 244
@@ -254,8 +284,7 @@ def test_override_keeps_the_live_split_and_does_not_hand_the_queue_the_ceiling()
     The live item's share is 6,800,000/8,000,000 = 0.85, and that ratio -- read off
     the deployed item rather than hardcoded -- is what has to survive the override.
     """
-    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM,
-                                              LIVE_CONFIG_ITEM["model_id"])
+    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM, LIVE_CONFIG_ITEM["model_id"])
 
     assert overridden["tpm_limit"] == DEMO_TPM_OVERRIDE == 100_000
     assert overridden["tpm_queue_capacity"] == 85_000
@@ -266,8 +295,9 @@ def test_override_keeps_the_live_split_and_does_not_hand_the_queue_the_ceiling()
     assert overridden["tpm_buffer_capacity"] == 15_000
     # Stated as the ratio too, so a future change that lands 85,000 by coincidence
     # rather than by preserving the share still fails here.
-    live_share = (float(LIVE_CONFIG_ITEM["tpm_queue_capacity"])
-                  / float(LIVE_CONFIG_ITEM["tpm_limit"]))
+    live_share = float(LIVE_CONFIG_ITEM["tpm_queue_capacity"]) / float(
+        LIVE_CONFIG_ITEM["tpm_limit"]
+    )
     assert live_share == 0.85
     assert (overridden["tpm_queue_capacity"] / overridden["tpm_limit"]) == live_share
 
@@ -276,20 +306,21 @@ def test_override_rewrites_every_field_the_queue_processor_gates_on():
     """The original defect: only tpm_limit moved, so the processor kept pacing on a
     6,800,000-token queue. Every field queue_processor.py:197-198 reads must change.
     """
-    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM,
-                                              LIVE_CONFIG_ITEM["model_id"])
-    for field in ("tpm_limit", "tpm_queue_capacity", "tpm_queue_regeneration_rate",
-                  "tpm_buffer_capacity"):
+    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM, LIVE_CONFIG_ITEM["model_id"])
+    for field in (
+        "tpm_limit",
+        "tpm_queue_capacity",
+        "tpm_queue_regeneration_rate",
+        "tpm_buffer_capacity",
+    ):
         assert float(overridden[field]) != float(LIVE_CONFIG_ITEM[field]), field
 
 
 def test_override_merge_keeps_fields_calculate_config_never_emits():
     """calculate_config() does not emit api_style/backend/adaptive_*; the merge onto
     the original item is what keeps them, and dropping them would break the run."""
-    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM,
-                                              LIVE_CONFIG_ITEM["model_id"])
-    for field in ("api_style", "backend", "adaptive_queue_threshold",
-                  "adaptive_shift_max"):
+    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM, LIVE_CONFIG_ITEM["model_id"])
+    for field in ("api_style", "backend", "adaptive_queue_threshold", "adaptive_shift_max"):
         assert overridden[field] == LIVE_CONFIG_ITEM[field], field
     assert set(LIVE_CONFIG_ITEM) <= set(overridden)
 
@@ -298,8 +329,7 @@ def test_override_writes_the_demos_own_bytes_per_token():
     """The demo writes its own flat bytes_per_token into the item it puts and later
     restores, instead of the live per-model value -- and that field feeds no capacity
     arithmetic, so the split assertions above still hold with it in place."""
-    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM,
-                                              LIVE_CONFIG_ITEM["model_id"])
+    overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM, LIVE_CONFIG_ITEM["model_id"])
     assert float(overridden["bytes_per_token"]) == pytest.approx(DEMO_BYTES_PER_TOKEN)
     assert float(overridden["bytes_per_token"]) != float(LIVE_CONFIG_ITEM["bytes_per_token"])
 
@@ -310,8 +340,9 @@ def test_both_arms_charge_the_same_tokens_for_the_same_request():
     what the shaper's config makes budget_manager charge -- the gate used to fall
     through to the library's 4.0 default while the config said 3.0."""
     budget = _new_virtual_budget(1.0)
-    charge, est, used = _virtual_budget_admit(budget, _build_filler_prompt(),
-                                              DEMO_MAX_OUTPUT_TOKENS)
+    charge, est, used = _virtual_budget_admit(
+        budget, _build_filler_prompt(), DEMO_MAX_OUTPUT_TOKENS
+    )
     assert charge is not None and used == 0
     assert est == DEMO_TOKENS_PER_REQUEST_ESTIMATE
 

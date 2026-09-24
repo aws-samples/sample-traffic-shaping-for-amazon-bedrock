@@ -9,6 +9,7 @@ AWS.
 
 Run: python -m pytest tests/test_demo_load_profile.py -q
 """
+
 import sys
 import pathlib
 

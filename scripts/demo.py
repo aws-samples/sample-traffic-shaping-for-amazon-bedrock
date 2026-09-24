@@ -32,8 +32,12 @@ from statistics import median
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Lambda layer on sys.path so the direct arms' virtual quota is charged with the
 # shaper's OWN estimate_request_tokens(), not a local copy of the formula.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                '..', 'infrastructure', 'lambda_layer', 'python'))
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), '..', 'infrastructure', 'lambda_layer', 'python'
+    ),
+)
 import boto3
 from botocore.config import Config
 import config_loader
@@ -71,8 +75,11 @@ DEMO_DIRECT_MAX_WORKERS = 40
 # Concurrent /invoke POSTs for the shaper arm (each POST is ~0.7s vs a ~0.36s slot).
 DEMO_SHAPER_SUBMIT_WORKERS = 16
 DEMO_DIRECT_TIMEOUT_S = 240
-DEMO_DIRECT_THROTTLE_CODES = {"ThrottlingException", "TooManyRequestsException",
-                              "ServiceQuotaExceededException"}
+DEMO_DIRECT_THROTTLE_CODES = {
+    "ThrottlingException",
+    "TooManyRequestsException",
+    "ServiceQuotaExceededException",
+}
 
 # Retry policy, same as scripts/test_direct_bedrock_retry.py.
 DEMO_RETRY_MAX_RETRIES = 3
@@ -101,8 +108,10 @@ def _progress_reporter(stop, start, total):
             sent = dict(_progress["sent"])
         if all(n >= total for n in sent.values()):
             return
-        print(f"  [t+{time.time() - start:3.0f}s] sent " + " | ".join(
-            f"{arm} {n}/{total}" for arm, n in sent.items()))
+        print(
+            f"  [t+{time.time() - start:3.0f}s] sent "
+            + " | ".join(f"{arm} {n}/{total}" for arm, n in sent.items())
+        )
 
 
 def _vprint(*args):
@@ -135,16 +144,22 @@ def _build_filler_prompt():
 # What the shaper's estimator charges per request under this config (reported,
 # not used for sizing). The direct arms' virtual quota charges the same number.
 DEMO_TOKENS_PER_REQUEST_ESTIMATE = estimate_request_tokens(
-    prompt=_build_filler_prompt(), max_tokens=DEMO_MAX_OUTPUT_TOKENS,
-    bytes_per_token=DEMO_BYTES_PER_TOKEN)
+    prompt=_build_filler_prompt(),
+    max_tokens=DEMO_MAX_OUTPUT_TOKENS,
+    bytes_per_token=DEMO_BYTES_PER_TOKEN,
+)
 
 
 def _new_virtual_budget(burndown_rate):
     """State for one direct arm's SIMULATED quota. bpt matches the shaper's
     override item so both arms are charged identical estimates."""
-    return {"limit": DEMO_TPM_OVERRIDE, "burndown": burndown_rate,
-            "bpt": DEMO_BYTES_PER_TOKEN,
-            "charges": [], "lock": threading.Lock()}
+    return {
+        "limit": DEMO_TPM_OVERRIDE,
+        "burndown": burndown_rate,
+        "bpt": DEMO_BYTES_PER_TOKEN,
+        "charges": [],
+        "lock": threading.Lock(),
+    }
 
 
 def _virtual_budget_admit(budget, prompt, max_tokens):
@@ -155,9 +170,12 @@ def _virtual_budget_admit(budget, prompt, max_tokens):
     Returns (charge, est, used); charge is None when rejected. Successful calls
     overwrite charge["tokens"] with actual usage (mirroring the shaper's
     reconcile step); failed calls keep the estimate until it ages out."""
-    est = estimate_request_tokens(prompt=prompt, max_tokens=max_tokens,
-                                  burndown_rate=budget["burndown"],
-                                  bytes_per_token=budget["bpt"])
+    est = estimate_request_tokens(
+        prompt=prompt,
+        max_tokens=max_tokens,
+        burndown_rate=budget["burndown"],
+        bytes_per_token=budget["bpt"],
+    )
     now = time.time()
     with budget["lock"]:
         cutoff = now - DEMO_VIRTUAL_WINDOW_S
@@ -198,8 +216,13 @@ def _paced_indices(start, profile):
 def _submit_sized(api_url, arm, model_id, prompt, max_tokens):
     """Signed POST /invoke (smoke_honest_outcomes._submit with max_tokens exposed)."""
     request_id = str(uuid.uuid4())
-    body = {"request_id": request_id, "model_id": model_id, "prompt": prompt,
-            "correlation_id": str(uuid.uuid4()), "max_tokens": max_tokens}
+    body = {
+        "request_id": request_id,
+        "model_id": model_id,
+        "prompt": prompt,
+        "correlation_id": str(uuid.uuid4()),
+        "max_tokens": max_tokens,
+    }
     status, text = _signed_request("POST", f"{api_url}/invoke", body)
     _vprint(f"  [{arm}] POST /invoke -> {status}")
     if status not in (200, 202):
@@ -218,7 +241,7 @@ def _error_code(e):
 
 
 def _backoff(attempt):
-    delay = min(DEMO_RETRY_MAX_DELAY_S, DEMO_RETRY_BASE_DELAY_S * (2 ** attempt))
+    delay = min(DEMO_RETRY_MAX_DELAY_S, DEMO_RETRY_BASE_DELAY_S * (2**attempt))
     time.sleep(random.uniform(0, delay))  # nosec B311 nosemgrep: arbitrary-sleep -- backoff jitter
 
 
@@ -236,11 +259,18 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
 
     def result(ok, attempts, in_tok=0, out_tok=0, sim_final=False, ms="elapsed"):
         now = time.time()
-        return {"ok": ok, "simulated_throttle": sim_final, "in": in_tok, "out": out_tok,
-                "ms": (now - t0) * 1000 if ms == "elapsed" else ms,
-                "attempts": attempts, "bedrock_calls": calls,
-                "sim_throttle_attempts": sim, "real_throttle_codes": real_codes,
-                "completed_ts": now}
+        return {
+            "ok": ok,
+            "simulated_throttle": sim_final,
+            "in": in_tok,
+            "out": out_tok,
+            "ms": (now - t0) * 1000 if ms == "elapsed" else ms,
+            "attempts": attempts,
+            "bedrock_calls": calls,
+            "sim_throttle_attempts": sim,
+            "real_throttle_codes": real_codes,
+            "completed_ts": now,
+        }
 
     for attempt in range(max_retries + 1):
         last = attempt == max_retries
@@ -248,12 +278,16 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
         charge, est, used = _virtual_budget_admit(budget, prompt, max_tokens)
         if charge is None:
             sim += 1
-            _vprint(f"{tag} SIM-THROTTLE ({used:.0f} used + {est} est > {budget['limit']})"
-                    f"{'' if last else ' -> retry'}")
+            _vprint(
+                f"{tag} SIM-THROTTLE ({used:.0f} used + {est} est > {budget['limit']})"
+                f"{'' if last else ' -> retry'}"
+            )
             if not last:
                 _backoff(attempt)
                 continue
-            return result(False, attempt + 1, sim_final=True, ms=None if not max_retries else "elapsed")
+            return result(
+                False, attempt + 1, sim_final=True, ms=None if not max_retries else "elapsed"
+            )
 
         calls += 1
         try:
@@ -268,8 +302,10 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
             if real_throttle:
                 real_codes.append(code)
             retry = real_throttle and not last
-            print(f"{tag} converse() -> {'REAL THROTTLE' if real_throttle else 'error'} {code}"
-                  f"{' -> retry' if retry else ''}")
+            print(
+                f"{tag} converse() -> {'REAL THROTTLE' if real_throttle else 'error'} {code}"
+                f"{' -> retry' if retry else ''}"
+            )
             if retry:
                 _backoff(attempt)
                 continue
@@ -286,14 +322,17 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
 
 def _run_direct_arm(region, model_id, prompt, max_tokens, profile, budget, out, arm, max_retries):
     """Background-thread body for one direct arm; writes results/start/end into `out`."""
-    client_cfg = Config(retries={"total_max_attempts": 1, "mode": "standard"},
-                        read_timeout=120, connect_timeout=10)
+    client_cfg = Config(
+        retries={"total_max_attempts": 1, "mode": "standard"}, read_timeout=120, connect_timeout=10
+    )
     brt = boto3.client("bedrock-runtime", region_name=region, config=client_cfg)
     start = time.time()
     with cf.ThreadPoolExecutor(max_workers=DEMO_DIRECT_MAX_WORKERS) as ex:
         futs = []
         for i in _paced_indices(start, profile):
-            fut = ex.submit(_direct_call, brt, i, model_id, prompt, max_tokens, budget, arm, max_retries)
+            fut = ex.submit(
+                _direct_call, brt, i, model_id, prompt, max_tokens, budget, arm, max_retries
+            )
             _tick_sent(arm)
             futs.append(fut)
         print(f"  [{arm}] submitted {len(futs)} requests in {time.time() - start:.1f}s")
@@ -301,15 +340,29 @@ def _run_direct_arm(region, model_id, prompt, max_tokens, profile, budget, out, 
     results = [f.result() for f in done]
     # Unresolved at the wait bound: counts are unknowable, so None (excluded from
     # the attempt sums and reported as unknown), not 0.
-    results += [{"ok": False, "simulated_throttle": False, "in": 0, "out": 0, "ms": None,
-                 "attempts": None, "bedrock_calls": None, "sim_throttle_attempts": None,
-                 "real_throttle_codes": None, "completed_ts": None} for _ in not_done]
+    results += [
+        {
+            "ok": False,
+            "simulated_throttle": False,
+            "in": 0,
+            "out": 0,
+            "ms": None,
+            "attempts": None,
+            "bedrock_calls": None,
+            "sim_throttle_attempts": None,
+            "real_throttle_codes": None,
+            "completed_ts": None,
+        }
+        for _ in not_done
+    ]
     end = time.time()
     ok = sum(1 for r in results if r["ok"])
     sim = sum(1 for r in results if r["simulated_throttle"])
-    print(f"  [{arm}] done in {end - start:.1f}s -- {ok} ok, {sim} rejected by simulated quota, "
-          f"{len(results) - ok - sim} error"
-          + (f", {len(not_done)} still pending at wait bound" if not_done else ""))
+    print(
+        f"  [{arm}] done in {end - start:.1f}s -- {ok} ok, {sim} rejected by simulated quota, "
+        f"{len(results) - ok - sim} error"
+        + (f", {len(not_done)} still pending at wait bound" if not_done else "")
+    )
     out.update(results=results, start=start, end=end)
 
 
@@ -335,8 +388,11 @@ def _aggregate_direct_results(results, offered, elapsed_s):
     unknown_attempts."""
     known = [r for r in results if r.get("attempts") is not None]
     attempts = sum(r["attempts"] for r in known)
-    peak_events = [(r["completed_ts"], r["in"] + r["out"]) for r in results
-                   if r["ok"] and r.get("completed_ts") is not None]
+    peak_events = [
+        (r["completed_ts"], r["in"] + r["out"])
+        for r in results
+        if r["ok"] and r.get("completed_ts") is not None
+    ]
     lat = [r["ms"] for r in results if r.get("ms") is not None]
     real_codes = [c for r in known for c in (r.get("real_throttle_codes") or [])]
     return {
@@ -363,11 +419,22 @@ def _shaper_tokens(region, model_id, start_epoch, end_epoch):
     Period=60 buckets are wall-clock aligned, so the peak approximates -- but is
     not computed identically to -- the direct arms' true sliding window."""
     cw = boto3.client("cloudwatch", region_name=region)
-    dims = [{"Name": "ServiceName", "Value": "TrafficShaper"}, {"Name": "model_id", "Value": model_id}]
-    q = [{"Id": f"m{i}", "ReturnData": True, "MetricStat": {
-            "Metric": {"Namespace": "BedrockShaper", "MetricName": metric, "Dimensions": dims},
-            "Period": 60, "Stat": "Sum"}}
-         for i, metric in enumerate(("InputTokens", "OutputTokens"))]
+    dims = [
+        {"Name": "ServiceName", "Value": "TrafficShaper"},
+        {"Name": "model_id", "Value": model_id},
+    ]
+    q = [
+        {
+            "Id": f"m{i}",
+            "ReturnData": True,
+            "MetricStat": {
+                "Metric": {"Namespace": "BedrockShaper", "MetricName": metric, "Dimensions": dims},
+                "Period": 60,
+                "Stat": "Sum",
+            },
+        }
+        for i, metric in enumerate(("InputTokens", "OutputTokens"))
+    ]
     r = cw.get_metric_data(MetricDataQueries=q, StartTime=start_epoch - 60, EndTime=end_epoch + 120)
     totals, buckets = {}, {}
     for res in r["MetricDataResults"]:
@@ -410,6 +477,7 @@ def _build_ceiling_override_item(original_item, model_id, tpm_override=DEMO_TPM_
 
 def _run_shaper_arm(api_url, model_id, prompt, run_start):
     """Submit the paced load to /invoke, then poll each request to a terminal status."""
+
     # Each signed POST takes longer than a pacing slot, so POSTs are dispatched to
     # a pool (like the direct arms) to keep the shaper on the identical schedule.
     def submit(i):
@@ -425,8 +493,10 @@ def _run_shaper_arm(api_url, model_id, prompt, run_start):
             _tick_sent("shaper")
         dispatched_s = time.time() - run_start
     submissions = [f.result() for f in futs]
-    print(f"[shaper] submitted {len(submissions)} requests (dispatched over {dispatched_s:.1f}s, "
-          f"all accepted by {time.time() - run_start:.1f}s); draining (up to {DEMO_DRAIN_TIMEOUT_S}s)...")
+    print(
+        f"[shaper] submitted {len(submissions)} requests (dispatched over {dispatched_s:.1f}s, "
+        f"all accepted by {time.time() - run_start:.1f}s); draining (up to {DEMO_DRAIN_TIMEOUT_S}s)..."
+    )
 
     deadline = time.time() + DEMO_DRAIN_TIMEOUT_S
     results = []
@@ -434,14 +504,17 @@ def _run_shaper_arm(api_url, model_id, prompt, run_start):
         remaining = max(0, deadline - time.time())
         status, _ = _poll_result(api_url, sub["request_id"], timeout_s=remaining, interval_s=3)
         terminal = status is not None and status != 202
-        results.append({"status": status,
-                        "ms": (time.time() - sub["submit_ts"]) * 1000 if terminal else None})
+        results.append(
+            {"status": status, "ms": (time.time() - sub["submit_ts"]) * 1000 if terminal else None}
+        )
         _vprint(f"  [shaper] req{i} -> {status}")
         if i % 10 == 0:
             print(f"  [shaper] {i}/{len(submissions)} resolved")
     done = sum(1 for r in results if r["ms"] is not None)
-    print(f"[shaper] {'drained' if done == len(results) else 'drain TIMED OUT'} -- "
-          f"{done}/{len(results)} complete")
+    print(
+        f"[shaper] {'drained' if done == len(results) else 'drain TIMED OUT'} -- "
+        f"{done}/{len(results)} complete"
+    )
     return results
 
 
@@ -449,8 +522,7 @@ def main():
     global VERBOSE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("model", nargs="?", default="nova-2-lite")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="print every request/attempt")
+    parser.add_argument("-v", "--verbose", action="store_true", help="print every request/attempt")
     args = parser.parse_args()
     VERBOSE = args.verbose
     model_id = MODEL_MAP.get(args.model, args.model)
@@ -481,29 +553,53 @@ def main():
     try:
         overridden_item = _build_ceiling_override_item(original_item, model_id)
         table.put_item(Item=overridden_item)
-        print(f"Config re-derived at {DEMO_TPM_OVERRIDE:,} TPM (restored at end). All three arms are "
-              f"held to this {DEMO_TPM_OVERRIDE:,} TPM ceiling: the shaper via this config, the "
-              f"direct arms via a client-side simulated quota:")
-        for field in ('tpm_limit', 'tpm_queue_capacity', 'tpm_queue_regeneration_rate',
-                      'tpm_burst_capacity', 'tpm_buffer_capacity', 'bytes_per_token'):
+        print(
+            f"Config re-derived at {DEMO_TPM_OVERRIDE:,} TPM (restored at end). All three arms are "
+            f"held to this {DEMO_TPM_OVERRIDE:,} TPM ceiling: the shaper via this config, the "
+            f"direct arms via a client-side simulated quota:"
+        )
+        for field in (
+            'tpm_limit',
+            'tpm_queue_capacity',
+            'tpm_queue_regeneration_rate',
+            'tpm_burst_capacity',
+            'tpm_buffer_capacity',
+            'bytes_per_token',
+        ):
             print(f"    {field:<30} {original_item.get(field)} -> {overridden_item.get(field)}")
 
         api_url = _load_api_url(None)
         prompt = _build_filler_prompt()
-        print(f"Offering {DEMO_REQUEST_COUNT} requests over ~{DEMO_SUBMIT_WINDOW_S}s to each arm "
-              f"({DEMO_TOKENS_PER_REQUEST_ESTIMATE} est. tokens/request, "
-              f"max_output_tokens={DEMO_MAX_OUTPUT_TOKENS}).\n")
+        print(
+            f"Offering {DEMO_REQUEST_COUNT} requests over ~{DEMO_SUBMIT_WINDOW_S}s to each arm "
+            f"({DEMO_TOKENS_PER_REQUEST_ESTIMATE} est. tokens/request, "
+            f"max_output_tokens={DEMO_MAX_OUTPUT_TOKENS}).\n"
+        )
 
         run_start = time.time()
         for arm in ("shaper", "direct", "direct+retry"):  # fixes the column order
             _progress["sent"][arm] = 0
-        threading.Thread(target=_progress_reporter, daemon=True,
-                         args=(stop_progress, run_start, DEMO_REQUEST_COUNT)).start()
+        threading.Thread(
+            target=_progress_reporter,
+            daemon=True,
+            args=(stop_progress, run_start, DEMO_REQUEST_COUNT),
+        ).start()
         for label, max_retries in arms:
             t = threading.Thread(
-                target=_run_direct_arm, daemon=True,
-                args=(region, model_id, prompt, DEMO_MAX_OUTPUT_TOKENS, DEMO_LOAD_PROFILE,
-                      _new_virtual_budget(burndown_rate), arm_out[label], label, max_retries))
+                target=_run_direct_arm,
+                daemon=True,
+                args=(
+                    region,
+                    model_id,
+                    prompt,
+                    DEMO_MAX_OUTPUT_TOKENS,
+                    DEMO_LOAD_PROFILE,
+                    _new_virtual_budget(burndown_rate),
+                    arm_out[label],
+                    label,
+                    max_retries,
+                ),
+            )
             t.start()
             threads.append((label, t))
 
@@ -519,12 +615,16 @@ def main():
                 break
             time.sleep(DEMO_METRICS_POLL_INTERVAL_S)
         if itok or otok:
-            print(f"[shaper] {itok + otok:,.0f} tokens in {run_end - run_start:.0f}s, peak 60s = "
-                  f"{shaper_peak_tpm:,.0f} TPM (queue share "
-                  f"{overridden_item['tpm_queue_capacity']:,} / ceiling {DEMO_TPM_OVERRIDE:,})")
+            print(
+                f"[shaper] {itok + otok:,.0f} tokens in {run_end - run_start:.0f}s, peak 60s = "
+                f"{shaper_peak_tpm:,.0f} TPM (queue share "
+                f"{overridden_item['tpm_queue_capacity']:,} / ceiling {DEMO_TPM_OVERRIDE:,})"
+            )
         else:
-            print(f"[shaper] EMF metrics did not land within {DEMO_METRICS_WAIT_S}s -- token "
-                  "columns for the shaper will read 0; re-query CloudWatch later.")
+            print(
+                f"[shaper] EMF metrics did not land within {DEMO_METRICS_WAIT_S}s -- token "
+                "columns for the shaper will read 0; re-query CloudWatch later."
+            )
     except Exception as e:
         print(f"[shaper] Demo run failed: {e}")
     finally:
@@ -540,36 +640,59 @@ def main():
 
     shaper_lat = [r["ms"] for r in shaper_results if r["ms"] is not None]
     n_shaper = len(shaper_results)
-    rows = {"shaper": {
-        "offered": DEMO_REQUEST_COUNT, "attempts": n_shaper, "bedrock_calls": n_shaper,
-        "succ": sum(1 for r in shaper_results if r["status"] == 200),
-        "err": sum(1 for r in shaper_results if r["status"] != 200),
-        # 429/503/504 are the shaper's throttle-family terminal statuses: REAL throttles.
-        "real_thr": sum(1 for r in shaper_results if r["status"] in (429, 503, 504)),
-        "real_codes": ["429/503/504"], "sim_thr": 0, "in": itok, "out": otok,
-        "peak_tpm": shaper_peak_tpm, "run_time": run_end - run_start,
-        "p50": median(shaper_lat) if shaper_lat else 0.0, "unknown_attempts": 0}}
+    rows = {
+        "shaper": {
+            "offered": DEMO_REQUEST_COUNT,
+            "attempts": n_shaper,
+            "bedrock_calls": n_shaper,
+            "succ": sum(1 for r in shaper_results if r["status"] == 200),
+            "err": sum(1 for r in shaper_results if r["status"] != 200),
+            # 429/503/504 are the shaper's throttle-family terminal statuses: REAL throttles.
+            "real_thr": sum(1 for r in shaper_results if r["status"] in (429, 503, 504)),
+            "real_codes": ["429/503/504"],
+            "sim_thr": 0,
+            "in": itok,
+            "out": otok,
+            "peak_tpm": shaper_peak_tpm,
+            "run_time": run_end - run_start,
+            "p50": median(shaper_lat) if shaper_lat else 0.0,
+            "unknown_attempts": 0,
+        }
+    }
     for label, _ in arms:
         out = arm_out[label]
-        elapsed_s = max(out["end"] - out["start"], 1e-6) if out.get("start") else DEMO_SUBMIT_WINDOW_S
-        rows[label] = _aggregate_direct_results(out.get("results", []), DEMO_REQUEST_COUNT, elapsed_s)
+        elapsed_s = (
+            max(out["end"] - out["start"], 1e-6) if out.get("start") else DEMO_SUBMIT_WINDOW_S
+        )
+        rows[label] = _aggregate_direct_results(
+            out.get("results", []), DEMO_REQUEST_COUNT, elapsed_s
+        )
 
     print()
-    hdr = (f"{'arm':13s}{'offered':>8s}{'attempts':>9s}{'calls':>7s}{'succ':>6s}{'err':>5s}"
-           f"{'sim_thr':>8s}{'total_tok':>10s}{'peak_tpm':>10s}{'run_s':>7s}{'p50_ms':>8s}")
+    hdr = (
+        f"{'arm':13s}{'offered':>8s}{'attempts':>9s}{'calls':>7s}{'succ':>6s}{'err':>5s}"
+        f"{'sim_thr':>8s}{'total_tok':>10s}{'peak_tpm':>10s}{'run_s':>7s}{'p50_ms':>8s}"
+    )
     print(hdr)
     print("-" * len(hdr))
     for arm, r in rows.items():
-        print(f"{arm:13s}{r['offered']:>8d}{r['attempts']:>9d}{r['bedrock_calls']:>7d}"
-              f"{r['succ']:>6d}{r['err']:>5d}{r['sim_thr']:>8d}{r['in'] + r['out']:>10.0f}"
-              f"{r['peak_tpm']:>10.0f}{r['run_time']:>7.1f}{r['p50']:>8.0f}")
+        print(
+            f"{arm:13s}{r['offered']:>8d}{r['attempts']:>9d}{r['bedrock_calls']:>7d}"
+            f"{r['succ']:>6d}{r['err']:>5d}{r['sim_thr']:>8d}{r['in'] + r['out']:>10.0f}"
+            f"{r['peak_tpm']:>10.0f}{r['run_time']:>7.1f}{r['p50']:>8.0f}"
+        )
 
     for arm, r in rows.items():
         if r["unknown_attempts"]:
-            print(f"NOTE: {arm} had {r['unknown_attempts']} request(s) unresolved at the "
-                  f"{DEMO_DIRECT_TIMEOUT_S}s bound, excluded from attempts/calls/sim_thr.")
-    real = [f"{arm}={r['real_thr']} ({', '.join(r['real_codes'])})"
-            for arm, r in rows.items() if r["real_thr"]]
+            print(
+                f"NOTE: {arm} had {r['unknown_attempts']} request(s) unresolved at the "
+                f"{DEMO_DIRECT_TIMEOUT_S}s bound, excluded from attempts/calls/sim_thr."
+            )
+    real = [
+        f"{arm}={r['real_thr']} ({', '.join(r['real_codes'])})"
+        for arm, r in rows.items()
+        if r["real_thr"]
+    ]
     if real:
         print(f"⚠ REAL throttles occurred (not simulated): {'; '.join(real)}")
 
