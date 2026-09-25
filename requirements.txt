@@ -3,7 +3,7 @@
 #     pip install -r requirements.lock
 #
 # Core dependencies
-boto3==1.43.78
+boto3==1.43.100
 # ⚠️  Bumping aws-cdk-lib can raise the required CDK *CLI* version. This pin emits
 # cloud-assembly schema 54, which needs CDK CLI >= 2.1139.0; an older CLI synthesizes
 # fine and then fails at deploy with a schema-version mismatch. If you change this
