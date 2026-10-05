@@ -171,6 +171,14 @@ the full list. See [`docs/guide/configuration.md`](docs/guide/configuration.md) 
 model-config field and [`docs/guide/invoke-api.md`](docs/guide/invoke-api.md) for the `POST /invoke`
 request/response contract.
 
+### Visualize and replay a real demo
+
+```bash
+make demo                 # real three-arm run, terminal summary only
+make demo-ui              # real run, localhost viewer, JSONL recording
+make demo-ui REPLAY=tmp/demo-live-XXXXXX.jsonl  # replay a saved run; no AWS
+```
+
 ## When to use it
 
 - Asynchronous or batch GenAI pipelines (summarization, enrichment, evaluation, offline generation)

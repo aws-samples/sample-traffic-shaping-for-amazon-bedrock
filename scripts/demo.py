@@ -42,7 +42,8 @@ import boto3
 from botocore.config import Config
 import config_loader
 from create_model_config import MODEL_MAP, calculate_config, create_model_config
-from smoke_honest_outcomes import _load_api_url, _signed_request, _poll_result
+from botocore.exceptions import BotoCoreError, ClientError
+from smoke_honest_outcomes import _load_api_url, _signed_request
 from shared_service import estimate_request_tokens
 
 DEMO_TPM_OVERRIDE = 100_000
@@ -65,6 +66,21 @@ DEMO_SUBMIT_WINDOW_S = sum(duration for duration, _ in DEMO_LOAD_PROFILE)
 # under the processor's own 13-minute per-invocation ceiling.
 DEMO_DRAIN_TIMEOUT_S = 600
 
+# Shaper completions are read straight from the REQUEST#{id}/STATUS items with
+# BatchGetItem (off the measured API path -- no /result polling, no WAF load).
+# Only still-outstanding IDs are read each pass; BatchGetItem takes <=100 keys.
+DEMO_STATUS_POLL_INTERVAL_S = 1.0
+DEMO_STATUS_BATCH_MAX_KEYS = 100
+# Terminal STATUS item -> HTTP code, the same map result_fn.py serves on /result.
+DEMO_FAILED_REASON_TO_STATUS = {
+    "throttled": 429,
+    "ingress_throttled": 429,
+    "error": 503,
+    "timed_out": 504,
+    "queue_expired": 504,
+    "validation_error": 400,
+}
+
 # EMF metrics lag behind the requests; poll for a bounded window.
 DEMO_METRICS_WAIT_S = 120
 DEMO_METRICS_POLL_INTERVAL_S = 15
@@ -86,8 +102,12 @@ DEMO_RETRY_MAX_RETRIES = 3
 DEMO_RETRY_BASE_DELAY_S = 1.0
 DEMO_RETRY_MAX_DELAY_S = 30.0
 
-# Bedrock quotas are per-minute, so the simulated quota is a rolling 60s window.
-DEMO_VIRTUAL_WINDOW_S = 60
+# Bedrock quotas are per-minute, so the simulated quota is a token bucket that
+# regenerates its whole ceiling over one minute (cap / DEMO_QUOTA_REFILL_S per
+# second, continuously). Separate from the PEAK REPORTING window below, which is
+# a genuine rolling 60s measurement and has no bearing on what the gate admits.
+DEMO_QUOTA_REFILL_S = 60
+DEMO_PEAK_WINDOW_S = 60
 
 VERBOSE = False
 
@@ -95,6 +115,30 @@ VERBOSE = False
 # arm, until every arm has sent its full load.
 DEMO_PROGRESS_INTERVAL_S = 5
 _progress = {"lock": threading.Lock(), "sent": {}}
+_event_path = None
+_event_start = 0.0
+_event_lock = threading.Lock()
+
+
+def emit(event, arm=None, req=0, **fields):
+    """Append an observed live event. Disabled unless --events is specified."""
+    if _event_path is None:
+        return
+    with _event_lock:
+        line = {"event": event, "t": round(time.time() - _event_start, 6), "arm": arm, "req": req}
+        line.update(fields)
+        with open(_event_path, "a") as stream:
+            stream.write(json.dumps(line) + "\n")
+
+
+def _start_events(path, start):
+    global _event_path, _event_start
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w"):
+        pass  # a new live run must never append to an old recording
+    _event_start = start
+    _event_path = path
+    emit("meta", profile=DEMO_LOAD_PROFILE, offered=DEMO_REQUEST_COUNT)
 
 
 def _tick_sent(arm):
@@ -150,42 +194,66 @@ DEMO_TOKENS_PER_REQUEST_ESTIMATE = estimate_request_tokens(
 )
 
 
-def _new_virtual_budget(burndown_rate):
-    """State for one direct arm's SIMULATED quota. bpt matches the shaper's
-    override item so both arms are charged identical estimates."""
+def _new_virtual_budget(burndown_rate, level=None, now=time.time):
+    """State for one direct arm's SIMULATED quota: a token bucket holding `level`
+    of `limit` tokens. bpt matches the shaper's override item so both arms are
+    charged identical estimates.
+
+    The bucket starts FULL. `level` is the deliberate hook for evaluating an
+    EMPTY starting bucket (bead 386) without touching the gate itself; `now` is
+    injectable so tests can drive regeneration on a fake clock."""
     return {
         "limit": DEMO_TPM_OVERRIDE,
         "burndown": burndown_rate,
         "bpt": DEMO_BYTES_PER_TOKEN,
-        "charges": [],
+        "level": float(DEMO_TPM_OVERRIDE if level is None else level),
+        "ts": now(),
         "lock": threading.Lock(),
     }
 
 
-def _virtual_budget_admit(budget, prompt, max_tokens):
-    """Charge the estimate up front (as Bedrock does) against a rolling 60s window.
-    Over-budget requests are REJECTED, never queued -- failing fast is what the
-    real service does, and waiting would turn this arm into a second shaper.
+def _virtual_budget_admit(budget, prompt, max_tokens, now=time.time):
+    """Charge the estimate up front (as Bedrock does) against a token bucket that
+    regenerates its whole ceiling every DEMO_QUOTA_REFILL_S. Requests that do not
+    fit in the CURRENT level are REJECTED, never queued -- failing fast is what
+    the real service does, and waiting would turn this arm into a second shaper.
 
-    Returns (charge, est, used); charge is None when rejected. Successful calls
-    overwrite charge["tokens"] with actual usage (mirroring the shaper's
-    reconcile step); failed calls keep the estimate until it ages out."""
+    Returns (charge, est, used); charge is None when rejected, and a rejected
+    attempt costs nothing. `used` is how far the bucket is drawn down (limit
+    minus the level) as of this admit, before this request's own debit. A
+    successful call credits back est - actual via _virtual_budget_credit
+    (mirroring the shaper's reconcile step); a failed call keeps the estimate."""
     est = estimate_request_tokens(
         prompt=prompt,
         max_tokens=max_tokens,
         burndown_rate=budget["burndown"],
         bytes_per_token=budget["bpt"],
     )
-    now = time.time()
     with budget["lock"]:
-        cutoff = now - DEMO_VIRTUAL_WINDOW_S
-        budget["charges"] = [c for c in budget["charges"] if c["ts"] > cutoff]
-        used = sum(c["tokens"] for c in budget["charges"])
-        if used + est > budget["limit"]:
+        # Read the clock INSIDE the lock: taken outside it, a thread could be
+        # descheduled between the read and the acquire, then apply a refill
+        # measured from a `ts` another thread has since moved forward -- a
+        # NEGATIVE refill that rewinds ts and debits the bucket for an attempt
+        # that was rejected.
+        t = now()
+        cap = budget["limit"]
+        budget["level"] = min(cap, budget["level"] + (t - budget["ts"]) * cap / DEMO_QUOTA_REFILL_S)
+        budget["ts"] = t
+        used = cap - budget["level"]
+        if budget["level"] < est:
             return None, est, used
-        charge = {"ts": now, "tokens": est}
-        budget["charges"].append(charge)
-        return charge, est, used
+        budget["level"] -= est
+        return {"est": est}, est, used
+
+
+def _virtual_budget_credit(budget, tokens):
+    """Return `tokens` to the bucket, clamped at its ceiling. Used to reconcile a
+    successful call's up-front estimate to its actual usage, so a negative
+    `tokens` (actual usage EXCEEDED the estimate) legitimately debits the
+    overage. A named function (rather than an inline mutation) so the credit is
+    testable without mocking converse()."""
+    with budget["lock"]:
+        budget["level"] = min(budget["limit"], budget["level"] + tokens)
 
 
 def _schedule_offsets(profile):
@@ -254,6 +322,7 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
     `ms` is total wall clock including backoff; None for a no-retry rejection
     that never reached Bedrock."""
     t0 = time.time()
+    emit("sent", arm, idx, est=DEMO_TOKENS_PER_REQUEST_ESTIMATE)
     calls = sim = 0
     real_codes = []
 
@@ -278,8 +347,16 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
         charge, est, used = _virtual_budget_admit(budget, prompt, max_tokens)
         if charge is None:
             sim += 1
+            emit(
+                "attempt",
+                arm,
+                idx,
+                attempt=attempt + 1,
+                outcome="exhausted" if last else "throttled",
+                simulated=True,
+            )
             _vprint(
-                f"{tag} SIM-THROTTLE ({used:.0f} used + {est} est > {budget['limit']})"
+                f"{tag} SIM-THROTTLE (level {budget['limit'] - used:.0f} < est {est})"
                 f"{'' if last else ' -> retry'}"
             )
             if not last:
@@ -301,6 +378,7 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
             real_throttle = code in DEMO_DIRECT_THROTTLE_CODES
             if real_throttle:
                 real_codes.append(code)
+            emit("attempt", arm, idx, attempt=attempt + 1, outcome="error", code=code)
             retry = real_throttle and not last
             print(
                 f"{tag} converse() -> {'REAL THROTTLE' if real_throttle else 'error'} {code}"
@@ -313,9 +391,11 @@ def _direct_call(brt, idx, model_id, prompt, max_tokens, budget, arm, max_retrie
 
         usage = r.get("usage", {})
         in_tok, out_tok = usage.get("inputTokens", 0), usage.get("outputTokens", 0)
-        with budget["lock"]:
-            charge["tokens"] = in_tok + out_tok  # reconcile estimate -> actual
+        _virtual_budget_credit(budget, charge["est"] - (in_tok + out_tok))  # est -> actual
         res = result(True, attempt + 1, in_tok, out_tok)
+        emit(
+            "attempt", arm, idx, attempt=attempt + 1, outcome="ok", **{"in": in_tok, "out": out_tok}
+        )
         _vprint(f"{tag} ok in={in_tok} out={out_tok} ({res['ms']:.0f}ms)")
         return res
 
@@ -366,7 +446,7 @@ def _run_direct_arm(region, model_id, prompt, max_tokens, profile, budget, out, 
     out.update(results=results, start=start, end=end)
 
 
-def _peak_window_tpm(events, window_s=DEMO_VIRTUAL_WINDOW_S):
+def _peak_window_tpm(events, window_s=DEMO_PEAK_WINDOW_S):
     """Peak token sum over any trailing window_s window, from (completed_ts, tokens)
     events. The max always occurs at a window ending on an event, so a two-pointer
     sweep over sorted events is exact."""
@@ -475,47 +555,143 @@ def _build_ceiling_override_item(original_item, model_id, tpm_override=DEMO_TPM_
     return {**original_item, **create_model_config(model_id, derived, dry_run=True)}
 
 
-def _run_shaper_arm(api_url, model_id, prompt, run_start):
-    """Submit the paced load to /invoke, then poll each request to a terminal status."""
+def _terminal_http_status(item):
+    """STATUS item -> terminal HTTP code (result_fn.py's mapping), or None while the
+    request is still PENDING/QUEUED."""
+    state = item.get("state")
+    if state in (None, "PENDING", "QUEUED"):
+        return None
+    if state == "SUCCEEDED":
+        return 200
+    return DEMO_FAILED_REASON_TO_STATUS.get(item.get("reason"), 503)
+
+
+def _read_status_batch(dynamodb, table_name, request_ids):
+    """One BatchGetItem pass over request_ids -> {request_id: http_status} for the
+    ones now terminal. Eventually consistent: a lagging read is simply re-read on
+    the next pass. Errors are logged, never raised -- the IDs stay outstanding."""
+    terminal = {}
+    ids = list(request_ids)
+    for i in range(0, len(ids), DEMO_STATUS_BATCH_MAX_KEYS):
+        chunk = ids[i : i + DEMO_STATUS_BATCH_MAX_KEYS]
+        try:
+            resp = dynamodb.batch_get_item(
+                RequestItems={
+                    table_name: {
+                        "Keys": [{"pk": f"REQUEST#{rid}", "sk": "STATUS"} for rid in chunk],
+                        "ProjectionExpression": "pk, #st, reason",
+                        "ExpressionAttributeNames": {"#st": "state"},
+                    }
+                }
+            )
+        except (ClientError, BotoCoreError) as e:
+            print(
+                f"  [shaper] ERROR BatchGetItem failed ({_error_code(e)}) for "
+                f"{len(chunk)} request(s): {e}"
+            )
+            continue
+        for item in resp.get("Responses", {}).get(table_name, []):
+            rid = str(item.get("pk", "")).removeprefix("REQUEST#")
+            if rid not in chunk:
+                print(f"  [shaper] ERROR BatchGetItem returned an unexpected item: {item!r}")
+                continue
+            status = _terminal_http_status(item)
+            if status is not None:
+                terminal[rid] = status
+        unprocessed = resp.get("UnprocessedKeys", {}).get(table_name, {}).get("Keys", [])
+        if unprocessed:
+            print(
+                f"  [shaper] ERROR BatchGetItem left {len(unprocessed)} key(s) unprocessed "
+                "-- re-reading next pass"
+            )
+    return terminal
+
+
+def _run_shaper_arm(api_url, model_id, prompt, run_start, dynamodb, table_name):
+    """Submit the paced load to /invoke while a background poller reads each
+    accepted request's STATUS item until it is terminal."""
+    # request_id -> (idx, submit_ts). Starts empty; an ID is added once its POST
+    # is accepted and removed the moment its STATUS item is terminal.
+    outstanding = {}
+    lock = threading.Lock()
+    results = {}  # idx -> {"status", "ms"}
+    submits_done = threading.Event()
+    drain = {"deadline": None}
+
+    def poll():
+        resolved = 0
+        while True:
+            with lock:
+                batch = dict(outstanding)
+            if submits_done.is_set():
+                if not batch or time.time() >= drain["deadline"]:
+                    return
+            if batch:
+                for rid, status in _read_status_batch(dynamodb, table_name, batch).items():
+                    idx, submit_ts = batch[rid]
+                    with lock:
+                        outstanding.pop(rid, None)
+                        results[idx] = {
+                            "status": status,
+                            "ms": (time.time() - submit_ts) * 1000,
+                        }
+                    emit("done", "shaper", idx, status=status)
+                    _vprint(f"  [shaper] req{idx} -> {status}")
+                    resolved += 1
+                    if resolved % 10 == 0:
+                        print(f"  [shaper] {resolved} resolved")
+            time.sleep(DEMO_STATUS_POLL_INTERVAL_S)  # nosemgrep: arbitrary-sleep -- poll pacing
 
     # Each signed POST takes longer than a pacing slot, so POSTs are dispatched to
     # a pool (like the direct arms) to keep the shaper on the identical schedule.
     def submit(i):
         submit_ts = time.time()
+        emit("sent", "shaper", i, est=DEMO_TOKENS_PER_REQUEST_ESTIMATE)
         sub = _submit_sized(api_url, f"shaper:req{i}", model_id, prompt, DEMO_MAX_OUTPUT_TOKENS)
-        sub["submit_ts"] = submit_ts
-        return sub
+        accepted = sub["submit_status"] in (200, 202)
+        emit(
+            "attempt",
+            "shaper",
+            i,
+            attempt=1,
+            outcome="admitted" if accepted else "error",
+            status=sub["submit_status"],
+        )
+        with lock:
+            if accepted:
+                outstanding[sub["request_id"]] = (i, submit_ts)
+            else:
+                # Rejected at ingress: terminal now, nothing to poll.
+                results[i] = {"status": sub["submit_status"], "ms": None}
 
+    poller = threading.Thread(target=poll, daemon=True)
+    poller.start()
+    indices = []
     with cf.ThreadPoolExecutor(max_workers=DEMO_SHAPER_SUBMIT_WORKERS) as ex:
         futs = []
         for i in _paced_indices(run_start, DEMO_LOAD_PROFILE):
             futs.append(ex.submit(submit, i))
             _tick_sent("shaper")
+            indices.append(i)
         dispatched_s = time.time() - run_start
-    submissions = [f.result() for f in futs]
+    for f in futs:
+        f.result()  # surface submit-thread exceptions
+    drain["deadline"] = time.time() + DEMO_DRAIN_TIMEOUT_S
+    submits_done.set()
     print(
-        f"[shaper] submitted {len(submissions)} requests (dispatched over {dispatched_s:.1f}s, "
+        f"[shaper] submitted {len(futs)} requests (dispatched over {dispatched_s:.1f}s, "
         f"all accepted by {time.time() - run_start:.1f}s); draining (up to {DEMO_DRAIN_TIMEOUT_S}s)..."
     )
+    poller.join()
 
-    deadline = time.time() + DEMO_DRAIN_TIMEOUT_S
-    results = []
-    for i, sub in enumerate(submissions, start=1):
-        remaining = max(0, deadline - time.time())
-        status, _ = _poll_result(api_url, sub["request_id"], timeout_s=remaining, interval_s=3)
-        terminal = status is not None and status != 202
-        results.append(
-            {"status": status, "ms": (time.time() - sub["submit_ts"]) * 1000 if terminal else None}
-        )
-        _vprint(f"  [shaper] req{i} -> {status}")
-        if i % 10 == 0:
-            print(f"  [shaper] {i}/{len(submissions)} resolved")
-    done = sum(1 for r in results if r["ms"] is not None)
+    with lock:
+        ordered = [results.get(i, {"status": None, "ms": None}) for i in indices]
+        pending = len(outstanding)
     print(
-        f"[shaper] {'drained' if done == len(results) else 'drain TIMED OUT'} -- "
-        f"{done}/{len(results)} complete"
+        f"[shaper] {'drained' if not pending else 'drain TIMED OUT'} -- "
+        f"{len(ordered) - pending}/{len(ordered)} complete"
     )
-    return results
+    return ordered
 
 
 def main():
@@ -523,6 +699,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("model", nargs="?", default="nova-2-lite")
     parser.add_argument("-v", "--verbose", action="store_true", help="print every request/attempt")
+    parser.add_argument("--events", help="record observed live events as JSONL for demo-ui/replay")
     args = parser.parse_args()
     VERBOSE = args.verbose
     model_id = MODEL_MAP.get(args.model, args.model)
@@ -530,7 +707,8 @@ def main():
     config = config_loader.get_config_with_aws_check()
     region = config.get('AWS_REGION', 'us-east-1')
     table_name = config.get('SINGLE_TABLE_NAME', 'semaphore-single-table')
-    table = boto3.resource('dynamodb', region_name=region).Table(table_name)
+    dynamodb = boto3.resource('dynamodb', region_name=region)
+    table = dynamodb.Table(table_name)
     key = {'pk': f'MODEL#{model_id}', 'sk': 'CONFIG'}
 
     original_item = table.get_item(Key=key).get('Item')
@@ -556,7 +734,8 @@ def main():
         print(
             f"Config re-derived at {DEMO_TPM_OVERRIDE:,} TPM (restored at end). All three arms are "
             f"held to this {DEMO_TPM_OVERRIDE:,} TPM ceiling: the shaper via this config, the "
-            f"direct arms via a client-side simulated quota:"
+            f"direct arms via a client-side simulated quota, modeled as 100k/60 tokens/s "
+            f"regeneration:"
         )
         for field in (
             'tpm_limit',
@@ -577,6 +756,8 @@ def main():
         )
 
         run_start = time.time()
+        if args.events:
+            _start_events(args.events, run_start)
         for arm in ("shaper", "direct", "direct+retry"):  # fixes the column order
             _progress["sent"][arm] = 0
         threading.Thread(
@@ -603,7 +784,7 @@ def main():
             t.start()
             threads.append((label, t))
 
-        shaper_results = _run_shaper_arm(api_url, model_id, prompt, run_start)
+        shaper_results = _run_shaper_arm(api_url, model_id, prompt, run_start, dynamodb, table_name)
         run_end = time.time()
         stop_progress.set()
 
@@ -626,6 +807,7 @@ def main():
                 "columns for the shaper will read 0; re-query CloudWatch later."
             )
     except Exception as e:
+        emit("run_error", reason=type(e).__name__)
         print(f"[shaper] Demo run failed: {e}")
     finally:
         stop_progress.set()

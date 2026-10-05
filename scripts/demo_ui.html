@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>make demo-ui</title>
+<style>
+  body { background:#12141a; color:#e7e9ee; font:14px ui-monospace,Menlo,monospace;
+         margin:0; padding:24px 28px; }
+  h1 { font-size:15px; margin:0 0 6px; }
+  .sub, .nums, footer { color:#8b93a7; font-size:12px; }
+  .sub { margin-bottom:20px; }
+  .lane { margin-bottom:18px; }
+  .hdr { display:flex; justify-content:space-between; border-bottom:1px solid #262a35;
+         padding-bottom:5px; margin-bottom:8px; }
+  .grid { display:flex; flex-wrap:wrap; gap:3px; }
+  .req { width:15px; height:15px; border-radius:2px; background:#222634;
+         display:flex; flex-wrap:wrap; overflow:hidden; }
+  .mk { flex:1 1 100%; }
+  .ok { background:#2f9e5e; } .thr { background:#c2444d; }
+  .exh { background:#7a2730; } .adm { background:#3b7dd8; }
+  footer { margin-top:22px; }
+</style>
+<h1>Traffic shaper — three lanes</h1>
+<div class="sub">Actual demo events · direct lanes' quota is modeled as 100k/60 tokens/s
+regeneration · <span id="status">connecting…</span></div>
+<div id="lanes"></div>
+<footer>One cell per request; each mark is an observed attempt. Blue = accepted by shaper,
+green = served, red = simulated throttle, dark red = failed or exhausted.</footer>
+<script>
+const ARMS = ["shaper", "direct", "direct+retry"];
+const COLORS = {admitted:"adm", ok:"ok", throttled:"thr", exhausted:"exh", error:"exh"};
+const lane = {};
+for (const arm of ARMS) {
+  const el = document.createElement("div");
+  el.className = "lane";
+  el.innerHTML = `<div class="hdr"><b>${arm}</b><span class="nums"></span></div><div class="grid"></div>`;
+  document.getElementById("lanes").appendChild(el);
+  lane[arm] = {grid:el.querySelector(".grid"), nums:el.querySelector(".nums"),
+               cells:{}, sent:0, attempts:0, calls:0, served:0, simThr:0};
+}
+function cell(arm, req) {
+  const L = lane[arm];
+  if (!L.cells[req]) {
+    const el = document.createElement("div");
+    el.className = "req";
+    el.title = `${arm} request ${req}`;
+    L.grid.appendChild(el);
+    L.cells[req] = el;
+  }
+  return L.cells[req];
+}
+function apply(ev) {
+  const L = lane[ev.arm];
+  if (!L) return;
+  const c = cell(ev.arm, ev.req);
+  if (ev.event === "sent") L.sent++;
+  if (ev.event === "attempt") {
+    const mark = document.createElement("div");
+    mark.className = "mk " + (COLORS[ev.outcome] || "");
+    mark.title = `request ${ev.req}, attempt ${ev.attempt}: ${ev.outcome}`;
+    c.appendChild(mark);
+    L.attempts++;
+    if (ev.outcome === "ok" || ev.outcome === "error") L.calls++;
+    if (ev.simulated) L.simThr++;
+    if (ev.outcome === "ok") L.served++;
+  }
+  if (ev.event === "done") {
+    if (c.firstChild) c.firstChild.className = ev.status === 200 ? "mk ok" : "mk exh";
+    if (ev.status === 200) L.served++;
+  }
+  L.nums.textContent = `sent ${L.sent} · attempts ${L.attempts} · served ${L.served}` +
+    (ev.arm === "shaper" ? "" : ` · calls ${L.calls} · sim_thr ${L.simThr}`);
+}
+let cursor = 0, pending = [], replayStart = null, failed = false;
+const status = document.getElementById("status");
+function playReplay() {
+  if (replayStart === null) replayStart = performance.now();
+  const t = (performance.now() - replayStart) / 1000 * 8;
+  while (pending.length && pending[0].t <= t) apply(pending.shift());
+  if (pending.length) requestAnimationFrame(playReplay);
+  else status.textContent = "replay finished";
+}
+async function poll() {
+  try {
+    const response = await fetch(`/events?since=${cursor}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    cursor = data.cursor;
+    if (data.live) {
+      for (const ev of data.events) {
+        if (ev.event === "run_error") failed = true;
+        apply(ev);
+      }
+      status.textContent = data.running ? "live" :
+        data.exit_code === 0 && !failed ? "run finished" : `run failed (exit ${data.exit_code})`;
+    } else {
+      pending.push(...data.events);
+      status.textContent = "replaying recorded run";
+      requestAnimationFrame(playReplay);
+      return;
+    }
+    timer = setTimeout(poll, 500);
+  } catch (error) {
+    status.textContent = `feed error: ${error.message}`;
+    timer = setTimeout(poll, 2000);
+  }
+}
+poll();
+</script>

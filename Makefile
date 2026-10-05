@@ -9,7 +9,7 @@
 	logs-recent logs-budget-recent logs-queue-recent logs-bedrock-recent logs-errors \
 	set-capacity get-capacity create-config create-starter-configs refresh-quotas \
 	inspect-dlq drain-dlq \
-	dashboard demo
+	dashboard demo demo-ui
 
 # Default target
 help:
@@ -85,7 +85,9 @@ help:
 	@echo "  make dashboard          - Launch test initiation dashboard (http://localhost:8080)"
 	@echo ""
 	@echo "Demo:"
-	@echo "  make demo               - Walking skeleton: override/restore model config (0 invocations)"
+	@echo "  make demo               - Real three-arm demo (AWS; temporarily overrides model CONFIG)"
+	@echo "  make demo-ui            - Run the real demo and view live requests in a browser (AWS)"
+	@echo "  make demo-ui REPLAY=tmp/demo-live-XXX.jsonl - Replay a recorded run (no AWS)"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean              - Clean up DynamoDB tables"
@@ -413,6 +415,11 @@ dashboard:
 # Demo
 demo:
 	@source .venv/bin/activate && python scripts/demo.py
+
+# Live mode launches demo.py and records actual events. Replay never invokes AWS.
+# The recording path is printed by the viewer; no simulation or cached fallback.
+demo-ui:
+	@source .venv/bin/activate && python scripts/demo_ui.py $(if $(REPLAY),--replay "$(REPLAY)",--run --model "$(or $(MODEL),nova-2-lite)")
 
 # Clean up DynamoDB tables
 clean:
