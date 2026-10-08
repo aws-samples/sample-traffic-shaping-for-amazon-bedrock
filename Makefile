@@ -9,7 +9,7 @@
 	logs-recent logs-budget-recent logs-queue-recent logs-bedrock-recent logs-errors \
 	set-capacity get-capacity create-config create-starter-configs refresh-quotas \
 	inspect-dlq drain-dlq \
-	dashboard demo demo-ui
+	dashboard demo demo-profiles demo-ui
 
 # Default target
 help:
@@ -86,8 +86,13 @@ help:
 	@echo ""
 	@echo "Demo:"
 	@echo "  make demo               - Real three-arm demo (AWS; temporarily overrides model CONFIG)"
-	@echo "  make demo-ui            - Run the real demo and view live requests in a browser (AWS)"
+	@echo "  make demo MODEL=haiku-4-5 PROFILE=ramp - Pick the model and load profile"
+	@echo "  make demo-profiles      - List load-profile presets (ramp, steep, multi-spike, long)"
+	@echo "  make demo-ui            - Browser launcher: pick model + profile, watch live, get a summary"
+	@echo "  make demo-ui MODEL=nova-2-lite PROFILE=steep - Start that run immediately"
 	@echo "  make demo-ui REPLAY=tmp/demo-live-XXX.jsonl - Replay a recorded run (no AWS)"
+	@echo "  ramp/multi-spike/long need a demo/test stack deployed with a looser per-IP WAF:"
+	@echo "    WAF_IP_RATE_LIMIT=10000 WAF_IP_RATE_WINDOW_SEC=60 make deploy  (see README)"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean              - Clean up DynamoDB tables"
@@ -413,13 +418,19 @@ dashboard:
 	@source .venv/bin/activate && python scripts/test_dashboard.py
 
 # Demo
+# MODEL = MODEL_MAP alias or model ID with a runtime CONFIG row (default nova-2-lite).
+# PROFILE = preset name or inline spec, e.g. PROFILE=ramp or PROFILE='60@1x,15@6x,60@0.5x'.
 demo:
-	@source .venv/bin/activate && python scripts/demo.py
+	@source .venv/bin/activate && python scripts/demo.py "$(or $(MODEL),nova-2-lite)" --profile "$(or $(PROFILE),default)"
+
+demo-profiles:
+	@source .venv/bin/activate && python scripts/demo.py --list-profiles
 
 # Live mode launches demo.py and records actual events. Replay never invokes AWS.
-# The recording path is printed by the viewer; no simulation or cached fallback.
+# With no MODEL/PROFILE the page is a launcher (pick model + profile there); with
+# either set, that run starts immediately. Recordings + summaries land in tmp/.
 demo-ui:
-	@source .venv/bin/activate && python scripts/demo_ui.py $(if $(REPLAY),--replay "$(REPLAY)",--run --model "$(or $(MODEL),nova-2-lite)")
+	@source .venv/bin/activate && python scripts/demo_ui.py $(if $(REPLAY),--replay "$(REPLAY)",$(if $(or $(MODEL),$(PROFILE)),--run --model "$(or $(MODEL),nova-2-lite)" --profile "$(or $(PROFILE),default)",--live))
 
 # Clean up DynamoDB tables
 clean:

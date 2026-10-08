@@ -25,6 +25,7 @@ from aws_cdk import (
     RemovalPolicy,
     Duration,
     CfnOutput,
+    Annotations,
 )
 from constructs import Construct
 from cdk_nag import NagSuppressions
@@ -53,6 +54,44 @@ def _checkov_skip(resource, *skips: "tuple[str, str]") -> None:
         "checkov",
         {"skip": [{"id": _id, "comment": _reason} for _id, _reason in skips]},
     )
+
+
+# PerIpRateLimit defaults. Demo and load-test stacks may override them with
+# -c waf_ip_rate_limit / -c waf_ip_rate_window_sec; WAFv2 accepts the ranges below.
+WAF_IP_RATE_LIMIT = 200
+WAF_IP_RATE_WINDOW_SEC = 300
+WAF_RATE_WINDOWS_SEC = (60, 120, 300, 600)
+
+
+def _waf_ip_rate(node) -> "tuple[int, int]":
+    """(limit, window_sec) for PerIpRateLimit from CDK context, validated at synth
+    so a bad or zero value fails here instead of at CloudFormation deploy time."""
+
+    def read(key, default, valid, expected):
+        raw = node.try_get_context(key)
+        if raw is None:
+            return default
+        try:
+            value = int(str(raw))
+        except ValueError:
+            raise ValueError(f"{key}={raw!r}: expected {expected}") from None
+        if not valid(value):
+            raise ValueError(f"{key}={raw!r}: expected {expected}")
+        return value
+
+    limit = read(
+        "waf_ip_rate_limit",
+        WAF_IP_RATE_LIMIT,
+        lambda v: 10 <= v <= 2_000_000_000,
+        "an integer from 10 to 2,000,000,000",
+    )
+    window = read(
+        "waf_ip_rate_window_sec",
+        WAF_IP_RATE_WINDOW_SEC,
+        lambda v: v in WAF_RATE_WINDOWS_SEC,
+        f"one of {', '.join(map(str, WAF_RATE_WINDOWS_SEC))}",
+    )
+    return limit, window
 
 
 class SemaphoreRateLimiterStack(Stack):
@@ -913,6 +952,14 @@ class SemaphoreRateLimiterStack(Stack):
         # WAF WebACL - Per-tenant rate limiting (REGIONAL, on the API GW stage)
         # ============================================================
 
+        waf_ip_limit, waf_ip_window_sec = _waf_ip_rate(self.node)
+        if (waf_ip_limit, waf_ip_window_sec) != (WAF_IP_RATE_LIMIT, WAF_IP_RATE_WINDOW_SEC):
+            Annotations.of(self).add_warning(
+                f"PerIpRateLimit is {waf_ip_limit} requests / {waf_ip_window_sec}s "
+                f"(default {WAF_IP_RATE_LIMIT} / {WAF_IP_RATE_WINDOW_SEC}s). It is the only "
+                "per-IP ingress guard: use the override on demo/test stacks only."
+            )
+
         waf_acl = wafv2.CfnWebACL(
             self,
             "TrafficShaperWaf",
@@ -985,8 +1032,10 @@ class SemaphoreRateLimiterStack(Stack):
                     ),
                     statement=wafv2.CfnWebACL.StatementProperty(
                         rate_based_statement=wafv2.CfnWebACL.RateBasedStatementProperty(
-                            limit=200,
-                            evaluation_window_sec=300,
+                            # Context-overridable for load tests and live demos, e.g.
+                            # -c waf_ip_rate_limit=10000 -c waf_ip_rate_window_sec=60.
+                            limit=waf_ip_limit,
+                            evaluation_window_sec=waf_ip_window_sec,
                             aggregate_key_type="IP",
                         ),
                     ),
