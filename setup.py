@@ -22,7 +22,7 @@ setup(
             "pytest==9.1.1",
             "hypothesis==6.165.10",
             "pytest-asyncio==1.4.0",
-            "moto==5.2.2",
+            "moto==5.2.3",
         ],
         "dev": [
             "black==26.5.1",
