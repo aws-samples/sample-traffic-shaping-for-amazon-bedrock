@@ -1,0 +1,466 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>make demo-ui</title>
+<style>
+  body { background:#12141a; color:#e7e9ee; font:14px ui-monospace,Menlo,monospace;
+         margin:0; padding:0 0 24px; }
+  /* One content column: the sticky bar, intro, lanes, tables and charts share these edges. */
+  .wrap { max-width:1240px; margin:0 auto; padding:0 28px; box-sizing:border-box; }
+  .top { position:sticky; top:0; z-index:5; background:#12141a; padding:14px 0 10px;
+         border-bottom:1px solid #262a35; margin-bottom:16px; }
+  .scroll { overflow-x:auto; }
+  .bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0 8px 0 0; white-space:nowrap; }
+  .pill { padding:3px 9px; border-radius:10px; background:#1b1e27; border:1px solid #303544;
+          font-size:12px; color:#8b93a7; }
+  .pill.live { color:#7fd3a0; border-color:#2f9e5e; }
+  .pill.stopping { color:#e8b45a; border-color:#d99a2b; }
+  .pill.failed { color:#e0727a; border-color:#c2444d; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-top:9px;
+            color:#8b93a7; font-size:12px; }
+  .sw { display:inline-block; width:11px; height:11px; border-radius:2px; vertical-align:-1px;
+        margin-right:5px; }
+  #stop { border-color:#c2444d; color:#f0a3a9; }
+  #start { border-color:#2f9e5e; color:#9fe0b8; }
+  h2 { font-size:14px; margin:26px 0 8px; }
+  .sub, .nums, footer, .note { color:#8b93a7; font-size:12px; }
+  .sub { margin-bottom:14px; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .controls select, .controls input, .controls button { background:#1b1e27; color:#e7e9ee;
+         border:1px solid #303544; border-radius:3px; font:inherit; padding:4px 6px; }
+  .controls input { width:220px; }
+  #model { max-width:230px; } #preset { max-width:120px; }
+  .cxl { background:#4a4f5e; }
+  .controls button { cursor:pointer; }
+  .controls button:disabled { opacity:.45; cursor:default; }
+  .err { color:#e0727a; font-size:12px; }
+  .banner { border:1px solid #c2444d; background:#2a161a; color:#f0a3a9; border-radius:3px;
+            padding:8px 12px; margin-bottom:16px; white-space:pre-line; }
+  .banner pre { color:#e7e9ee; font-size:12px; white-space:pre-wrap; max-height:320px;
+                overflow:auto; margin:8px 0 0; }
+  .warn { color:#e8b45a; white-space:pre-line; margin-top:4px; }
+  .lane { margin-bottom:18px; }
+  .hdr { display:flex; justify-content:space-between; border-bottom:1px solid #262a35;
+         padding-bottom:5px; margin-bottom:8px; }
+  .grid { display:flex; flex-wrap:wrap; gap:3px; }
+  .req { width:15px; height:15px; border-radius:2px; background:#222634;
+         display:flex; flex-wrap:wrap; overflow:hidden; }
+  .mk { flex:1 1 100%; }
+  /* Sent and still waiting for its answer: the quota is charged at send, so a later
+     request can be rejected while earlier ones are still generating. */
+  .req.fly, .sw.fly { background:#2a3550; box-shadow:inset 0 0 0 1px #5f7bb5; }
+  .ok { background:#2f9e5e; } .thr { background:#c2444d; }
+  .exh { background:#7a2730; } .adm { background:#3b7dd8; }
+  table { border-collapse:collapse; font-size:12px; margin-bottom:6px; width:100%; }
+  th, td { padding:4px 10px; border-bottom:1px solid #262a35; text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:#8b93a7; font-weight:normal; }
+  .charts { display:grid; grid-template-columns:repeat(auto-fit, minmax(380px, 1fr)); gap:28px; }
+  .charts svg { width:100%; height:auto; display:block; }
+  .clegend { display:flex; gap:14px; flex-wrap:wrap; color:#8b93a7; font-size:12px; margin-bottom:4px; }
+  .clegend i { display:inline-block; width:12px; height:3px; vertical-align:3px; margin-right:5px; }
+  svg text { fill:#8b93a7; font:11px ui-monospace,Menlo,monospace; }
+  .hidden { display:none; }
+</style>
+<div class="top">
+  <div class="wrap">
+  <div class="bar">
+    <h1>Traffic shaper</h1>
+    <div class="controls hidden" id="controls">
+      <select id="model" title="model (runtime CONFIG rows)"></select>
+      <select id="preset" title="load profile preset"></select>
+      <input id="spec" placeholder="60@1x,15@6x,60@0.5x  or  25:70">
+      <button id="start">&#9654; Start</button>
+      <button id="stop" disabled title="stop sending, cancel queued shaper requests, restore CONFIG">&#9632; Stop</button>
+    </div>
+    <span class="pill" id="status">connecting…</span>
+    <span class="pill" id="clock" title="elapsed since the run started / planned send window summed from the profile phases (the shaper drain runs past it)">⏱ –</span>
+    <span class="note" id="runinfo"></span>
+    <span class="err" id="err"></span>
+  </div>
+  <div class="legend">
+    <span><i class="sw fly"></i>sent, waiting for answer</span>
+    <span><i class="sw adm"></i>accepted by shaper</span>
+    <span><i class="sw ok"></i>served</span>
+    <span><i class="sw thr"></i>throttled (simulated)</span>
+    <span><i class="sw exh"></i>failed / exhausted</span>
+    <span><i class="sw cxl"></i>cancelled by Stop</span>
+    <span title="Actual demo events. Direct lanes are held to a simulated 200k TPM quota.">· one cell per request, one mark per attempt · latency = scheduled send → final answer</span>
+  </div>
+  </div>
+</div>
+<main class="wrap">
+<div class="banner hidden" id="banner"><b id="bannermsg"></b><pre id="logtail" class="hidden"></pre></div>
+<div id="lanes"></div>
+<section id="summary" class="hidden">
+  <h2>Run summary</h2>
+  <div class="note" id="sumnote"></div>
+  <div class="note warn" id="sumwarn"></div>
+  <div class="scroll"><table id="sumtable"></table></div>
+  <div class="charts">
+    <div><h2>Served over time</h2><div class="clegend" id="lg-served"></div>
+      <svg id="chart-served" viewBox="0 0 560 260"></svg></div>
+    <div><h2>Latency of served requests (CDF)</h2><div class="clegend" id="lg-cdf"></div>
+      <svg id="chart-cdf" viewBox="0 0 560 260"></svg></div>
+  </div>
+  <h2>Per phase (served requests)</h2>
+  <div class="scroll"><table id="phasetable"></table></div>
+  <div class="note" id="sumpath"></div>
+</section>
+</main>
+<script>
+const ARMS = ["shaper", "direct", "direct+retry"];
+const ARM_COLOR = {"shaper":"#3b7dd8", "direct":"#c2444d", "direct+retry":"#d99a2b"};
+const COLORS = {admitted:"adm", ok:"ok", throttled:"thr", exhausted:"exh", error:"exh"};
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
+// Recordings are files and may be shared: numbers go through Number(), text through esc().
+const num = v => v == null ? "-" : esc(Number(v));
+let lane = {};
+
+function resetLanes() {
+  lane = {};
+  $("lanes").innerHTML = "";
+  $("summary").classList.add("hidden");
+  for (const arm of ARMS) {
+    const el = document.createElement("div");
+    el.className = "lane";
+    el.innerHTML = `<div class="hdr"><b>${arm}</b><span class="nums"></span></div><div class="grid"></div>`;
+    $("lanes").appendChild(el);
+    lane[arm] = {grid:el.querySelector(".grid"), nums:el.querySelector(".nums"),
+                 cells:new Map(), sent:0, attempts:0, calls:0, served:0, failed:0, simThr:0, lat:[]};
+  }
+}
+function cell(arm, req) {
+  const L = lane[arm];
+  if (!L.cells.has(req)) {
+    const el = document.createElement("div");
+    el.className = "req";
+    el.title = `${arm} request ${req}`;
+    L.grid.appendChild(el);
+    L.cells.set(req, el);
+  }
+  return L.cells.get(req);
+}
+// The red banner: run errors from the feed or summary, plus demo.py's output tail.
+let errors = [];
+function showError(message) {
+  if (!message || errors.includes(message)) return;
+  errors.push(message);
+  $("bannermsg").textContent = errors.join("\n");
+  $("banner").classList.remove("hidden");
+}
+function showLog(tail) {
+  $("logtail").textContent = tail;
+  $("logtail").classList.toggle("hidden", !tail);
+  if (tail) $("banner").classList.remove("hidden");
+}
+function resetBanner() {
+  errors = [];
+  $("bannermsg").textContent = "";
+  showLog("");
+  $("banner").classList.add("hidden");
+}
+const exitText = code => code < 0 ? `demo.py was killed by signal ${-code}` : `demo.py exited with code ${code}`;
+function pctl(sorted, p) {
+  if (!sorted.length) return null;
+  return sorted[Math.max(1, Math.ceil(p / 100 * sorted.length)) - 1];
+}
+const sec = ms => ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`;
+function renderNums(arm) {
+  const L = lane[arm];
+  const lat = [...L.lat].sort((a, b) => a - b);
+  const avg = lat.length ? lat.reduce((a, b) => a + b, 0) / lat.length : null;
+  L.nums.textContent = `sent ${L.sent} · attempts ${L.attempts} · served ${L.served}` +
+    (arm === "shaper" ? "" : ` · calls ${L.calls} · sim_thr ${L.simThr}`) +
+    ` · failed ${L.failed} · avg ${sec(avg)} · p95 ${sec(pctl(lat, 95))}`;
+}
+function apply(ev) {
+  if (ev.t != null) lastT = Math.max(lastT, ev.t);
+  if (ev.event === "meta") {
+    plannedS = ev.planned_s ?? (ev.profile || []).reduce((a, [d]) => a + d, 0);
+    runStartEpoch = ev.start_epoch ?? null;
+    $("runinfo").textContent = `${ev.model_id || "?"} · profile ${ev.profile_spec || "default"}` +
+      ` · ${ev.offered} requests`;
+    return;
+  }
+  if (ev.event === "summary") { renderSummary(ev.summary, ev.path); return; }
+  if (ev.event === "run_error") {
+    failed = true;
+    showError(`Run error: ${ev.message || ev.reason || "unknown"}`);
+    return;
+  }
+  if (ev.event === "cleanup") {
+    // Shaper requests still open at Stop were cancelled: grey their cells.
+    for (const c of lane.shaper.cells.values())
+      if (!c.dataset.done) { c.classList.remove("fly"); if (c.firstChild) c.firstChild.className = "mk cxl"; else c.classList.add("cxl"); }
+    cleanup = `cleaned up: ${ev.deleted} queued item(s) deleted, ${ev.stopped} execution(s) stopped`;
+    return;
+  }
+  if (ev.event === "stopped") { stopped = true; return; }
+  if (!ARMS.includes(ev.arm)) return;
+  const L = lane[ev.arm];
+  const c = cell(ev.arm, ev.req);
+  if (ev.event === "sent") { L.sent++; c.classList.add("fly"); }
+  if (ev.event === "attempt") {
+    const mark = document.createElement("div");
+    mark.className = "mk " + (COLORS[ev.outcome] || "");
+    mark.title = `request ${ev.req}, attempt ${ev.attempt}: ${ev.outcome}`;
+    c.appendChild(mark);
+    L.attempts++;
+    if (ev.outcome === "ok" || ev.outcome === "error") L.calls++;
+    if (ev.simulated) L.simThr++;
+    if (ev.outcome === "ok") L.served++;
+  }
+  if (ev.event === "done") {
+    c.dataset.done = "1";
+    c.classList.remove("fly");
+    if (ev.arm === "shaper") {
+      if (c.firstChild) c.firstChild.className = ev.status === 200 ? "mk ok" : "mk exh";
+      if (ev.status === 200) L.served++;
+    }
+    if (ev.status === 200 && ev.ms != null) L.lat.push(ev.ms);
+    if (ev.status !== 200) L.failed++;
+  }
+  renderNums(ev.arm);
+}
+
+function renderSummary(s, path) {
+  $("summary").classList.remove("hidden");
+  const m = s.meta || {};
+  if (m.run_error) { failed = true; showError(`Run error: ${m.run_error}`); }
+  $("sumnote").textContent = `${m.model_id || "?"} · ceiling ${(m.tpm_ceiling || 0).toLocaleString()} TPM` +
+    ` (queue share ${(m.queue_tpm || 0).toLocaleString()}) · ${m.est_tokens} est. tokens/request` +
+    ` · profile ${m.profile_spec} = ${s.profile.map(([d, c]) => `${d}s×${c}`).join(", ")}`;
+  $("sumwarn").textContent = (m.warnings || []).map(w => `warning: ${w}`).join("\n");
+  const arms = ARMS.filter(arm => s.arms[arm]);
+  // Recordings made before these outcomes existed have no unsent/cancelled counts.
+  const extra = ["unsent", "cancelled"].filter(k => arms.some(arm => s.arms[arm][k] != null));
+  const cols = ["arm", "offered", "served", "failed", "unresolved", ...extra, "total time",
+                "last success", "avg", "p50", "p95", "p99", "max", "attempts", "Bedrock calls",
+                "sim thr", "real thr"];
+  let html = `<tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr>`;
+  for (const arm of arms) {
+    const a = s.arms[arm], l = a.latency_served;
+    const t = v => v == null ? "-" : `${Number(v).toFixed(1)}s`;
+    html += `<tr><td style="color:${ARM_COLOR[arm]}">${arm}</td><td>${num(a.offered)}</td>` +
+      `<td>${num(a.served)} (${Number(a.served_pct).toFixed(0)}%)</td><td>${num(a.failed)}</td>` +
+      `<td>${num(a.unresolved)}</td>${extra.map(k => `<td>${num(a[k])}</td>`).join("")}` +
+      `<td>${t(a.total_s)}</td><td>${t(a.last_success_s)}</td><td>${sec(l.avg)}</td>` +
+      `<td>${sec(l.p50)}</td><td>${sec(l.p95)}</td><td>${sec(l.p99)}</td><td>${sec(l.max)}</td>` +
+      `<td>${num(a.attempts)}</td><td>${num(a.bedrock_calls)}</td>` +
+      `<td>${num(a.sim_throttles)}</td><td>${num(a.real_throttles)}</td></tr>`;
+  }
+  $("sumtable").innerHTML = html;
+  let ph = `<tr><th>phase</th><th>duration</th><th>offered</th>` +
+    arms.map(a => `<th>${a} served</th><th>avg</th><th>p95</th>`).join("") + "</tr>";
+  s.profile.forEach(([d, c], i) => {
+    ph += `<tr><td>${i + 1}</td><td>${num(d)}s</td><td>${num(c)}</td>`;
+    for (const arm of arms) {
+      const p = s.arms[arm].phases[i];
+      ph += `<td>${num(p.served)}</td><td>${sec(p.latency_served.avg)}</td><td>${sec(p.latency_served.p95)}</td>`;
+    }
+    ph += "</tr>";
+  });
+  $("phasetable").innerHTML = ph;
+  $("sumpath").textContent = path ? `Saved: ${path} (+ .json)` : "";
+  drawServed(s);
+  drawCdf(s);
+}
+
+// Minimal SVG line chart: series = [{color, pts:[[x,y]...], dash}], axes from 0.
+// Drawn in viewBox units and scaled to the column width; the legend is HTML above it.
+function lineChart(svg, legend, series, xLabel, yLabel) {
+  const [, , W, H] = svg.getAttribute("viewBox").split(" ").map(Number);
+  const pad = {l:52, r:14, t:10, b:42};
+  const xs = series.flatMap(s => s.pts.map(p => p[0])), ys = series.flatMap(s => s.pts.map(p => p[1]));
+  const xMax = Math.max(1, ...xs), yMax = Math.max(1, ...ys);
+  const X = x => pad.l + x / xMax * (W - pad.l - pad.r), Y = y => H - pad.b - y / yMax * (H - pad.t - pad.b);
+  let out = `<line x1="${pad.l}" y1="${H - pad.b}" x2="${W - pad.r}" y2="${H - pad.b}" stroke="#303544"/>` +
+    `<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H - pad.b}" stroke="#303544"/>`;
+  for (let i = 0; i <= 4; i++) {
+    out += `<text x="${X(xMax * i / 4)}" y="${H - pad.b + 14}" text-anchor="middle">${(xMax * i / 4).toFixed(0)}</text>` +
+      `<text x="${pad.l - 6}" y="${Y(yMax * i / 4) + 4}" text-anchor="end">${(yMax * i / 4).toFixed(0)}</text>`;
+  }
+  out += `<text x="${(W + pad.l) / 2}" y="${H - 6}" text-anchor="middle">${xLabel}</text>` +
+    `<text x="12" y="${(H - pad.b + pad.t) / 2}" transform="rotate(-90 12 ${(H - pad.b + pad.t) / 2})" text-anchor="middle">${yLabel}</text>`;
+  for (const s of series) {
+    if (!s.pts.length) continue;
+    const d = s.pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+    out += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"${s.dash ? ' stroke-dasharray="4 3"' : ""}/>`;
+  }
+  svg.innerHTML = out;
+  legend.innerHTML = series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join("");
+}
+function steps(times) {  // cumulative count step series from sorted times
+  const pts = [[0, 0]];
+  times.forEach((t, i) => { pts.push([t, i]); pts.push([t, i + 1]); });
+  return pts;
+}
+function drawServed(s) {
+  const offsets = [];
+  let t0 = 0;
+  for (const [d, c] of s.profile) { for (let k = 0; k < c; k++) offsets.push(t0 + k * d / c); t0 += d; }
+  const series = [{label:"offered", color:"#8b93a7", dash:true, pts:steps(offsets)}];
+  for (const arm of ARMS.filter(arm => s.arms[arm])) {
+    const a = s.arms[arm];
+    const done = a.requests.filter(r => r.ok && r.done_s != null).map(r => r.done_s).sort((x, y) => x - y);
+    series.push({label:arm, color:ARM_COLOR[arm], pts:steps(done)});
+  }
+  lineChart($("chart-served"), $("lg-served"), series, "seconds from start", "requests");
+}
+function drawCdf(s) {
+  const series = [];
+  for (const arm of ARMS.filter(arm => s.arms[arm])) {
+    const a = s.arms[arm];
+    const lat = a.requests.filter(r => r.ok && r.ms != null).map(r => r.ms / 1000).sort((x, y) => x - y);
+    series.push({label:arm, color:ARM_COLOR[arm],
+                 pts:lat.map((v, i) => [v, 100 * (i + 1) / a.offered])});
+  }
+  lineChart($("chart-cdf"), $("lg-cdf"), series, "latency (s)", "% of offered served");
+}
+
+// Feed: live runs tail the current trace; a new run_id resets the page.
+let cursor = 0, runId = null, pending = [], replayStart = null, failed = false, optionsLoaded = false;
+async function loadOptions() {
+  optionsLoaded = true;
+  let r;
+  try {
+    const response = await fetch("/options");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    r = await response.json();
+  } catch (error) {
+    $("err").textContent = `could not load models: ${error.message}`;
+    optionsLoaded = false;  // the next poll retries
+    return;
+  }
+  if (r.error) { $("err").textContent = r.error; optionsLoaded = false; }
+  $("model").innerHTML = r.models.map(m =>
+    `<option value="${esc(m.model_id)}">${esc(m.alias ? `${m.alias} (${m.model_id})` : m.model_id)}</option>`).join("");
+  const nova = r.models.find(m => m.alias === "nova-2-lite");
+  if (nova) $("model").value = nova.model_id;
+  $("preset").innerHTML = Object.entries(r.profiles).map(([n, spec]) =>
+    `<option value="${esc(n)}" title="${esc(spec)}">${esc(n)}</option>`).join("") + `<option value="">custom…</option>`;
+  const syncSpec = () => { $("spec").value = r.profiles[$("preset").value] || $("spec").value; };
+  // A new profile choice outside a run shows that profile's plan, not the last run's clock.
+  const replan = () => { if (!runningNow) { plannedS = null; runStartEpoch = null; lastT = 0; } tickClock(); };
+  $("preset").onchange = () => { syncSpec(); replan(); };
+  $("spec").oninput = replan;
+  syncSpec();
+  // `D@Mx` scales the selected model's own 1x: its burndown sets the per-request estimate.
+  const hint = () => {
+    const m = r.models.find(x => x.model_id === $("model").value);
+    $("spec").title = `D@Mx = D seconds at M times ${m ? m.base_rpm : r.base_rpm} req/min` +
+      (m ? ` (${m.est_tokens} est. tokens/request)` : "") + "; D:N = N requests over D seconds";
+  };
+  $("model").onchange = hint;
+  hint();
+}
+$("stop").onclick = async () => {
+  $("err").textContent = "";
+  $("stop").disabled = true;
+  try {
+    const r = await fetch("/stop", {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+    const body = await r.json().catch(() => ({error:`HTTP ${r.status}`}));
+    if (!r.ok || !body.ok) throw new Error(body.error || `HTTP ${r.status}`);
+  } catch (error) {
+    $("err").textContent = `Stop failed: ${error.message}`;
+    $("stop").disabled = false;
+  }
+};
+$("start").onclick = async () => {
+  $("err").textContent = "";
+  $("start").disabled = true;
+  const profile = $("preset").value && $("spec").value === $("preset").selectedOptions[0].title
+    ? $("preset").value : $("spec").value;
+  try {
+    const r = await fetch("/start", {method:"POST", headers:{"Content-Type":"application/json"},
+                                      body:JSON.stringify({model:$("model").value, profile})});
+    const body = await r.json().catch(() => ({error:`HTTP ${r.status}`}));
+    if (!r.ok || !body.ok) throw new Error(body.error || `HTTP ${r.status}`);
+  } catch (error) {
+    $("err").textContent = error.message;
+    $("start").disabled = false;
+  }
+};
+const status = $("status");
+let stopped = false, cleanup = "";
+let plannedS = null, runStartEpoch = null, lastT = 0, runningNow = false, replayClock = null;
+const mmss = s => s == null ? "–" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+function planFromSpec(spec) {  // sum of phase durations: "D:N" or "D@Mx"
+  const ds = String(spec || "").split(",").map(p => parseFloat(p.trim().split(/[:@]/)[0]));
+  return ds.length && ds.every(Number.isFinite) ? ds.reduce((a, b) => a + b, 0) : null;
+}
+function tickClock() {
+  let elapsed = null;
+  if (replayClock !== null) elapsed = replayClock;
+  else if (runningNow && runStartEpoch) elapsed = Math.max(0, Date.now() / 1000 - runStartEpoch);
+  else if (runStartEpoch || lastT) elapsed = lastT;
+  const planned = plannedS ?? ($("spec") ? planFromSpec($("spec").value) : null);
+  $("clock").textContent = elapsed == null ? `⏱ planned ${mmss(planned)}` :
+    `⏱ ${mmss(elapsed)} / ${mmss(planned)} planned`;
+}
+setInterval(tickClock, 500);
+function setStatus([text, cls]) { status.textContent = text; status.className = "pill " + cls; }
+function playReplay() {
+  if (replayStart === null) replayStart = performance.now();
+  const t = (performance.now() - replayStart) / 1000 * 8;
+  replayClock = Math.min(t, pending.length ? t : lastT);
+  while (pending.length && pending[0].t <= t) apply(pending.shift());
+  if (pending.length) requestAnimationFrame(playReplay);
+  else setStatus(failed ? ["replay finished · the recorded run failed", "failed"] :
+    stopped ? ["replay finished · the recorded run was stopped early", "stopping"] :
+    ["replay finished", ""]);
+}
+async function poll() {
+  try {
+    const response = await fetch(`/events?since=${cursor}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (data.run_id !== runId) {  // first poll or a new run: start clean
+      runId = data.run_id; failed = false; stopped = false; cleanup = "";
+      plannedS = null; runStartEpoch = null; lastT = 0;
+      resetLanes();
+      resetBanner();
+      if (cursor) { cursor = 0; timer = setTimeout(poll, 0); return; }
+    }
+    cursor = data.cursor;
+    if (data.bad_lines) $("err").textContent = `${data.bad_lines} corrupt event line(s) skipped`;
+    if (data.controls) {
+      $("controls").classList.remove("hidden");
+      if (!optionsLoaded) loadOptions();
+      $("start").disabled = data.running || !$("model").value;
+      runningNow = data.running;
+      $("stop").disabled = !data.running || data.stopping;
+    }
+    if (data.live) {
+      for (const ev of data.events) apply(ev);
+      const ended = !data.running && data.run_id;
+      if (ended && data.exit_code !== 0) {
+        failed = true;
+        showError(exitText(data.exit_code));
+        showLog(data.log_tail || "");
+      }
+      // Failure outranks "stopped": a stopped run can also have crashed or failed its restore.
+      setStatus(data.stopping ? ["stopping — cleaning up…", "stopping"] :
+        data.running ? ["live", "live"] :
+        !data.run_id && data.controls ? ["pick a model and profile", ""] :
+        failed ? [`run failed${data.exit_code ? ` (exit ${data.exit_code})` : ""}`, "failed"] :
+        stopped ? [`stopped · ${cleanup || "no queued requests to clean up"}`, "stopping"] :
+        ["run finished", ""]);
+    } else {
+      pending.push(...data.events);
+      status.textContent = "replaying recorded run";
+      requestAnimationFrame(playReplay);
+      return;
+    }
+    timer = setTimeout(poll, 500);
+  } catch (error) {
+    status.textContent = `feed error: ${error.message}`;
+    timer = setTimeout(poll, 2000);
+  }
+}
+let timer;
+resetLanes();
+poll();
+</script>

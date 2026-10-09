@@ -171,6 +171,51 @@ the full list. See [`docs/guide/configuration.md`](docs/guide/configuration.md) 
 model-config field and [`docs/guide/invoke-api.md`](docs/guide/invoke-api.md) for the `POST /invoke`
 request/response contract.
 
+### Visualize and replay a real demo
+
+```bash
+make demo                 # real three-arm run, summary in the terminal and tmp/
+make demo MODEL=haiku-4-5 PROFILE=steep  # pick the model and the load shape
+make demo-profiles        # list presets: default, ramp, steep, multi-spike, long
+make demo-ui              # localhost launcher: pick model + profile, watch live
+make demo-ui REPLAY=tmp/demo-live-XXXXXX.jsonl  # replay a saved run; no AWS
+```
+
+> The demo temporarily rewrites the chosen model's `CONFIG` to a 200k TPM ceiling and restores
+> it when the run ends. `CONFIG` is account-wide: every shaper caller for that model gets the
+> override while the demo runs, so don't run it against a stack serving real traffic.
+
+`PROFILE` takes a preset or an inline spec of comma-separated phases: `D:N` is N requests over D
+seconds, `D@Mx` is D seconds at M times the 1x rate: the 200k TPM ceiling's sustainable rate
+for that model's per-request estimate (~71 requests/min on Nova; ~29/min on 5x-burndown Claude
+models, whose output counts 5x against quota). `60@1x,15@6x,60@0.5x` is a minute at quota, a
+15-second 6x spike, then a minute at half.
+
+Profiles that would exceed the API's per-IP WAF limit are refused, since those requests would be
+blocked at ingress rather than shaped. The stack default is 200 requests per 300 s per IP: it fits
+`default` and `steep`, but refuses `ramp`, `multi-spike`, `long` and the inline example above. To
+run those, deploy a demo/test stack with a looser per-IP limit:
+
+```bash
+WAF_IP_RATE_LIMIT=10000 WAF_IP_RATE_WINDOW_SEC=60 ./deploy.sh   # same variables work with make deploy
+cdk deploy -c waf_ip_rate_limit=10000 -c waf_ip_rate_window_sec=60   # equivalent, CDK directly
+```
+
+> This loosens the only per-IP ingress guard on the API: demo/test stacks only. A later deploy
+> without the variables puts the 200 / 300 s default back.
+
+`scripts/demo.py --force` runs a profile past the WAF limit anyway (the tail is 403'd at ingress).
+`scripts/demo.py --real-quota` runs the shaper arm alone against the model's real `CONFIG` and
+Bedrock quota: no override, no direct arms.
+
+When a run finishes, the viewer shows a summary: per arm, served/failed counts, total time
+(first send to last request resolved), average/p50/p95/p99 latency of served requests from
+their scheduled send, attempts and throttles, a served-over-time chart, a latency CDF, and the
+same stats per load phase. The summary is written as Markdown and JSON beside the recording
+(`tmp/demo-live-XXXXXX-summary.md`) for `make demo-ui`, or to `tmp/demo-summary-<timestamp>.md`
+for `make demo`. The launcher writes each run's demo.py output to `tmp/demo-live-XXXXXX.log` and
+shows its tail in the page when a run fails.
+
 ## When to use it
 
 - Asynchronous or batch GenAI pipelines (summarization, enrichment, evaluation, offline generation)
