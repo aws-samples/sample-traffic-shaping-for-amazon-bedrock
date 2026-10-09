@@ -5,8 +5,19 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # One PR per weekly run instead of one per package.
+    groups:
+      pip:
+        patterns: ["*"]
+    ignore:
+      # cdk-nag v3 removed the NagSuppressions API this stack uses; stay on 2.x.
+      - dependency-name: "cdk-nag"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
