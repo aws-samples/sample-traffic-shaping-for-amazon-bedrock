@@ -123,8 +123,24 @@ echo ""
 ENABLE_MANTLE="${ENABLE_MANTLE:-true}"
 echo "  enable_mantle=${ENABLE_MANTLE} (set ENABLE_MANTLE=false to deploy without the Mantle backend)"
 
+# Optional per-IP WAF override (stack default: 200 requests / 300 s), forwarded only
+# when set. The larger demo profiles need e.g. WAF_IP_RATE_LIMIT=10000
+# WAF_IP_RATE_WINDOW_SEC=60. This loosens the only per-IP ingress guard, so use it on
+# demo/test stacks only; a later deploy without the variables restores the default.
+WAF_CONTEXT=()
+if [ -n "${WAF_IP_RATE_LIMIT}" ]; then
+    WAF_CONTEXT+=(--context waf_ip_rate_limit="${WAF_IP_RATE_LIMIT}")
+fi
+if [ -n "${WAF_IP_RATE_WINDOW_SEC}" ]; then
+    WAF_CONTEXT+=(--context waf_ip_rate_window_sec="${WAF_IP_RATE_WINDOW_SEC}")
+fi
+if [ ${#WAF_CONTEXT[@]} -gt 0 ]; then
+    echo "  per-IP WAF override: ${WAF_CONTEXT[*]} (demo/test stacks only)"
+fi
+
 cdk deploy --require-approval never \
     --context enable_mantle="${ENABLE_MANTLE}" \
+    "${WAF_CONTEXT[@]}" \
     --outputs-file cdk-outputs.json
 
 if [ $? -ne 0 ]; then

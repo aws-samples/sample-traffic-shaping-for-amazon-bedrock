@@ -278,22 +278,22 @@ def test_empty_results_are_all_zero():
 
 
 def test_override_keeps_the_live_split_and_does_not_hand_the_queue_the_ceiling():
-    """The AC's central assertion: re-deriving at a 100,000 ceiling must scale the
-    LIVE 0.85 queue share down to 85,000, NOT give the queue the whole 100,000.
+    """The AC's central assertion: re-deriving at a 200,000 ceiling must scale the
+    LIVE 0.85 queue share down to 170,000, NOT give the queue the whole 200,000.
 
     The live item's share is 6,800,000/8,000,000 = 0.85, and that ratio -- read off
     the deployed item rather than hardcoded -- is what has to survive the override.
     """
     overridden = _build_ceiling_override_item(LIVE_CONFIG_ITEM, LIVE_CONFIG_ITEM["model_id"])
 
-    assert overridden["tpm_limit"] == DEMO_TPM_OVERRIDE == 100_000
-    assert overridden["tpm_queue_capacity"] == 85_000
+    assert overridden["tpm_limit"] == DEMO_TPM_OVERRIDE == 200_000
+    assert overridden["tpm_queue_capacity"] == 170_000
     assert overridden["tpm_queue_capacity"] != DEMO_TPM_OVERRIDE
-    assert float(overridden["tpm_queue_regeneration_rate"]) == pytest.approx(1416.6667)
+    assert float(overridden["tpm_queue_regeneration_rate"]) == pytest.approx(2833.3333)
     # The other two thirds of the split scale by the same rule.
     assert overridden["tpm_burst_capacity"] == 0
-    assert overridden["tpm_buffer_capacity"] == 15_000
-    # Stated as the ratio too, so a future change that lands 85,000 by coincidence
+    assert overridden["tpm_buffer_capacity"] == 30_000
+    # Stated as the ratio too, so a future change that lands 170,000 by coincidence
     # rather than by preserving the share still fails here.
     live_share = float(LIVE_CONFIG_ITEM["tpm_queue_capacity"]) / float(
         LIVE_CONFIG_ITEM["tpm_limit"]
@@ -355,6 +355,6 @@ def test_request_profile_is_flat_constants_not_derivations():
     starves, which is asserted as an inequality rather than pinned to a ratio."""
     assert DEMO_BYTES_PER_TOKEN == 5
     assert DEMO_MAX_OUTPUT_TOKENS == 1000
-    assert DEMO_REQUEST_COUNT == 70
+    assert DEMO_REQUEST_COUNT == 140
     offered_tokens = DEMO_REQUEST_COUNT * DEMO_TOKENS_PER_REQUEST_ESTIMATE
     assert offered_tokens > DEMO_TPM_OVERRIDE

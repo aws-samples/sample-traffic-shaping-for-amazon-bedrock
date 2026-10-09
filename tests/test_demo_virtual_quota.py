@@ -6,19 +6,19 @@ The gate used to be a rolling 60s window of charges. Nothing aged out inside a
 run and BOTH direct arms landed on exactly 37 served -- the retry arm burned 132
 extra attempts and 0 of its 99 retries succeeded. Retry futility was an artifact
 of the gate's shape, not a finding about retries. A bucket that regenerates its
-whole ceiling over DEMO_QUOTA_REFILL_S (100,000 / 60 tokens per second,
+whole ceiling over DEMO_QUOTA_REFILL_S (200,000 / 60 tokens per second,
 continuously) lets a request that waits actually find room, so `direct` and
 `direct+retry` can diverge honestly.
 
 What that makes testable, and is pinned below:
   - the ceiling is spent, not just bounded: a full bucket admits
-    floor(100,000 / 2,820) = 35 requests back to back and rejects the 36th;
+    floor(200,000 / 2,820) = 70 requests back to back and rejects the 71st;
   - a rejected attempt costs nothing (rejection must not deepen the deficit),
     including when another admit interleaves with it -- which is what pins the
     clock read inside the lock;
   - _direct_call's reconcile credits the bucket back DOWN to actual usage, so the
     sign at the call site that computes est - actual is pinned too;
-  - regeneration is continuous, so ~1.69s after the bucket is drained -- the time
+  - regeneration is continuous, so ~0.85s after the bucket is drained -- the time
     to regenerate one whole estimate -- one more request is admitted;
   - the reconcile credit (up-front estimate minus measured actual usage) is
     visible to the next admit;
@@ -66,12 +66,12 @@ CAP = DEMO_TPM_OVERRIDE
 
 # Derived from the module's own constants rather than pinned, so a change to the
 # request profile or the ceiling moves these with it -- but the headline figures
-# they currently produce ARE pinned (see test_full_bucket_admits_35_and_rejects
-# _the_36th), because a silent regression in them is the whole point of the bead.
-EXPECTED_ADMITS = CAP // EST  # 35
-LEFTOVER = CAP - EXPECTED_ADMITS * EST  # 1,300 -- under one estimate, so no 36th
-REGEN_PER_S = CAP / DEMO_QUOTA_REFILL_S  # 1,666.67 tokens/s
-ONE_EST_REGEN_S = EST / REGEN_PER_S  # ~1.692s to regenerate a whole estimate
+# they currently produce ARE pinned (see test_full_bucket_admits_70_and_rejects
+# _the_71st), because a silent regression in them is the whole point of the bead.
+EXPECTED_ADMITS = CAP // EST  # 70
+LEFTOVER = CAP - EXPECTED_ADMITS * EST  # 2,600 -- under one estimate, so no 71st
+REGEN_PER_S = CAP / DEMO_QUOTA_REFILL_S  # 3,333.33 tokens/s
+ONE_EST_REGEN_S = EST / REGEN_PER_S  # ~0.846s to regenerate a whole estimate
 
 # A measured success from a live run: the up-front charge is the 2,820-token
 # estimate, actual usage came in at 2,628, so reconcile credits 192 back.
@@ -144,9 +144,9 @@ def _drained_bucket(start=1_000_000.0):
     return budget, now, advance
 
 
-def test_full_bucket_admits_35_and_rejects_the_36th():
-    """The ceiling is spent, not merely bounded. 35 and the 36th's rejection are
-    pinned as literals as well as derived: 100,000 / 2,820 leaves 1,300 tokens,
+def test_full_bucket_admits_70_and_rejects_the_71st():
+    """The ceiling is spent, not merely bounded. 70 and the 71st's rejection are
+    pinned as literals as well as derived: 200,000 / 2,820 leaves 2,600 tokens,
     less than one more estimate.
 
     `used` is the third return value and means how far the bucket is DRAWN DOWN
@@ -154,7 +154,7 @@ def test_full_bucket_admits_35_and_rejects_the_36th():
     the contract test_demo_aggregation.py's
     test_both_arms_charge_the_same_tokens_for_the_same_request relies on.
     """
-    assert (EXPECTED_ADMITS, EST, CAP) == (35, 2820, 100_000)
+    assert (EXPECTED_ADMITS, EST, CAP) == (70, 2820, 200_000)
     now, advance = _fake_clock()
     budget = _new_virtual_budget(BURNDOWN, now=now)
     assert budget["level"] == CAP
@@ -168,8 +168,8 @@ def test_full_bucket_admits_35_and_rejects_the_36th():
     # Each admit sees the drawdown left by its predecessors, not its own debit.
     assert used_readings[0] == 0
     assert used_readings[1] == pytest.approx(EST)
-    assert used_readings[-1] == pytest.approx((EXPECTED_ADMITS - 1) * EST) == 95_880
-    assert LEFTOVER == 1300
+    assert used_readings[-1] == pytest.approx((EXPECTED_ADMITS - 1) * EST) == 194_580
+    assert LEFTOVER == 2600
     assert budget["level"] == pytest.approx(LEFTOVER)
     assert budget["level"] < EST
 
@@ -192,10 +192,10 @@ def test_a_rejected_attempt_costs_nothing():
 @pytest.mark.parametrize("epoch", CLOCK_EPOCHS)
 def test_one_more_is_admitted_once_a_whole_estimate_has_regenerated(epoch):
     """Regeneration is continuous, at CAP / DEMO_QUOTA_REFILL_S per second. A
-    short tick is not enough; ONE_EST_REGEN_S (~1.69s, the time to regenerate a
+    short tick is not enough; ONE_EST_REGEN_S (~0.85s, the time to regenerate a
     whole estimate) is.
 
-    The bare 1,520-token deficit would clear sooner (~0.91s), so 0.5s is asserted
+    The bare 220-token deficit would clear sooner (~0.066s), so 0.05s is asserted
     only as a lower bound that must still be rejected -- the claim being pinned is
     the regeneration RATE, via the one-full-estimate figure the epic quotes.
 
@@ -203,15 +203,15 @@ def test_one_more_is_admitted_once_a_whole_estimate_has_regenerated(epoch):
     float noise of `est` and admits or rejects depending on the clock's magnitude,
     so the step carries BOUNDARY_EPS and the test proves the rate at each epoch.
     """
-    assert ONE_EST_REGEN_S == pytest.approx(1.692, abs=1e-3)
+    assert ONE_EST_REGEN_S == pytest.approx(0.846, abs=1e-3)
     budget, now, advance = _drained_bucket(epoch)
 
-    advance(0.5)
+    advance(0.05)
     charge, _, _ = _admit(budget, now)
     assert charge is None
-    assert budget["level"] == pytest.approx(LEFTOVER + 0.5 * REGEN_PER_S, abs=TOKEN_TOL)
+    assert budget["level"] == pytest.approx(LEFTOVER + 0.05 * REGEN_PER_S, abs=TOKEN_TOL)
 
-    advance(ONE_EST_REGEN_S - 0.5 + BOUNDARY_EPS)
+    advance(ONE_EST_REGEN_S - 0.05 + BOUNDARY_EPS)
     charge, est, used = _admit(budget, now)
     assert charge == {"est": EST}
     # A whole estimate regenerated on top of what was already left over.
@@ -238,21 +238,21 @@ def test_reconcile_credit_is_visible_on_the_next_admit():
 
 
 def test_reconcile_credits_buy_further_admits_with_no_regeneration():
-    """The credits from 35 measured successes are worth 35 x 192 = 6,720 tokens,
-    which is room for exactly 2 more requests -- on a FROZEN clock, so this is the
+    """The credits from 70 measured successes are worth 70 x 192 = 13,440 tokens,
+    which with the 2,600 leftover is room for exactly 5 more requests -- on a FROZEN clock, so this is the
     reconcile credit doing the work and not regeneration."""
     budget, now, _ = _drained_bucket()
     for _ in range(EXPECTED_ADMITS):
         _virtual_budget_credit(budget, RECONCILE_CREDIT)
     credited = EXPECTED_ADMITS * RECONCILE_CREDIT
-    assert credited == 6720
+    assert credited == 13440
     assert budget["level"] == pytest.approx(LEFTOVER + credited)
 
     admitted = 0
     while _admit(budget, now)[0] is not None:
         admitted += 1
-    assert admitted == 2
-    assert budget["level"] == pytest.approx(LEFTOVER + credited - 2 * EST)
+    assert admitted == 5
+    assert budget["level"] == pytest.approx(LEFTOVER + credited - 5 * EST)
 
 
 def test_direct_call_reconciles_the_bucket_down_to_actual_usage():
@@ -284,7 +284,7 @@ def test_direct_call_reconciles_the_bucket_down_to_actual_usage():
     assert res["in"] + res["out"] == MEASURED_ACTUAL_TOKENS == 2628
 
     # Charged the 2,820 estimate up front, credited 192 back on reconcile.
-    assert budget["level"] == pytest.approx(CAP - MEASURED_ACTUAL_TOKENS) == 97_372
+    assert budget["level"] == pytest.approx(CAP - MEASURED_ACTUAL_TOKENS) == 197_372
     # The two ways the call site can be wrong: sign inverted, or credit skipped.
     assert budget["level"] != pytest.approx(CAP - EST - MEASURED_ACTUAL_TOKENS)
     assert budget["level"] != pytest.approx(CAP - EST)
@@ -342,7 +342,7 @@ def test_concurrent_admits_never_overspend_the_ceiling():
         assert not t.is_alive()
 
     total = sum(admitted)
-    assert total == EXPECTED_ADMITS == 35
+    assert total == EXPECTED_ADMITS == 70
     assert total * EST <= CAP
     assert budget["level"] >= 0
     assert budget["level"] == pytest.approx(LEFTOVER)
@@ -428,4 +428,4 @@ def test_default_starting_level_is_a_full_bucket():
     """The default the live demo runs with, stated on its own so a change to it
     is a deliberate edit to this assertion rather than a surprise."""
     now, _ = _fake_clock()
-    assert _new_virtual_budget(BURNDOWN, now=now)["level"] == CAP == 100_000
+    assert _new_virtual_budget(BURNDOWN, now=now)["level"] == CAP == 200_000

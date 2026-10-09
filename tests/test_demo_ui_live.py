@@ -169,7 +169,9 @@ def test_rejected_submit_is_never_polled(monkeypatch, tmp_path):
     monkeypatch.setattr(demo, "DEMO_STATUS_POLL_INTERVAL_S", 0.01)
     fake = FakeDynamo(["SUCCEEDED"])
     results = demo._run_shaper_arm("http://unused", "m", "p", demo.time.time(), fake, "t")
-    assert results == [{"status": 403, "ms": None}]
+    # An ingress rejection is a failed request, timed from its slot to the response.
+    assert [(r["status"], r["outcome"]) for r in results] == [(403, "failed")]
+    assert results[0]["ms"] is not None
     assert fake.calls == []
 
 
@@ -206,7 +208,7 @@ def test_drain_timeout_leaves_unresolved_as_none(monkeypatch, tmp_path):
     results = demo._run_shaper_arm(
         "http://unused", "m", "p", demo.time.time(), FakeDynamo(["QUEUED"]), "t"
     )
-    assert results == [{"status": None, "ms": None}]
+    assert results == [{"status": None, "ms": None, "outcome": "unresolved"}]
 
 
 def test_http_cursor_tails_same_file_in_replay_and_live_modes(monkeypatch, tmp_path):
