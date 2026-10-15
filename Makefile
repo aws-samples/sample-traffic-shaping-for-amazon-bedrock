@@ -249,7 +249,7 @@ security-scan:
 
 secrets-scan:
 	@echo "🔐 Scanning for secrets (detect-secrets)..."
-	@source .venv/bin/activate && detect-secrets scan --baseline .secrets.baseline
+	@source .venv/bin/activate && detect-secrets-hook --baseline .secrets.baseline $$(git ls-files)
 
 lint: format-check type-check security-scan secrets-scan
 
