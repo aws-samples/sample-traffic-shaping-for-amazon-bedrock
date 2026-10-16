@@ -84,3 +84,10 @@ exclude = '(^|/)(\.venv[^/]*|node_modules|cdk\.out|\.ash|\.claude.*|build|dist)(
 # rather than a strictness hole.
 module = ["boto3.*", "botocore.*", "matplotlib.*", "numpy.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# aws_cdk ships full type info, and following it costs ~2.2 GB and 36 s cold (vs
+# 0.6 GB / 5 s skipped). That stalled mypy for an hour on a small CI runner.
+# CDK misuse still fails at runtime in cdk synth and the CDK pytest checks.
+module = ["aws_cdk.*", "constructs.*"]
+follow_imports = "skip"
