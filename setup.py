@@ -10,8 +10,8 @@ setup(
     # Pinned to exact tested versions (mirrors requirements.txt) for reproducible,
     # supply-chain-safe installs. Bump deliberately; keep in sync with requirements.txt.
     install_requires=[
-        "boto3==1.43.114",
-        "aws-cdk-lib==2.273.0",
+        "boto3==1.43.120",
+        "aws-cdk-lib==2.275.0",
         "constructs==10.8.1",
         # Security floor for a transitive dependency: CVE-2026-69247 /
         # GHSA-g6cj-pr64-35w5 affects cryptography 49.0.0; 50.0.0 is the fix.
@@ -19,10 +19,10 @@ setup(
     ],
     extras_require={
         "test": [
-            "pytest==9.1.1",
+            "pytest==9.2.0",
             "hypothesis==6.168.5",
-            "pytest-asyncio==1.4.0",
-            "moto==5.2.4",
+            "pytest-asyncio==1.4.1",
+            "moto==5.2.5",
         ],
         "dev": [
             "black==26.10.1",
