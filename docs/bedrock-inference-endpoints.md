@@ -10,7 +10,7 @@ correct mental model instead of being re-derived from scratch each time.
 
 ### 1. Global CRIS (cross-region inference, global pool)
 
-- **ID prefix:** `global.` — e.g. `global.anthropic.claude-opus-4-7`
+- **ID prefix:** `global.` — e.g. `global.anthropic.claude-opus-5-5`
 - **Endpoint:** `bedrock-runtime`
 - **What it is:** an inference profile that pools capacity across all AWS regions
   worldwide. Requests can land in any region in the pool.
@@ -30,7 +30,7 @@ correct mental model instead of being re-derived from scratch each time.
 ### 3. Mantle (bare model ID, alternate endpoint)
 
 - **ID form:** the bare model ID with no region or CRIS prefix — e.g.
-  `anthropic.claude-opus-4-7`. In this repo, requested via `--backend mantle`.
+  `anthropic.claude-sonnet-5`. In this repo, requested via `--backend mantle`.
 - **Endpoint:** `bedrock-mantle` — a **separate endpoint entirely** from
   `bedrock-runtime`. It is not a variant of runtime; it is a different service surface with
   its own request/response shape (Anthropic Messages API, OpenAI Responses API, etc.,
@@ -101,7 +101,8 @@ project actively configures.
 Explicitly **out of scope**, even though real inference-profile and quota data for them
 exists in the account:
 
-- Legacy Claude models: Sonnet 3, Sonnet 4, Sonnet 4.5, Haiku 3, Haiku 4
+- Legacy Claude models: everything before Claude 5 (Sonnet 3/4/4.5/4.6, Haiku 3/4/4.5,
+  Opus 4.x)
 - Llama models
 
 If you're matching quota data or inference profiles against `MODEL_MAP` entries, do not

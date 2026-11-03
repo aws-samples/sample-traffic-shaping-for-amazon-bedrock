@@ -346,8 +346,8 @@ unknown pair. Three wire shapes are implemented behind one uniform `BedrockRespo
 
 boto3 client-side retries are **disabled** (`total_max_attempts=1`) so a Bedrock throttle surfaces
 on the first attempt into the shaper's accounting instead of being silently absorbed (boto3's
-default retry mode hid ~96% of throttles in an earlier run). Next-generation Claude models reject
-non-default sampling params, so `temperature`/`top_p`/`top_k` are stripped by model-ID substring.
+default retry mode hid ~96% of throttles in an earlier run). Next-generation Claude models and Grok 4.7
+reject non-default sampling params, so `temperature`/`top_p`/`top_k` are stripped by model-ID substring.
 
 ### How 429 (account quota) vs 503 (serving capacity) are classified
 

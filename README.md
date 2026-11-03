@@ -140,7 +140,7 @@ CMK in particular — run `make destroy` when you are done evaluating the sample
 
 The shaper reads a per-model `CONFIG` record from DynamoDB for that model's quota and burst/queue
 split. A low `BURST_CAPACITY` forces requests to queue so you can watch the shaper work; drop it to
-use model defaults. `MODEL` takes a short alias (`nova-2-lite`, `sonnet-5`, `opus-5`, `haiku-4-5`, …)
+use model defaults. `MODEL` takes a short alias (`nova-2-lite`, `sonnet-5`, `opus-5`, `haiku-5-5`, …)
 or a full Bedrock model ID.
 
 ```bash
@@ -175,7 +175,7 @@ request/response contract.
 
 ```bash
 make demo                 # real three-arm run, summary in the terminal and tmp/
-make demo MODEL=haiku-4-5 PROFILE=steep  # pick the model and the load shape
+make demo MODEL=haiku-5-5 PROFILE=steep  # pick the model and the load shape
 make demo-profiles        # list presets: default, ramp, steep, multi-spike, long
 make demo-ui              # localhost launcher: pick model + profile, watch live
 make demo-ui REPLAY=tmp/demo-live-XXXXXX.jsonl  # replay a saved run; no AWS
