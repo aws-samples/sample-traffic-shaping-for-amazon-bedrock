@@ -44,11 +44,13 @@ correct mental model instead of being re-derived from scratch each time.
   `amazon.nova-lite-v1:0` — but invoked against `bedrock-runtime` directly, with no
   cross-region inference profile involved. Single-region, no pooling.
 - **Endpoint:** `bedrock-runtime`
-- **Status in this project:** this path exists in the account's real quota data, but as of
-  this writing no entry in `MODEL_MAP` (`scripts/create_model_config.py`) currently uses it.
-  It's documented here because it is a real, distinct fourth case — not a variant of mantle
-  just because both use a bare model ID. The endpoint (`bedrock-runtime` vs `bedrock-mantle`)
-  is what actually distinguishes them, not the ID shape.
+- **Status in this project:** used by the `MODEL_MAP` (`scripts/create_model_config.py`)
+  entries that map to a bare model ID on the default runtime backend: `nova-lite-sr`
+  (`amazon.nova-lite-v1:0`, kept specifically to enforce per-region quotas), `glm-5`
+  (`zai.glm-5`, which has no CRIS profile), `nemotron-3-super-120b` and `minimax-m2-5`.
+  It's a real, distinct fourth case — not a variant of mantle just because both use a bare
+  model ID. The endpoint (`bedrock-runtime` vs `bedrock-mantle`) is what actually
+  distinguishes them, not the ID shape.
 
 ## AWS quota-name patterns
 
@@ -98,17 +100,20 @@ This taxonomy is scoped to whatever is **currently listed in `MODEL_MAP`** in
 `scripts/create_model_config.py` — i.e., the latest and previous-generation models this
 project actively configures.
 
-Explicitly **out of scope**, even though real inference-profile and quota data for them
-exists in the account:
+Explicitly **out of scope for `MODEL_MAP`**, even though real inference-profile and quota
+data for them exists in the account:
 
-- Legacy Claude models: everything before Claude 5 (Sonnet 3/4/4.5/4.6, Haiku 3/4/4.5,
-  Opus 4.x)
-- Llama models
+- Claude models before Claude 5 (Sonnet 3/4/4.5/4.6, Haiku 3/4/4.5, Opus 4.x). These are
+  not all retired: as of 2026-11-03, `ListFoundationModels` in us-east-1 shows Sonnet 4.6,
+  Haiku 4.5 and Opus 4.5 through 4.8 as `ACTIVE`, and only Opus 4.1 and Sonnet 4.5 as
+  `LEGACY`. They are out of scope because this project no longer configures them, not
+  because Bedrock has retired them.
+- Llama models other than the two Llama 4 entries `MODEL_MAP` does configure
+  (`llama4-maverick`, `llama4-scout`) — e.g. the Llama 3.x family.
 
-If you're matching quota data or inference profiles against `MODEL_MAP` entries, do not
-expand that matching to cover these legacy/Llama models just because their data happens to
-be present in the same account-level results. Treat their presence in raw quota/profile
-listings as noise to filter out, not as additional coverage to add.
+If you're matching quota data or inference profiles against `MODEL_MAP` entries, match only
+what `MODEL_MAP` lists, and don't expand that matching to cover these models just because
+their data is present in the same account-level results.
 
 ## Priority summary
 

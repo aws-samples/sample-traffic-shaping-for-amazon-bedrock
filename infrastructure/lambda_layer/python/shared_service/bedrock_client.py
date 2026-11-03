@@ -10,7 +10,7 @@ Backends supported in Tier 2:
                            pre-Tier-2 invoke_bedrock_model path)
   - mantle  / messages  -> SigV4 POST to the Anthropic Messages API on
                            bedrock-mantle (verified live: HTTP 200 against
-                           anthropic.claude-opus-5-5 on us-east-1)
+                           anthropic.claude-opus-4-7 on us-east-1)
 
 Tier 3 styles (responses, chat_completions, invoke) are intentionally NOT
 implemented here. client_for() fails closed on any unknown (backend, api_style).

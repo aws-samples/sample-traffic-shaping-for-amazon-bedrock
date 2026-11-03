@@ -30,7 +30,7 @@ from botocore.config import Config
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config_loader
-from create_model_config import MODEL_MAP  # shared alias source
+from create_model_config import resolve_model_alias  # shared alias source
 
 # Config is loaded on FIRST USE, not at import time. get_config_with_aws_check()
 # reads config.env and calls Bedrock, and sys.exit(1)s when either is missing --
@@ -97,7 +97,7 @@ def load_configs(dynamodb):
 
 
 def resolve(alias_or_id):
-    return MODEL_MAP.get(alias_or_id, alias_or_id)
+    return resolve_model_alias(alias_or_id)
 
 
 def build_prompt():
@@ -314,7 +314,10 @@ def main():
     configs = load_configs(dynamodb)
 
     if args.models:
-        targets = [(m, resolve(m)) for m in args.models.split(",")]
+        try:
+            targets = [(m, resolve(m)) for m in args.models.split(",")]
+        except LookupError as e:
+            ap.error(str(e))
     else:
         targets = [(mid, mid) for mid in sorted(configs)]
 

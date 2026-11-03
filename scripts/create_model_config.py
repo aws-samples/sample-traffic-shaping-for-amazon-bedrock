@@ -18,7 +18,7 @@ Usage:
     # Mantle bare model with split token quotas -- --tpm is optional here:
     # when omitted, --itpm supplies the informational tpm_limit value.
     python scripts/create_model_config.py sonnet-5-mantle --backend mantle \\
-        --itpm 10000000 --otpm 2000000
+        --itpm 3000000 --otpm 300000
 """
 
 import sys
@@ -59,8 +59,9 @@ MODEL_MAP = {
     "sonnet-5": "us.anthropic.claude-sonnet-5",
     "sonnet-5-5": "us.anthropic.claude-sonnet-5-5",
     "global-sonnet-5-5": "global.anthropic.claude-sonnet-5-5",
-    # Mantle bare form — use with --backend mantle --itpm 10000000 --otpm 2000000
-    # (--tpm is optional here: omitted, itpm supplies the informational tpm_limit).
+    # Mantle bare form — use with --backend mantle --itpm 3000000 --otpm 300000
+    # (Sonnet 5's bedrock-mantle Service Quotas defaults, us-east-1, 2026-11-03;
+    # --tpm is optional here: omitted, itpm supplies the informational tpm_limit).
     "sonnet-5-mantle": "anthropic.claude-sonnet-5",
     # Current fast Claude (active).
     "haiku-5-5": "us.anthropic.claude-haiku-5-5",
@@ -100,6 +101,29 @@ MODEL_MAP = {
     "kimi-k3": "us.moonshotai.kimi-k3",
     "global-kimi-k3": "global.moonshotai.kimi-k3",
 }
+
+# Aliases dropped from MODEL_MAP in the 2026-11 model refresh, mapped to their
+# replacement. Without this, MODEL_MAP.get(alias, alias) would pass a removed
+# alias through as a literal (nonexistent) model_id instead of failing.
+REMOVED_ALIASES = {
+    "haiku-4-5": "haiku-5-5",
+    "sonnet-46": "sonnet-5-5",
+    "opus-47-mantle": "sonnet-5-mantle",
+    "global-opus-47": "global-opus-5-5",
+    "opus-48": "opus-5-5",
+    "opus-4-8": "opus-5-5",
+    "grok-4-6": "grok-4-7",
+}
+
+
+def resolve_model_alias(alias_or_id: str) -> str:
+    """Expand a MODEL_MAP alias to its model_id; pass anything else through
+    unchanged as a literal model_id. Raises LookupError for a removed alias."""
+    key = alias_or_id.lower()
+    if key in REMOVED_ALIASES:
+        raise LookupError(f"alias '{key}' was removed; use '{REMOVED_ALIASES[key]}'")
+    return MODEL_MAP.get(key, alias_or_id)
+
 
 # Models too new for AWS Service Quotas to have published a discoverable
 # rate-quota entry yet (confirmed live 2026-09-21: zero ListServiceQuotas rows
@@ -156,9 +180,9 @@ def derive_default_burndown(model_id: str, backend: str) -> float:
     checked 2026-11-03):
       - major==4 and minor==8 (Claude 4.8)                       -> 15.0
       - major>=5 (the doc names Opus 5.5, Sonnet 5, Opus 5 and
-        Fable 5.1; Haiku 5.5 and Sonnet 5.5 are not listed yet, and
-        10x over-counts if their real rate is lower -- the safe
-        direction for a rate limiter)                             -> 10.0
+        Fable 5.1; Haiku 5.5 and Sonnet 5.5 measured 10x on 2026-11-03:
+        CloudWatch EstimatedTPMQuotaUsage = 18,102 = 102 + 10 x 1,800 for
+        each, vs a Sonnet 5 control at 17,966 = 96 + 10 x 1,787)   -> 10.0
       - everything else Anthropic (4.7 and below, or a model_id whose
         Claude generation this regex can't parse -- the safe default
         for an unrecognized shape, never the most-favorable 10x)   -> 5.0
@@ -515,11 +539,13 @@ def process_model(model_arg: str, args, parser, model_id_override: Optional[str]
     """
     # Resolve model ID
     model_short = model_arg.lower()
-    model_id = (
-        model_id_override
-        if model_id_override is not None
-        else MODEL_MAP.get(model_short, model_arg)
-    )
+    if model_id_override is not None:
+        model_id = model_id_override
+    else:
+        try:
+            model_id = resolve_model_alias(model_arg)
+        except LookupError as e:
+            parser.error(str(e))
 
     # Determine RPM.
     #   RPM is retired as a default dimension (owner decision 2026-09-16): every

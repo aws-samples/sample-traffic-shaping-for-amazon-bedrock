@@ -1,8 +1,13 @@
 """should_strip_sampling_params(): which model IDs get temperature/top_p/top_k removed.
 
-Every ID in REJECTS_TEMPERATURE returned a 400 on a live Converse call that set
-temperature ("`temperature` is deprecated for this model" for Claude, "doesn't
-support the temperature field" for Grok 4.7), so the processor must strip it.
+REJECTS_TEMPERATURE lists the IDs the processor must strip sampling params for.
+The models added in the 2026-11 refresh were live-tested with temperature on
+Converse and returned a 400 ("`temperature` is deprecated for this model" for
+Claude, "doesn't support the temperature field" for Grok 4.7). Not every ID here
+had its own live call: us.anthropic.claude-fable-5 is covered by the shared
+claude-fable-5 substring, and the kept 4.x IDs are carried over from the
+original strip list for callers still migrating off them. Listing them here
+means pruning an entry from _STRIP_SAMPLING_SUBSTRINGS fails a test.
 """
 
 import pathlib
@@ -29,6 +34,13 @@ REJECTS_TEMPERATURE = [
     "global.anthropic.claude-fable-5-1",
     "us.xai.grok-4.7",
     "global.xai.grok-4.7",
+    # Kept 4.x entries -- still in MODEL_MAP-independent use by migrating callers.
+    "us.anthropic.claude-opus-4-7",
+    "global.anthropic.claude-opus-4-7",
+    "us.anthropic.claude-opus-4-8",
+    "global.anthropic.claude-opus-4-8",
+    "us.anthropic.claude-sonnet-4-6",
+    "global.anthropic.claude-sonnet-4-6",
 ]
 
 
