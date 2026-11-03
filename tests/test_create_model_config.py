@@ -80,8 +80,13 @@ def test_burndown_claude_5_plus_is_10x():
     assert derive_default_burndown("us.anthropic.claude-sonnet-5", "runtime") == 10.0
     assert derive_default_burndown("us.anthropic.claude-opus-5", "runtime") == 10.0
     assert derive_default_burndown("us.anthropic.claude-fable-5-1", "runtime") == 10.0
+    assert derive_default_burndown("us.anthropic.claude-opus-5-5", "runtime") == 10.0
+    assert derive_default_burndown("us.anthropic.claude-sonnet-5-5", "runtime") == 10.0
+    assert derive_default_burndown("global.anthropic.claude-haiku-5-5", "runtime") == 10.0
 
 
+# The 4.x buckets stay covered even though MODEL_MAP no longer lists 4.x aliases:
+# create_model_config still accepts any full model ID, and AWS still documents them.
 def test_burndown_claude_4_7_and_below_is_5x():
     assert derive_default_burndown("anthropic.claude-opus-4-7", "runtime") == 5.0
     assert derive_default_burndown("us.anthropic.claude-sonnet-4-6", "runtime") == 5.0
@@ -89,7 +94,7 @@ def test_burndown_claude_4_7_and_below_is_5x():
 
 
 def test_burndown_unrecognized_anthropic_shape_defaults_to_5x_not_10x():
-    assert derive_default_burndown("anthropic.claude-instant-v1", "runtime") == 5.0
+    assert derive_default_burndown("anthropic.claude-unrecognized-v1", "runtime") == 5.0
 
 
 def test_burndown_openai_runtime_is_10x():
@@ -102,7 +107,7 @@ def test_burndown_moonshot_kimi_k3_is_10x():
 
 
 def test_burndown_mantle_backend_is_always_1x_regardless_of_provider():
-    assert derive_default_burndown("us.anthropic.claude-opus-4-8", "mantle") == 1.0
+    assert derive_default_burndown("us.anthropic.claude-opus-5-5", "mantle") == 1.0
 
 
 def test_mantle_backend_resolves_tpm_from_itpm_without_explicit_tpm():
@@ -131,7 +136,7 @@ def test_mantle_backend_resolves_tpm_from_itpm_without_explicit_tpm():
         dry_run=True,
     )
 
-    summary = process_model("opus-47-mantle", args, parser)
+    summary = process_model("sonnet-5-mantle", args, parser)
 
     assert summary["tpm"] == 10_000_000
     assert summary["tpm_source"] == "mantle-itpm"

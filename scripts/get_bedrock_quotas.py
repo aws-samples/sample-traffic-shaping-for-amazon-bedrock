@@ -236,10 +236,10 @@ def match_profile_driven_quotas(quotas, models, inference_profiles):
             if value is None:
                 # Neither exact key matched, which happens when the quota suffix carries a
                 # provider-name variant the model record spells differently (quota
-                # 'Writer AI Palmyra X4 V1' vs providerName 'Writer'; 'Mistral Pixtral Large
-                # 25.02 V1' vs providerName 'Mistral AI'). Fall back to: does exactly one
-                # quota in this model's own variant/metric family end with this model's bare
-                # name? Ambiguous (0 or 2+ candidates) is treated as no match, never a guess --
+                # 'Mistral Pixtral Large 25.02 V1' vs providerName 'Mistral AI'; a
+                # '<Provider> AI <Model>' suffix vs providerName '<Provider>'). Fall back to:
+                # does exactly one quota in this model's own variant/metric family end with
+                # this model's bare name? Ambiguous (0 or 2+ candidates) is treated as no match, never a guess --
                 # e.g. 'Twelve Labs Marengo' carries no token distinguishing the 2.7 sibling
                 # from the 3.0 one, so it must resolve to nothing rather than pick one.
                 candidates = {

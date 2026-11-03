@@ -17,7 +17,7 @@ Usage:
 
     # Mantle bare model with split token quotas -- --tpm is optional here:
     # when omitted, --itpm supplies the informational tpm_limit value.
-    python scripts/create_model_config.py opus-47-mantle --backend mantle \\
+    python scripts/create_model_config.py sonnet-5-mantle --backend mantle \\
         --itpm 10000000 --otpm 2000000
 """
 
@@ -51,19 +51,20 @@ STARTER_MODELS_PATH = os.path.join(_SCRIPT_DIR, "..", "config", "starter_models.
 # (see resolve_tpm()), keyed by the model_id this table expands an alias to --
 # never by the alias itself.
 MODEL_MAP = {
-    # Next-gen Claude — runtime CRIS forms (no -v1 suffix on 4.7+).
+    # Claude 5.x — runtime CRIS forms, token-only. us. is the bare alias, global.
+    # gets a global- prefix (same convention as kimi-k3 below).
+    "opus-5": "us.anthropic.claude-opus-5",
+    "opus-5-5": "us.anthropic.claude-opus-5-5",
+    "global-opus-5-5": "global.anthropic.claude-opus-5-5",
+    "sonnet-5": "us.anthropic.claude-sonnet-5",
+    "sonnet-5-5": "us.anthropic.claude-sonnet-5-5",
+    "global-sonnet-5-5": "global.anthropic.claude-sonnet-5-5",
     # Mantle bare form — use with --backend mantle --itpm 10000000 --otpm 2000000
     # (--tpm is optional here: omitted, itpm supplies the informational tpm_limit).
-    "opus-47-mantle": "anthropic.claude-opus-4-7",
-    "opus-48": "us.anthropic.claude-opus-4-8",
-    # Global CRIS form of Opus 4.7 — token-only.
-    "global-opus-47": "global.anthropic.claude-opus-4-7",
-    "opus-5": "us.anthropic.claude-opus-5",
-    "sonnet-46": "us.anthropic.claude-sonnet-4-6",
-    "sonnet-5": "us.anthropic.claude-sonnet-5",
     "sonnet-5-mantle": "anthropic.claude-sonnet-5",
-    # Current fast Claude (active); token-only runtime shape like the rest of 4.x/5.
-    "haiku-4-5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    # Current fast Claude (active).
+    "haiku-5-5": "us.anthropic.claude-haiku-5-5",
+    "global-haiku-5-5": "global.anthropic.claude-haiku-5-5",
     "nova-lite": "us.amazon.nova-lite-v1:0",
     "nova-lite-sr": "amazon.nova-lite-v1:0",  # single-region: enforces per-region quotas
     "nova-micro": "us.amazon.nova-micro-v1:0",  # smallest/fastest Nova (active)
@@ -71,7 +72,8 @@ MODEL_MAP = {
     "nova-pro": "us.amazon.nova-pro-v1:0",
     # New models (added 2026-08-21). Primary ID = us./base runtime ID where a
     # client-supported runtime (Converse) route exists; else the mantle base ID.
-    "grok-4-6": "us.xai.grok-4.6",  # runtime Converse (cross-region only)
+    "grok-4-7": "us.xai.grok-4.7",  # runtime Converse (cross-region only)
+    "global-grok-4-7": "global.xai.grok-4.7",
     "grok-4-3": "xai.grok-4.3",  # mantle responses (client not implemented)
     "gpt-5.6-cyber": "openai.gpt-5.6-cyber",  # mantle responses (client not implemented)
     "gpt-5.6-daybreak-blue-sol": "openai.gpt-daybreak-blue-5.6-sol",  # mantle responses
@@ -79,7 +81,8 @@ MODEL_MAP = {
     "gpt-5.4": "openai.gpt-5.4",  # mantle responses (client not implemented)
     "mythos-5": "anthropic.claude-mythos-5",  # mantle messages (client supported)
     "fable-5": "us.anthropic.claude-fable-5",  # runtime Converse + mantle messages
-    "opus-4-8": "us.anthropic.claude-opus-4-8",  # runtime Converse (VERIFIED quotas)
+    "fable-5-1": "us.anthropic.claude-fable-5-1",  # runtime Converse
+    "global-fable-5-1": "global.anthropic.claude-fable-5-1",
     "gemma-4-31b": "google.gemma-4-31b",  # mantle responses (client not implemented)
     "gemma-4-26b-a4b": "google.gemma-4-26b-a4b",  # mantle responses (client not implemented)
     "gemma-4-e2b": "google.gemma-4-e2b",  # mantle responses (client not implemented)
@@ -126,8 +129,8 @@ def _documented_default_tpm(model_id: str):
     return None
 
 
-# Matches the Claude generation out of a model_id, e.g. "claude-opus-4-8" ->
-# ('4', '8'), "claude-sonnet-5" -> ('5', None). Used only by derive_default_burndown.
+# Matches the Claude generation out of a model_id, e.g. "claude-opus-5-5" ->
+# ('5', '5'), "claude-sonnet-5" -> ('5', None). Used only by derive_default_burndown.
 _CLAUDE_VERSION_RE = re.compile(r"claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?")
 
 
@@ -150,9 +153,12 @@ def derive_default_burndown(model_id: str, backend: str) -> float:
     curve (4.8 is higher than 5.0), so burndown is three literal buckets keyed
     off the Claude generation in model_id, per AWS's token-burndown doc
     (docs.aws.amazon.com/bedrock/latest/userguide/quotas-token-burndown.html,
-    checked 2026-09-21):
+    checked 2026-11-03):
       - major==4 and minor==8 (Claude 4.8)                       -> 15.0
-      - major>=5 (Claude Sonnet 5, Claude Opus 5, Claude Fable 5.1) -> 10.0
+      - major>=5 (the doc names Opus 5.5, Sonnet 5, Opus 5 and
+        Fable 5.1; Haiku 5.5 and Sonnet 5.5 are not listed yet, and
+        10x over-counts if their real rate is lower -- the safe
+        direction for a rate limiter)                             -> 10.0
       - everything else Anthropic (4.7 and below, or a model_id whose
         Claude generation this regex can't parse -- the safe default
         for an unrecognized shape, never the most-favorable 10x)   -> 5.0

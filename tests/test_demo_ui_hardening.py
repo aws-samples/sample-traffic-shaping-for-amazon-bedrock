@@ -142,11 +142,14 @@ def test_oversized_profile_is_refused_before_offsets_are_built(launcher):
 
 def test_options_report_each_models_own_1x(launcher, monkeypatch):
     runner, port = launcher
-    haiku = {"model_id": "haiku", "alias": "haiku-4-5", "burndown": 5.0, "queue_fraction": 0.85}
+    haiku = {"model_id": "haiku", "alias": "haiku-5-5", "burndown": 10.0, "queue_fraction": 0.85}
     monkeypatch.setattr(runner, "models", lambda: FakeRunner().models() + [haiku])
     models = json.loads(_request(port, "GET", "/options")[1])["models"]
-    assert [m["est_tokens"] for m in models] == [demo.est_tokens_for(1.0), demo.est_tokens_for(5.0)]
-    assert models[1]["base_rpm"] == round(demo.base_rpm_for(5.0), 1) < models[0]["base_rpm"]
+    assert [m["est_tokens"] for m in models] == [
+        demo.est_tokens_for(1.0),
+        demo.est_tokens_for(10.0),
+    ]
+    assert models[1]["base_rpm"] == round(demo.base_rpm_for(10.0), 1) < models[0]["base_rpm"]
 
 
 # ── recordings and failure reporting ───────────────────────────────────────────

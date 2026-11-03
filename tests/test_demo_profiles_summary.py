@@ -200,11 +200,11 @@ def test_meta_event_carries_profile_offsets_and_run_fields(monkeypatch, tmp_path
 
 def test_cli_parse_is_syntax_only_and_preflight_is_per_model():
     # The WAF/expiry decision waits for the model's burndown (main), not argv parsing.
-    assert demo._parse_args(["haiku-4-5", "--profile", "300@0.8x"]).load_profile
+    assert demo._parse_args(["haiku-5-5", "--profile", "300@0.8x"]).load_profile
     nova = demo.parse_load_profile("300@0.8x", demo.base_rpm_for(1.0))
-    haiku = demo.parse_load_profile("300@0.8x", demo.base_rpm_for(5.0))
+    haiku = demo.parse_load_profile("300@0.8x", demo.base_rpm_for(10.0))
     assert "WAF" in demo._preflight_problem(nova, 1.0, 0.85)
-    assert demo._preflight_problem(haiku, 5.0, 0.85) is None
+    assert demo._preflight_problem(haiku, 10.0, 0.85) is None
 
 
 def test_preflight_refuses_a_profile_that_outlives_queue_expiry():
@@ -256,9 +256,9 @@ class FakeRunner:
                 "queue_fraction": 0.85,
             },
             {
-                "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-                "alias": "haiku-4-5",
-                "burndown": 5.0,
+                "model_id": "us.anthropic.claude-haiku-5-5",
+                "alias": "haiku-5-5",
+                "burndown": 10.0,
                 "queue_fraction": 0.85,
             },
         ]
@@ -297,8 +297,8 @@ def _post(port, body, headers=None):
 
 def test_start_uses_the_models_burndown_for_the_waf_check(launcher):
     runner, port = launcher
-    body = {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "profile": "300@0.8x"}
-    assert _post(port, body)[0] == 200  # 117 requests at haiku's 1x; 284 at nova's
+    body = {"model": "us.anthropic.claude-haiku-5-5", "profile": "300@0.8x"}
+    assert _post(port, body)[0] == 200  # 68 requests at haiku's 1x; 284 at nova's
 
 
 def test_start_runs_an_allowed_model_and_profile(launcher):
@@ -314,7 +314,7 @@ def test_start_runs_an_allowed_model_and_profile(launcher):
         ({"model": "us.amazon.nova-2-lite-v1:0", "profile": "nonsense"}, 400),
         ({"model": "us.amazon.nova-2-lite-v1:0", "profile": "60:300"}, 400),  # WAF
         ({"model": "us.amazon.nova-2-lite-v1:0", "profile": "nan:5"}, 400),
-        ({"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "profile": "3000:1500"}, 400),
+        ({"model": "us.anthropic.claude-haiku-5-5", "profile": "3000:1500"}, 400),
         ({"profile": "default"}, 400),
     ],
 )

@@ -54,22 +54,26 @@ sqs_client = boto3.client("sqs")
 s3_client = boto3.client("s3")
 
 
-# Next-generation Claude models (Opus 4.7+, Sonnet 4.6+) return HTTP 400 when
-# sampling parameters (temperature, top_p, top_k) are sent with non-default
-# values. Detect these by model-ID substring so the fix needs no config read in
-# the processor (keeps the Tier 1 unblock to a single file). See
-# docs/solution/architecture.md §9 (sampling-param stripping).
+# Next-generation Claude models (Opus 4.7+, Sonnet 4.6+, Haiku 5+, Fable 5+) and
+# Grok 4.7 return HTTP 400 when sampling parameters (temperature, top_p, top_k)
+# are sent with non-default values. Detect these by model-ID substring so the fix
+# needs no config read in the processor (keeps the Tier 1 unblock to a single
+# file). The 4.x entries stay for callers still passing those IDs during their
+# migration. See docs/solution/architecture.md §9 (sampling-param stripping).
 _STRIP_SAMPLING_SUBSTRINGS = (
     "claude-opus-4-7",
     "claude-opus-4-8",
     "claude-opus-5",
     "claude-sonnet-4-6",
     "claude-sonnet-5",
+    "claude-haiku-5",
+    "claude-fable-5",
+    "xai.grok-4.7",
 )
 
 
 def should_strip_sampling_params(model_id: str) -> bool:
-    """True if this model rejects sampling params (next-gen Claude)."""
+    """True if this model rejects sampling params (next-gen Claude, Grok 4.7)."""
     return any(s in (model_id or "") for s in _STRIP_SAMPLING_SUBSTRINGS)
 
 
@@ -294,7 +298,7 @@ def invoke_bedrock_model(model_id, request_payload):
     Invoke a Bedrock foundation model using Converse API.
 
     Args:
-        model_id: The Bedrock model ID (e.g., 'us.anthropic.claude-opus-4-20250514-v1:0')
+        model_id: The Bedrock model ID (e.g., 'us.anthropic.claude-opus-5-5')
         request_payload: The request payload containing the prompt and parameters
 
     Returns:
