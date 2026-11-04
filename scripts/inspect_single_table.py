@@ -281,7 +281,7 @@ Examples:
   python scripts/inspect_single_table.py --consumption --model nova-2-lite --capacity-mode QUEUE
 
 Model aliases come from create_model_config.MODEL_MAP (the single source of truth) —
-e.g. nova-2-lite, sonnet-5, opus-5, haiku-4-5. A full Bedrock model ID also works.
+e.g. nova-2-lite, sonnet-5, opus-5, haiku-5-5. A full Bedrock model ID also works.
         """,
     )
 

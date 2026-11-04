@@ -75,12 +75,12 @@ FEASIBLE = [
     ("nova-lite", "us.amazon.nova-lite-v1:0"),
     ("nova-2-lite", "us.amazon.nova-2-lite-v1:0"),
     ("fable-5", "us.anthropic.claude-fable-5"),
-    ("haiku-4-5", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+    ("haiku-5-5", "us.anthropic.claude-haiku-5-5"),
     ("sonnet-5", "us.anthropic.claude-sonnet-5"),
     # Larger-model data points. nova-2-pro has no callable us. CRIS profile (invalid
     # model id) so nova-pro stands in for the mid-size Nova point.
     ("nova-pro", "us.amazon.nova-pro-v1:0"),
-    ("grok-4-6", "us.xai.grok-4.6"),  # real 10M TPM quota, verified 2026-09-21
+    ("grok-4-7", "us.xai.grok-4.7"),  # real 10M TPM quota, verified 2026-11-03
     ("gpt-5.6-sol", "us.openai.gpt-5.6-sol"),
     ("gpt-5.6-luna", "us.openai.gpt-5.6-luna"),
     ("gpt-5.6-terra", "us.openai.gpt-5.6-terra"),

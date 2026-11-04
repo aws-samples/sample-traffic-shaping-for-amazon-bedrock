@@ -10,7 +10,7 @@ re-architecture; only the shaper `/invoke` arm remains.
 
 Usage:
   python scripts/smoke_honest_outcomes.py                    # nova, shaper /invoke
-  python scripts/smoke_honest_outcomes.py --model us.anthropic.claude-sonnet-4-6
+  python scripts/smoke_honest_outcomes.py --model us.anthropic.claude-sonnet-5-5
 
 Reads API_GATEWAY_URL from config.env (or --api-url). SigV4 via the caller's
 current credentials (execute-api). Read-only against AWS beyond the requests it

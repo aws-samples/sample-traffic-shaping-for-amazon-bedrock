@@ -86,7 +86,7 @@ help:
 	@echo ""
 	@echo "Demo:"
 	@echo "  make demo               - Real three-arm demo (AWS; temporarily overrides model CONFIG)"
-	@echo "  make demo MODEL=haiku-4-5 PROFILE=ramp - Pick the model and load profile"
+	@echo "  make demo MODEL=haiku-5-5 PROFILE=ramp - Pick the model and load profile"
 	@echo "  make demo-profiles      - List load-profile presets (ramp, steep, multi-spike, long)"
 	@echo "  make demo-ui            - Browser launcher: pick model + profile, watch live, get a summary"
 	@echo "  make demo-ui MODEL=nova-2-lite PROFILE=steep - Start that run immediately"

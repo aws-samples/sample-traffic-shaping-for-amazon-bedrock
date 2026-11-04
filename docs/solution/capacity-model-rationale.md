@@ -51,7 +51,7 @@ against the account quota, so it can be paced against the real ceiling directly 
 
 **Target failover design (not yet built):** overflow from a burst-only lane should retry against
 a *secondary model or provider* — either a different model on Bedrock (e.g. Sonnet 5 overflow →
-Haiku 4.5) or the same model on a different provider path (e.g. Sonnet 5 on Bedrock → Sonnet 5 on
+Haiku 5.5) or the same model on a different provider path (e.g. Sonnet 5 on Bedrock → Sonnet 5 on
 the Anthropic 1P API). There is currently no multi-provider/multi-model routing in this repo —
 this is a known gap, not a shipped capability.
 

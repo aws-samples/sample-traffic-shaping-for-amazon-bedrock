@@ -213,8 +213,9 @@ def test_profiles_cache_ignores_inactive_profiles():
 # Real mismatch classes observed against account data, all of which the exact-key lookup
 # alone cannot bridge: hyphen vs space ('DeepSeek-R1' vs 'DeepSeek R1'), parenthesized vs
 # bare version ('(25.02)' vs '25.02'), and a provider-name variant embedded in the quota
-# suffix that the model record spells differently ('Writer AI Palmyra X4' vs providerName
-# 'Writer', 'Mistral Pixtral Large' vs providerName 'Mistral AI'). None of these may come
+# suffix that the model record spells differently ('Mistral Pixtral Large' vs providerName
+# 'Mistral AI'; the Acme sibling pair below is synthetic and reproduces the same shape
+# with two siblings, as the now-LEGACY Writer Palmyra X4/X5 pair did). None of these may come
 # at the cost of a model claiming a quota that isn't demonstrably its own -- see the
 # ambiguity-guard tests at the bottom.
 #
@@ -230,14 +231,14 @@ FIXER_MODELS = [
         "modelName": "DeepSeek-R1",
     },
     {
-        "modelId": "writer.palmyra-x4-v1:0",
-        "providerName": "Writer",
-        "modelName": "Palmyra X4",
+        "modelId": "acme.sprocket-x4-v1:0",
+        "providerName": "Acme",
+        "modelName": "Sprocket X4",
     },
     {
-        "modelId": "writer.palmyra-x5-v1:0",
-        "providerName": "Writer",
-        "modelName": "Palmyra X5",
+        "modelId": "acme.sprocket-x5-v1:0",
+        "providerName": "Acme",
+        "modelName": "Sprocket X5",
     },
     {
         "modelId": "mistral.pixtral-large-2502-v1:0",
@@ -277,17 +278,17 @@ def test_matching_normalizes_hyphen_space_and_punctuation():
 
 
 def test_matching_resolves_provider_name_spelled_differently():
-    """'Writer AI' in the quota suffix vs providerName 'Writer' -- and 'Mistral' in the quota
+    """'Acme AI' in the quota suffix vs providerName 'Acme' -- and 'Mistral' in the quota
     suffix vs providerName 'Mistral AI' -- neither the full nor the bare exact key can match
     this on their own; the suffix fallback must resolve it via the model's bare name alone,
-    and must still give each Palmyra sibling its own distinct value."""
+    and must still give each Sprocket sibling its own distinct value."""
     quotas = [
         {
-            "QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X4 V1",
+            "QuotaName": "Cross-region model inference tokens per minute for Acme AI Sprocket X4 V1",
             "Value": 150_000,
         },
         {
-            "QuotaName": "Cross-region model inference tokens per minute for Writer AI Palmyra X5 V1",
+            "QuotaName": "Cross-region model inference tokens per minute for Acme AI Sprocket X5 V1",
             "Value": 151_000,
         },
         {
@@ -298,14 +299,14 @@ def test_matching_resolves_provider_name_spelled_differently():
 
     results = match_profile_driven_quotas(quotas, FIXER_MODELS, us_profiles(FIXER_MODELS))
 
-    assert results["writer.palmyra-x4-v1:0"]["tpm"]["cross_region"] == 150_000
-    assert results["writer.palmyra-x5-v1:0"]["tpm"]["cross_region"] == 151_000
+    assert results["acme.sprocket-x4-v1:0"]["tpm"]["cross_region"] == 150_000
+    assert results["acme.sprocket-x5-v1:0"]["tpm"]["cross_region"] == 151_000
     assert results["mistral.pixtral-large-2502-v1:0"]["tpm"]["cross_region"] == 80_000
 
     # The two siblings resolved independently -- neither borrowed the other's value.
     assert (
-        results["writer.palmyra-x4-v1:0"]["tpm"]["cross_region"]
-        != results["writer.palmyra-x5-v1:0"]["tpm"]["cross_region"]
+        results["acme.sprocket-x4-v1:0"]["tpm"]["cross_region"]
+        != results["acme.sprocket-x5-v1:0"]["tpm"]["cross_region"]
     )
 
 

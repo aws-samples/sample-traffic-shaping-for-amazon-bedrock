@@ -7,7 +7,10 @@ import sys
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import argparse
 import json
+
+import pytest
 
 import create_model_config as cmc  # noqa: E402
 from create_model_config import (  # noqa: E402
@@ -80,8 +83,13 @@ def test_burndown_claude_5_plus_is_10x():
     assert derive_default_burndown("us.anthropic.claude-sonnet-5", "runtime") == 10.0
     assert derive_default_burndown("us.anthropic.claude-opus-5", "runtime") == 10.0
     assert derive_default_burndown("us.anthropic.claude-fable-5-1", "runtime") == 10.0
+    assert derive_default_burndown("us.anthropic.claude-opus-5-5", "runtime") == 10.0
+    assert derive_default_burndown("us.anthropic.claude-sonnet-5-5", "runtime") == 10.0
+    assert derive_default_burndown("global.anthropic.claude-haiku-5-5", "runtime") == 10.0
 
 
+# The 4.x buckets stay covered even though MODEL_MAP no longer lists 4.x aliases:
+# create_model_config still accepts any full model ID, and AWS still documents them.
 def test_burndown_claude_4_7_and_below_is_5x():
     assert derive_default_burndown("anthropic.claude-opus-4-7", "runtime") == 5.0
     assert derive_default_burndown("us.anthropic.claude-sonnet-4-6", "runtime") == 5.0
@@ -89,7 +97,7 @@ def test_burndown_claude_4_7_and_below_is_5x():
 
 
 def test_burndown_unrecognized_anthropic_shape_defaults_to_5x_not_10x():
-    assert derive_default_burndown("anthropic.claude-instant-v1", "runtime") == 5.0
+    assert derive_default_burndown("anthropic.claude-unrecognized-v1", "runtime") == 5.0
 
 
 def test_burndown_openai_runtime_is_10x():
@@ -102,7 +110,7 @@ def test_burndown_moonshot_kimi_k3_is_10x():
 
 
 def test_burndown_mantle_backend_is_always_1x_regardless_of_provider():
-    assert derive_default_burndown("us.anthropic.claude-opus-4-8", "mantle") == 1.0
+    assert derive_default_burndown("us.anthropic.claude-opus-5-5", "mantle") == 1.0
 
 
 def test_mantle_backend_resolves_tpm_from_itpm_without_explicit_tpm():
@@ -117,8 +125,8 @@ def test_mantle_backend_resolves_tpm_from_itpm_without_explicit_tpm():
         rpm=None,
         tpm=None,
         backend="mantle",
-        itpm=10_000_000,
-        otpm=2_000_000,
+        itpm=3_000_000,
+        otpm=300_000,
         bytes_per_token=None,
         burst_capacity=None,
         short_window_sec=2,
@@ -131,9 +139,9 @@ def test_mantle_backend_resolves_tpm_from_itpm_without_explicit_tpm():
         dry_run=True,
     )
 
-    summary = process_model("opus-47-mantle", args, parser)
+    summary = process_model("sonnet-5-mantle", args, parser)
 
-    assert summary["tpm"] == 10_000_000
+    assert summary["tpm"] == 3_000_000
     assert summary["tpm_source"] == "mantle-itpm"
 
 
@@ -186,3 +194,30 @@ def test_resolve_tpm_documented_default_is_narrowly_scoped_not_a_general_fallbac
         assert False, "expected LookupError"
     except LookupError:
         pass
+
+
+@pytest.mark.parametrize("removed, replacement", sorted(cmc.REMOVED_ALIASES.items()))
+def test_removed_alias_fails_with_its_replacement(removed, replacement):
+    with pytest.raises(LookupError, match=f"alias '{removed}' was removed; use '{replacement}'"):
+        cmc.resolve_model_alias(removed)
+    with pytest.raises(LookupError):
+        cmc.resolve_model_alias(removed.upper())
+
+
+def test_removed_alias_replacements_are_live_aliases():
+    for removed, replacement in cmc.REMOVED_ALIASES.items():
+        assert removed not in cmc.MODEL_MAP
+        assert replacement in cmc.MODEL_MAP
+
+
+def test_resolve_model_alias_expands_known_and_passes_literal_ids_through():
+    assert cmc.resolve_model_alias("haiku-5-5") == "us.anthropic.claude-haiku-5-5"
+    assert cmc.resolve_model_alias("Sonnet-5-5") == "us.anthropic.claude-sonnet-5-5"
+    assert cmc.resolve_model_alias("us.anthropic.claude-opus-4-7") == "us.anthropic.claude-opus-4-7"
+
+
+def test_process_model_rejects_removed_alias_via_parser_error(capsys):
+    parser = argparse.ArgumentParser(prog="create_model_config.py")
+    with pytest.raises(SystemExit):
+        cmc.process_model("opus-48", argparse.Namespace(), parser)
+    assert "alias 'opus-48' was removed; use 'opus-5-5'" in capsys.readouterr().err

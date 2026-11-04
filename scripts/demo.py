@@ -51,7 +51,12 @@ import boto3
 from boto3.dynamodb.types import TypeSerializer
 from botocore.config import Config
 import config_loader
-from create_model_config import MODEL_MAP, calculate_config, create_model_config
+from create_model_config import (
+    MODEL_MAP,  # re-exported: demo_ui.py reads demo.MODEL_MAP
+    calculate_config,
+    create_model_config,
+    resolve_model_alias,
+)
 from botocore.exceptions import BotoCoreError, ClientError
 from smoke_honest_outcomes import _load_api_url, _signed_request
 from shared_service import estimate_request_tokens
@@ -1663,6 +1668,10 @@ def _parse_args(argv=None):
         args.load_profile = parse_load_profile(args.profile)
     except ValueError as e:
         parser.error(str(e))
+    try:
+        resolve_model_alias(args.model)
+    except LookupError as e:
+        parser.error(str(e))
     return args
 
 
@@ -1686,7 +1695,7 @@ def main(argv=None):
     VERBOSE = args.verbose
     _run_log["errors"].clear()
     _run_log["warnings"].clear()
-    model_id = MODEL_MAP.get(args.model, args.model)
+    model_id = resolve_model_alias(args.model)
 
     config = config_loader.get_config_with_aws_check()
     region = config.get('AWS_REGION', 'us-east-1')
